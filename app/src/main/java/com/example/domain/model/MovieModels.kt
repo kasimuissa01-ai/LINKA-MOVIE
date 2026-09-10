@@ -43,7 +43,8 @@ data class UploadPart(
     val startByte: Long,
     val endByte: Long,
     val isUploaded: Boolean = false,
-    val progress: Float = 0f
+    val progress: Float = 0f,
+    val presignedUrl: String = ""
 )
 
 data class UploadSession(

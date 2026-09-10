@@ -543,9 +543,13 @@ class MovieRepository(
     ): UploadSession = withContext(Dispatchers.IO) {
         val part = session.parts[partIndex]
         
-        // Request signed part upload URL from Supabase Edge Function get-part-url
-        val presignedUrl = r2Client.getPartUrl(session.videoKey, session.uploadId, part.partNumber)
-            ?: "${CloudflareR2PresignedClient.SUPABASE_FUNCTIONS_BASE}/get-part-url?key=${session.videoKey}&part=${part.partNumber}"
+        // Use pre-generated presigned URL from initiateMultipartUpload if available, else request get-part-url
+        val presignedUrl = if (part.presignedUrl.isNotBlank()) {
+            part.presignedUrl
+        } else {
+            r2Client.getPartUrl(session.videoKey, session.uploadId, part.partNumber)
+                ?: "${CloudflareR2PresignedClient.SUPABASE_FUNCTIONS_BASE}/get-part-url?key=${session.videoKey}&part=${part.partNumber}"
+        }
 
         val streamUriString = activeStreamUrls[session.uploadId] ?: ""
         val chunkLength = ((part.endByte - part.startByte).toInt()).coerceAtLeast(1024 * 1024)
@@ -555,7 +559,20 @@ class MovieRepository(
             if (streamUriString.startsWith("content://") || streamUriString.startsWith("file://")) {
                 val uri = android.net.Uri.parse(streamUriString)
                 context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                    inputStream.skip(part.startByte)
+                    // Reliably skip to startByte
+                    var remainingToSkip = part.startByte
+                    while (remainingToSkip > 0) {
+                        val skipped = inputStream.skip(remainingToSkip)
+                        if (skipped <= 0) {
+                            val dummy = ByteArray(minOf(remainingToSkip, 8192L).toInt())
+                            val read = inputStream.read(dummy)
+                            if (read == -1) break
+                            remainingToSkip -= read
+                        } else {
+                            remainingToSkip -= skipped
+                        }
+                    }
+
                     var totalRead = 0
                     while (totalRead < chunkLength) {
                         val read = inputStream.read(partData, totalRead, chunkLength - totalRead)
@@ -602,4 +619,66 @@ class MovieRepository(
     suspend fun testSupabaseConnection(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         r2Client.testSupabaseConnection()
     }
+
+    /**
+     * High-level upload function matching:
+     * uploadVideoToR2(videoFile, { supabaseFunctionUrl, supabaseAnonKey, onProgress })
+     */
+    suspend fun uploadVideoToR2(
+        context: Context,
+        videoUri: android.net.Uri,
+        filename: String,
+        options: UploadR2Options
+    ): Boolean = withContext(Dispatchers.IO) {
+        r2Client.supabaseFunctionUrl = options.supabaseFunctionUrl
+        if (!options.supabaseAnonKey.isNullOrBlank()) {
+            r2Client.supabaseAnonKey = options.supabaseAnonKey
+        }
+
+        val contentResolver = context.contentResolver
+        val totalBytes = try {
+            contentResolver.openFileDescriptor(videoUri, "r")?.use { it.statSize } ?: 0L
+        } catch (e: Exception) {
+            0L
+        }
+        val fileSizeMb = (totalBytes / (1024 * 1024)).coerceAtLeast(1)
+
+        val tempMovie = Movie(
+            id = UUID.randomUUID().toString(),
+            title = filename,
+            description = "",
+            genres = listOf("Video"),
+            coverUrl = "",
+            videoKey = "videos/$filename",
+            videoStreamUrl = videoUri.toString(),
+            durationMinutes = 0,
+            fileSizeMb = fileSizeMb,
+            releaseYear = 2026,
+            rating = 5.0
+        )
+
+        var session = initiateMultipartUpload(tempMovie, fileSizeMb, videoUri.toString())
+
+        for (i in session.parts.indices) {
+            session = executePartUpload(session, i, context) { partNum, partProg ->
+                val uploadedPartsCount = session.parts.count { it.isUploaded }
+                val currentPartContribution = partProg / session.parts.size
+                val overallFraction = (uploadedPartsCount.toFloat() / session.parts.size) + currentPartContribution
+                val overallPercentage = (overallFraction * 100).toInt().coerceIn(0, 100)
+                options.onProgress?.invoke(overallPercentage)
+            }
+        }
+
+        val completed = completeMultipartUpload(session)
+        if (completed) {
+            options.onProgress?.invoke(100)
+        }
+        completed
+    }
 }
+
+data class UploadR2Options(
+    val supabaseFunctionUrl: String = CloudflareR2PresignedClient.SUPABASE_FUNCTIONS_BASE,
+    val supabaseAnonKey: String? = CloudflareR2PresignedClient.SUPABASE_ANON_KEY,
+    val onProgress: ((Int) -> Unit)? = null
+)

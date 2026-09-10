@@ -126,7 +126,10 @@ data class UploadStateEntity(
                         startByte = tokens[2].toLongOrNull() ?: 0L,
                         endByte = tokens[3].toLongOrNull() ?: 0L,
                         isUploaded = tokens[4].toBooleanStrictOrNull() ?: false,
-                        progress = tokens.getOrNull(5)?.toFloatOrNull() ?: 0f
+                        progress = tokens.getOrNull(5)?.toFloatOrNull() ?: 0f,
+                        presignedUrl = tokens.getOrNull(6)?.let {
+                            runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrDefault(it)
+                        } ?: ""
                     )
                 } else null
             }
@@ -147,7 +150,10 @@ data class UploadStateEntity(
     companion object {
         fun fromDomain(session: UploadSession): UploadStateEntity {
             val partsStr = session.parts.joinToString("|") { part ->
-                "${part.partNumber}:${part.etag}:${part.startByte}:${part.endByte}:${part.isUploaded}:${part.progress}"
+                val encodedUrl = if (part.presignedUrl.isNotBlank()) {
+                    runCatching { java.net.URLEncoder.encode(part.presignedUrl, "UTF-8") }.getOrDefault(part.presignedUrl)
+                } else ""
+                "${part.partNumber}:${part.etag}:${part.startByte}:${part.endByte}:${part.isUploaded}:${part.progress}:$encodedUrl"
             }
             return UploadStateEntity(
                 uploadId = session.uploadId,

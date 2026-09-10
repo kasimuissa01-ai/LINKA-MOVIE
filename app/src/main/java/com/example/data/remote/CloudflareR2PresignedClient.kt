@@ -34,6 +34,8 @@ import kotlin.math.min
  * - complete-multipart-upload: admin-only, completes S3 multipart upload
  */
 class CloudflareR2PresignedClient(
+    var supabaseFunctionUrl: String = SUPABASE_FUNCTIONS_BASE,
+    var supabaseAnonKey: String? = SUPABASE_ANON_KEY,
     private val tokenProvider: (suspend () -> String?)? = null,
     private val okHttpClient: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -43,9 +45,19 @@ class CloudflareR2PresignedClient(
 ) {
     companion object {
         private const val TAG = "SupabaseR2Client"
-        const val DEFAULT_CHUNK_SIZE = 10 * 1024 * 1024L // 10MB chunk
-        const val SUPABASE_FUNCTIONS_BASE = "https://vqgnxqabvmmpfoiceass.supabase.co/functions/v1"
+        const val DEFAULT_CHUNK_SIZE = 50 * 1024 * 1024L // 50MB chunk (recommended 50-100MB)
+        const val MIN_PART_SIZE = 5 * 1024 * 1024L // 5 MiB R2 minimum requirement
+        const val SUPABASE_FUNCTIONS_BASE = "https://vqgnxqabvmmpfoiceass.supabase.co/functions/v1/r2-multipart-upload"
+        const val SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZxZ254cWFidm1tcGZvaWNlYXNzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkzODE5NDMsImV4cCI6MjA3NDk1Nzk0M30.ZkOlMsqmfv4gCl3YG5CLe7te5DoIbZad8Y2mIpKTleA"
         const val BUCKET_NAME = "stories"
+    }
+
+    private suspend fun getAuthHeaders(): Map<String, String> {
+        val token = supabaseAnonKey ?: tokenProvider?.invoke() ?: "dev_admin_token"
+        val headers = mutableMapOf<String, String>()
+        headers["Authorization"] = "Bearer $token"
+        headers["apikey"] = token
+        return headers
     }
 
     /**
@@ -153,8 +165,17 @@ class CloudflareR2PresignedClient(
             return@withContext null
         }
 
+    private fun resolveEndpointUrl(action: String): String {
+        val base = supabaseFunctionUrl.trimEnd('/')
+        return if (base.endsWith("r2-multipart-upload")) {
+            base
+        } else {
+            "$base/$action"
+        }
+    }
+
     /**
-     * Initiates multipart upload via Supabase Edge Function `create-multipart-upload`
+     * Initiates multipart upload via Supabase Edge Function
      */
     suspend fun initiateMultipartUpload(
         movieId: String,
@@ -163,23 +184,30 @@ class CloudflareR2PresignedClient(
         totalBytes: Long,
         chunkSize: Long = DEFAULT_CHUNK_SIZE
     ): UploadSession = withContext(Dispatchers.IO) {
-        val token = tokenProvider?.invoke() ?: "dev_admin_token"
+        val authHeaders = getAuthHeaders()
         var uploadId = "r2_mpu_${UUID.randomUUID().toString().take(12)}"
+        val presignedUrlMap = mutableMapOf<Int, String>()
 
         try {
             val jsonPayload = JSONObject().apply {
+                put("action", "create")
                 put("r2ObjectKey", videoKey)
+                put("filename", videoKey)
                 put("bucket", BUCKET_NAME)
                 put("contentType", "video/mp4")
+                put("fileSize", totalBytes)
+                put("chunkSize", chunkSize)
             }
 
-            val request = Request.Builder()
-                .url("$SUPABASE_FUNCTIONS_BASE/create-multipart-upload")
-                .header("Authorization", "Bearer $token")
+            val requestBuilder = Request.Builder()
+                .url(resolveEndpointUrl("create-multipart-upload"))
                 .post(jsonPayload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
-                .build()
 
-            okHttpClient.newCall(request).execute().use { response ->
+            authHeaders.forEach { (key, value) ->
+                requestBuilder.header(key, value)
+            }
+
+            okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
                 if (response.isSuccessful) {
                     val responseBody = response.body?.string()
                     if (responseBody != null) {
@@ -187,6 +215,23 @@ class CloudflareR2PresignedClient(
                         val remoteUploadId = json.optString("uploadId")
                         if (remoteUploadId.isNotEmpty()) {
                             uploadId = remoteUploadId
+                        }
+
+                        // Parse presigned URLs returned as an array: { uploadId, urls: [ { partNumber, url } ] }
+                        val urlsArray = json.optJSONArray("urls") ?: json.optJSONArray("parts")
+                        if (urlsArray != null) {
+                            for (i in 0 until urlsArray.length()) {
+                                val item = urlsArray.opt(i)
+                                if (item is JSONObject) {
+                                    val pNum = item.optInt("partNumber", i + 1)
+                                    val pUrl = item.optString("url", item.optString("presignedUrl", ""))
+                                    if (pUrl.isNotEmpty()) {
+                                        presignedUrlMap[pNum] = pUrl
+                                    }
+                                } else if (item is String && item.isNotEmpty()) {
+                                    presignedUrlMap[i + 1] = item
+                                }
+                            }
                         }
                     }
                 }
@@ -206,7 +251,8 @@ class CloudflareR2PresignedClient(
                 startByte = start,
                 endByte = end,
                 isUploaded = false,
-                progress = 0f
+                progress = 0f,
+                presignedUrl = presignedUrlMap[partNum] ?: ""
             )
         }
 
@@ -228,27 +274,32 @@ class CloudflareR2PresignedClient(
      */
     suspend fun getPartUrl(videoKey: String, uploadId: String, partNumber: Int): String? =
         withContext(Dispatchers.IO) {
-            val token = tokenProvider?.invoke() ?: "dev_admin_token"
+            val authHeaders = getAuthHeaders()
             try {
                 val jsonPayload = JSONObject().apply {
+                    put("action", "get_part_url")
                     put("r2ObjectKey", videoKey)
+                    put("filename", videoKey)
                     put("uploadId", uploadId)
                     put("partNumber", partNumber)
                     put("bucket", BUCKET_NAME)
+                    put("expiresIn", 7200) // 2 hours expiration for long/slow uploads
                 }
 
-                val request = Request.Builder()
-                    .url("$SUPABASE_FUNCTIONS_BASE/get-part-url")
-                    .header("Authorization", "Bearer $token")
+                val requestBuilder = Request.Builder()
+                    .url(resolveEndpointUrl("get-part-url"))
                     .post(jsonPayload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
-                    .build()
 
-                okHttpClient.newCall(request).execute().use { response ->
+                authHeaders.forEach { (key, value) ->
+                    requestBuilder.header(key, value)
+                }
+
+                okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
                     if (response.isSuccessful) {
                         val responseBody = response.body?.string()
                         if (responseBody != null) {
                             val json = JSONObject(responseBody)
-                            return@withContext json.optString("partUploadUrl")
+                            return@withContext json.optString("partUploadUrl", json.optString("url", ""))
                         }
                     }
                 }
@@ -323,31 +374,36 @@ class CloudflareR2PresignedClient(
         videoKey: String,
         parts: List<UploadPart>
     ): Boolean = withContext(Dispatchers.IO) {
-        val token = tokenProvider?.invoke() ?: "dev_admin_token"
+        val authHeaders = getAuthHeaders()
         try {
             val partsArray = JSONArray()
             parts.forEach { part ->
                 val partObj = JSONObject().apply {
                     put("partNumber", part.partNumber)
                     put("etag", part.etag)
+                    put("eTag", part.etag)
                 }
                 partsArray.put(partObj)
             }
 
             val jsonPayload = JSONObject().apply {
+                put("action", "complete")
                 put("r2ObjectKey", videoKey)
+                put("filename", videoKey)
                 put("uploadId", uploadId)
                 put("parts", partsArray)
                 put("bucket", BUCKET_NAME)
             }
 
-            val request = Request.Builder()
-                .url("$SUPABASE_FUNCTIONS_BASE/complete-multipart-upload")
-                .header("Authorization", "Bearer $token")
+            val requestBuilder = Request.Builder()
+                .url(resolveEndpointUrl("complete-multipart-upload"))
                 .post(jsonPayload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
-                .build()
 
-            okHttpClient.newCall(request).execute().use { response ->
+            authHeaders.forEach { (key, value) ->
+                requestBuilder.header(key, value)
+            }
+
+            okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
                 if (response.isSuccessful) {
                     return@withContext true
                 }
