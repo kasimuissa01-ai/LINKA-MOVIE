@@ -49,6 +49,31 @@ class CloudflareR2PresignedClient(
     }
 
     /**
+     * Checks if Supabase Edge Functions backend is reachable and responsive
+     */
+    suspend fun testSupabaseConnection(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("$SUPABASE_FUNCTIONS_BASE/get-download-url")
+                .header("Content-Type", "application/json")
+                .post("{}".toRequestBody("application/json".toMediaTypeOrNull()))
+                .build()
+
+            okHttpClient.newCall(request).execute().use { response ->
+                if (response.code in 200..499 && response.code != 404) {
+                    return@withContext true to "Connected (HTTP ${response.code})"
+                } else if (response.code == 404) {
+                    return@withContext false to "Edge Function not deployed (HTTP 404)"
+                } else {
+                    return@withContext false to "HTTP ${response.code}: ${response.message}"
+                }
+            }
+        } catch (e: Exception) {
+            return@withContext false to (e.message ?: "Connection timed out")
+        }
+    }
+
+    /**
      * Resolves signed download URL from Supabase Edge Function `get-download-url`
      */
     suspend fun getDownloadUrl(r2ObjectKey: String): String = withContext(Dispatchers.IO) {

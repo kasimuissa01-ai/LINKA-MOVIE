@@ -101,35 +101,41 @@ fun AdminDashboardScreen(
             // Top Bar
             Row(
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                IconButton(
-                    onClick = onBackClick,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(SurfaceDark)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = Color.White
-                    )
-                }
+                    IconButton(
+                        onClick = onBackClick,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(SurfaceDark)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White
+                        )
+                    }
 
-                Spacer(modifier = Modifier.width(14.dp))
+                    Spacer(modifier = Modifier.width(14.dp))
 
-                Column {
-                    Text(
-                        text = "Admin Studio",
-                        color = TextPrimary,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Cloudflare R2 Storage Management",
-                        color = TextSecondary,
-                        fontSize = 12.sp
-                    )
+                    Column {
+                        Text(
+                            text = "Admin Studio",
+                            color = TextPrimary,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Cloudflare R2 & Supabase Backend",
+                            color = TextSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
                 }
             }
 

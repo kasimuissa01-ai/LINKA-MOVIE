@@ -568,4 +568,8 @@ class MovieRepository(
         }
         success
     }
+
+    suspend fun testSupabaseConnection(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        r2Client.testSupabaseConnection()
+    }
 }

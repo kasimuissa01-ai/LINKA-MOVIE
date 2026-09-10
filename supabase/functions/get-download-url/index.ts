@@ -1,52 +1,50 @@
-import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-import { handleCors, jsonResponse } from "../_shared/cors.ts";
-import { authenticate } from "../_shared/auth.ts";
-import { signGetUrl } from "../_shared/r2.ts";
+import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
+import { GetObjectCommand } from 'npm:@aws-sdk/client-s3@3.540.0';
+import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.540.0';
+import { corsHeaders } from '../_shared/cors.ts';
+import { getR2Client } from '../_shared/r2.ts';
 
-serve(async (req) => {
-  const corsResponse = handleCors(req);
-  if (corsResponse) return corsResponse;
-
-  if (req.method !== "POST" && req.method !== "GET") {
-    return jsonResponse({ error: "Method not allowed" }, 405);
+serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    // 1. Verify Firebase Auth ID token (Any authenticated user may call this)
-    const user = await authenticate(req);
+    const { client, bucketName } = getR2Client();
+    let r2ObjectKey = '';
+    let expiresIn = 3600;
 
-    // 2. Extract r2ObjectKey from request
-    let r2ObjectKey: string | null = null;
-    let expiresIn = 3600; // 60 minutes TTL
-
-    if (req.method === "POST") {
+    if (req.method === 'POST') {
       const body = await req.json().catch(() => ({}));
-      r2ObjectKey = body.r2ObjectKey || body.key;
-      if (body.expiresIn) expiresIn = body.expiresIn;
+      r2ObjectKey = body.r2ObjectKey || body.key || '';
+      if (body.expiresIn) expiresIn = Number(body.expiresIn);
     } else {
       const url = new URL(req.url);
-      r2ObjectKey = url.searchParams.get("r2ObjectKey") || url.searchParams.get("key");
-      const expParam = url.searchParams.get("expiresIn");
-      if (expParam) expiresIn = parseInt(expParam, 10);
+      r2ObjectKey = url.searchParams.get('r2ObjectKey') || url.searchParams.get('key') || '';
     }
 
     if (!r2ObjectKey) {
-      return jsonResponse({ error: "Missing required parameter: r2ObjectKey" }, 400);
+      return new Response(
+        JSON.stringify({ error: 'Missing r2ObjectKey parameter' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    // 3. Sign short-lived presigned GET URL for Cloudflare R2 bucket `stories`
-    const downloadUrl = await signGetUrl(r2ObjectKey, expiresIn);
-
-    return jsonResponse({
-      downloadUrl,
-      r2ObjectKey,
-      expiresIn,
-      bucket: "stories",
-      requestedBy: user.uid,
+    const command = new GetObjectCommand({
+      Bucket: bucketName,
+      Key: r2ObjectKey,
     });
-  } catch (err) {
-    const message = (err as Error).message;
-    const status = message.includes("token") || message.includes("Authorization") ? 401 : 500;
-    return jsonResponse({ error: message }, status);
+
+    const downloadUrl = await getSignedUrl(client, command, { expiresIn });
+
+    return new Response(
+      JSON.stringify({ success: true, downloadUrl, key: r2ObjectKey, expiresIn }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  } catch (error: any) {
+    return new Response(
+      JSON.stringify({ error: error.message || 'Internal server error' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   }
 });

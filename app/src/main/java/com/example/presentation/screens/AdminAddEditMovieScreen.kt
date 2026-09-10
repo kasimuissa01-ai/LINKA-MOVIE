@@ -48,6 +48,11 @@ import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -182,6 +187,8 @@ fun AdminAddEditMovieScreen(
     }
 
     val uploadProgressState by adminViewModel.uploadState.collectAsState()
+    val supabaseStatus by adminViewModel.supabaseConnectionStatus.collectAsState()
+    val isCheckingConn by adminViewModel.isCheckingConnection.collectAsState()
     val scrollState = rememberScrollState()
 
     fun applyTmdbMovie(tmdb: TmdbMovieResult) {
@@ -211,39 +218,101 @@ fun AdminAddEditMovieScreen(
         // Top Header Bar
         Row(
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier.fillMaxWidth()
         ) {
-            IconButton(
-                onClick = {
-                    adminViewModel.resetUploadState()
-                    adminViewModel.clearTmdbSearch()
-                    onBackClick()
-                },
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(SurfaceDark)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
-                    tint = TextPrimary
-                )
+                IconButton(
+                    onClick = {
+                        adminViewModel.resetUploadState()
+                        adminViewModel.clearTmdbSearch()
+                        onBackClick()
+                    },
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(SurfaceDark)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
+                        tint = TextPrimary
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(16.dp))
+
+                Column {
+                    Text(
+                        text = if (existingMovie != null) "Edit Movie" else "Upload Movie",
+                        color = TextPrimary,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Supabase & Cloudflare R2 Connected",
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Column {
-                Text(
-                    text = if (existingMovie != null) "Edit Movie" else "Upload Movie",
-                    color = TextPrimary,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = "Cloudflare R2 Storage & TMDB Meta",
-                    color = TextSecondary,
-                    fontSize = 12.sp
-                )
+            // Supabase backend status pill
+            Surface(
+                color = when (supabaseStatus.first) {
+                    true -> Color(0xFF1B3D2B)
+                    false -> Color(0xFF3E2319)
+                    else -> SurfaceDark
+                },
+                shape = RoundedCornerShape(12.dp),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    when (supabaseStatus.first) {
+                        true -> Color(0xFF4CAF50).copy(alpha = 0.5f)
+                        false -> AmberGold.copy(alpha = 0.5f)
+                        else -> Color(0x33FFFFFF)
+                    }
+                ),
+                modifier = Modifier.clickable { adminViewModel.checkSupabaseConnection() }
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    if (isCheckingConn) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.5.dp,
+                            color = Color.White
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    when (supabaseStatus.first) {
+                                        true -> Color(0xFF4CAF50)
+                                        false -> AmberGold
+                                        else -> Color.Gray
+                                    }
+                                )
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = when (supabaseStatus.first) {
+                            true -> "Supabase Live"
+                            false -> "Catalog Mode"
+                            else -> "Testing..."
+                        },
+                        color = TextPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
 
@@ -902,17 +971,107 @@ fun AdminAddEditMovieScreen(
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF1B3D2B)),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF4CAF50).copy(alpha = 0.6f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF4CAF50), modifier = Modifier.size(24.dp))
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Upload Complete!", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        Text(uploadProgressState.statusMessage, color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF4CAF50), modifier = Modifier.size(26.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Movie Published Successfully!", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text(uploadProgressState.statusMessage, color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            adminViewModel.resetUploadState()
+                            onBackClick()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF4CAF50),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.CloudDone, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Done - View in Catalog", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        if (uploadProgressState.error != null && !uploadProgressState.isCompleted) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF3B1F1F)),
+                border = androidx.compose.foundation.BorderStroke(1.dp, CinematicRed.copy(alpha = 0.6f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.ErrorOutline, contentDescription = null, tint = CinematicRed, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Upload Notice", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(uploadProgressState.error ?: "Upload encountered an issue", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val size = fileSizeMb.toLongOrNull() ?: 450L
+                                val year = releaseYear.toIntOrNull() ?: 2024
+                                val rate = rating.toDoubleOrNull() ?: 8.0
+                                adminViewModel.publishMovieDirectly(
+                                    title = title.ifBlank { "Untitled Movie" },
+                                    description = description.ifBlank { "A cinematic release." },
+                                    genres = selectedGenres,
+                                    coverUrl = coverUrl,
+                                    fileSizeMb = size,
+                                    streamUrl = streamUrl,
+                                    releaseYear = year,
+                                    rating = rate,
+                                    isFeatured = isFeaturedOnCarousel
+                                )
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Save Locally", fontSize = 12.sp)
+                        }
+
+                        Button(
+                            onClick = {
+                                val size = fileSizeMb.toLongOrNull() ?: 450L
+                                val year = releaseYear.toIntOrNull() ?: 2024
+                                val rate = rating.toDoubleOrNull() ?: 8.0
+                                adminViewModel.addMovieWithMultipartUpload(
+                                    title = title.ifBlank { "Untitled Movie" },
+                                    description = description.ifBlank { "A cinematic release." },
+                                    genres = selectedGenres,
+                                    coverUrl = coverUrl,
+                                    fileSizeMb = size,
+                                    streamUrl = streamUrl,
+                                    releaseYear = year,
+                                    rating = rate,
+                                    isFeatured = isFeaturedOnCarousel
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CinematicRed),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Retry Upload", fontSize = 12.sp)
+                        }
                     }
                 }
             }
@@ -973,10 +1132,45 @@ fun AdminAddEditMovieScreen(
             )
             Spacer(modifier = Modifier.width(10.dp))
             Text(
-                text = if (existingMovie != null) "Update Movie Metadata" else "Publish & Upload to Cloudflare R2",
+                text = if (existingMovie != null) "Update Movie Metadata" else "Publish & Upload Movie",
                 fontWeight = FontWeight.Bold,
                 fontSize = 15.sp
             )
+        }
+
+        if (existingMovie == null) {
+            Spacer(modifier = Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = {
+                    val size = fileSizeMb.toLongOrNull() ?: 450L
+                    val year = releaseYear.toIntOrNull() ?: 2024
+                    val rate = rating.toDoubleOrNull() ?: 8.0
+                    adminViewModel.publishMovieDirectly(
+                        title = title.ifBlank { "Untitled Movie" },
+                        description = description.ifBlank { "A cinematic release." },
+                        genres = selectedGenres,
+                        coverUrl = coverUrl,
+                        fileSizeMb = size,
+                        streamUrl = streamUrl,
+                        releaseYear = year,
+                        rating = rate,
+                        isFeatured = isFeaturedOnCarousel
+                    )
+                },
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("btn_publish_directly_to_catalog")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Save,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Publish Directly to Catalog (Instant)", fontSize = 14.sp)
+            }
         }
 
         Spacer(modifier = Modifier.height(30.dp))

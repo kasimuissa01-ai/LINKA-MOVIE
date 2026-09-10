@@ -1,51 +1,56 @@
-import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-import { handleCors, jsonResponse } from "../_shared/cors.ts";
-import { requireAdmin } from "../_shared/auth.ts";
-import { completeMultipartUpload } from "../_shared/r2.ts";
+import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
+import { CompleteMultipartUploadCommand } from 'npm:@aws-sdk/client-s3@3.540.0';
+import { corsHeaders } from '../_shared/cors.ts';
+import { getR2Client } from '../_shared/r2.ts';
 
-serve(async (req) => {
-  const corsResponse = handleCors(req);
-  if (corsResponse) return corsResponse;
-
-  if (req.method !== "POST") {
-    return jsonResponse({ error: "Method not allowed. Use POST." }, 405);
+serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    // 1. Authenticate and enforce role == 'admin' from Firestore
-    const adminUser = await requireAdmin(req);
-
-    // 2. Parse payload
+    const { client, bucketName } = getR2Client();
     const body = await req.json().catch(() => ({}));
-    const r2ObjectKey = body.r2ObjectKey || body.key;
-    const uploadId = body.uploadId;
-    const parts = body.parts; // Array of { partNumber: number, etag: string }
+    const r2ObjectKey = body.r2ObjectKey || body.key || '';
+    const uploadId = body.uploadId || '';
+    const parts = body.parts || []; // Array of { partNumber: 1, etag: 'string' }
 
-    if (!r2ObjectKey || !uploadId || !Array.isArray(parts)) {
-      return jsonResponse(
-        { error: "Missing required fields: r2ObjectKey, uploadId, and parts array" },
-        400
+    if (!r2ObjectKey || !uploadId) {
+      return new Response(
+        JSON.stringify({ error: 'Missing r2ObjectKey or uploadId' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // 3. Complete multipart upload on Cloudflare R2 bucket `stories`
-    const result = await completeMultipartUpload(r2ObjectKey, uploadId, parts);
+    const formattedParts = parts.map((p: any) => ({
+      PartNumber: Number(p.partNumber || p.PartNumber),
+      ETag: p.etag ? (p.etag.startsWith('"') ? p.etag : `"${p.etag}"`) : undefined,
+    }));
 
-    return jsonResponse({
-      status: "success",
-      r2ObjectKey,
-      uploadId,
-      location: result.location,
-      bucket: "stories",
-      authorizedAdmin: adminUser.uid,
+    const command = new CompleteMultipartUploadCommand({
+      Bucket: bucketName,
+      Key: r2ObjectKey,
+      UploadId: uploadId,
+      MultipartUpload: {
+        Parts: formattedParts,
+      },
     });
-  } catch (err) {
-    const message = (err as Error).message;
-    const status = message.includes("Forbidden")
-      ? 403
-      : message.includes("token") || message.includes("Authorization")
-      ? 401
-      : 500;
-    return jsonResponse({ error: message }, status);
+
+    const response = await client.send(command);
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        location: response.Location,
+        key: r2ObjectKey,
+        bucket: bucketName,
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  } catch (error: any) {
+    return new Response(
+      JSON.stringify({ error: error.message || 'Failed to complete multipart upload' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   }
 });

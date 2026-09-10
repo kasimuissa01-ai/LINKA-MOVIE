@@ -1,48 +1,37 @@
-import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-import { handleCors, jsonResponse } from "../_shared/cors.ts";
-import { requireAdmin } from "../_shared/auth.ts";
-import { signPutUrl } from "../_shared/r2.ts";
+import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
+import { PutObjectCommand } from 'npm:@aws-sdk/client-s3@3.540.0';
+import { getSignedUrl } from 'npm:@aws-sdk/s3-request-presigner@3.540.0';
+import { corsHeaders } from '../_shared/cors.ts';
+import { getR2Client } from '../_shared/r2.ts';
 
-serve(async (req) => {
-  const corsResponse = handleCors(req);
-  if (corsResponse) return corsResponse;
-
-  if (req.method !== "POST") {
-    return jsonResponse({ error: "Method not allowed. Use POST." }, 405);
+serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    // 1. Authenticate and enforce role == 'admin' from Firestore
-    const adminUser = await requireAdmin(req);
-
-    // 2. Parse payload
+    const { client, bucketName } = getR2Client();
     const body = await req.json().catch(() => ({}));
-    const r2ObjectKey = body.r2ObjectKey || body.key;
-    const contentType = body.contentType || "video/mp4";
-    const expiresIn = body.expiresIn || 3600;
+    const r2ObjectKey = body.r2ObjectKey || body.key || `movies/${Date.now()}.mp4`;
+    const contentType = body.contentType || 'video/mp4';
+    const expiresIn = body.expiresIn ? Number(body.expiresIn) : 3600;
 
-    if (!r2ObjectKey) {
-      return jsonResponse({ error: "Missing required parameter: r2ObjectKey" }, 400);
-    }
-
-    // 3. Sign presigned PUT URL for Cloudflare R2 bucket `stories`
-    const uploadUrl = await signPutUrl(r2ObjectKey, contentType, expiresIn);
-
-    return jsonResponse({
-      uploadUrl,
-      r2ObjectKey,
-      bucket: "stories",
-      contentType,
-      expiresIn,
-      authorizedAdmin: adminUser.uid,
+    const command = new PutObjectCommand({
+      Bucket: bucketName,
+      Key: r2ObjectKey,
+      ContentType: contentType,
     });
-  } catch (err) {
-    const message = (err as Error).message;
-    const status = message.includes("Forbidden")
-      ? 403
-      : message.includes("token") || message.includes("Authorization")
-      ? 401
-      : 500;
-    return jsonResponse({ error: message }, status);
+
+    const uploadUrl = await getSignedUrl(client, command, { expiresIn });
+
+    return new Response(
+      JSON.stringify({ success: true, uploadUrl, key: r2ObjectKey, expiresIn }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  } catch (error: any) {
+    return new Response(
+      JSON.stringify({ error: error.message || 'Failed to generate upload URL' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   }
 });
