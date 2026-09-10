@@ -107,6 +107,7 @@ class AdminViewModel(
     }
 
     fun addMovieWithMultipartUpload(
+        context: android.content.Context,
         title: String,
         description: String,
         genres: List<String>,
@@ -118,7 +119,8 @@ class AdminViewModel(
         isFeatured: Boolean = false
     ) {
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
-        val videoKey = "movies/${title.lowercase().replace(" ", "_")}.mp4"
+        val sanitizedTitle = title.lowercase().replace(Regex("[^a-z0-9]"), "_").replace(Regex("_+"), "_")
+        val videoKey = "movies/${sanitizedTitle}.mp4"
         val fallbackStream = if (streamUrl.isNotBlank()) streamUrl
         else "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
 
@@ -151,7 +153,7 @@ class AdminViewModel(
                 var remoteError: String? = null
 
                 try {
-                    val session = repository.initiateMultipartUpload(newMovie, fileSizeMb)
+                    val session = repository.initiateMultipartUpload(newMovie, fileSizeMb, streamUrl)
                     _uploadState.value = _uploadState.value.copy(
                         session = session,
                         statusMessage = "Uploading ${session.parts.size} chunks to Cloudflare R2..."
@@ -164,7 +166,7 @@ class AdminViewModel(
                             statusMessage = "Uploading chunk ${i + 1}/${session.parts.size}..."
                         )
 
-                        currentSession = repository.executePartUpload(currentSession, i) { partNum, partProgress ->
+                        currentSession = repository.executePartUpload(currentSession, i, context) { partNum, partProgress ->
                             val overall = ((i + partProgress) / session.parts.size).coerceIn(0f, 1f)
                             _uploadState.value = _uploadState.value.copy(
                                 overallProgress = overall

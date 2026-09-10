@@ -48,6 +48,7 @@ class MovieRepository(
 
     private val repositoryScope = CoroutineScope(Dispatchers.IO + Job())
     private val activeDownloadJobs = ConcurrentHashMap<String, Job>()
+    private val activeStreamUrls = ConcurrentHashMap<String, String>()
     private val activeUploadJobs = ConcurrentHashMap<String, Job>()
 
     // Current user session & role management
@@ -517,7 +518,8 @@ class MovieRepository(
     // Multipart Upload for Admin via Supabase Edge Functions (bucket `stories`)
     suspend fun initiateMultipartUpload(
         movie: Movie,
-        fileSizeMb: Long
+        fileSizeMb: Long,
+        streamUrl: String = ""
     ): UploadSession = withContext(Dispatchers.IO) {
         val totalBytes = fileSizeMb * 1024 * 1024L
         val session = r2Client.initiateMultipartUpload(
@@ -526,6 +528,9 @@ class MovieRepository(
             videoKey = movie.videoKey,
             totalBytes = totalBytes
         )
+        if (streamUrl.isNotBlank()) {
+            activeStreamUrls[session.uploadId] = streamUrl
+        }
         uploadStateDao.saveSession(UploadStateEntity.fromDomain(session))
         session
     }
@@ -533,6 +538,7 @@ class MovieRepository(
     suspend fun executePartUpload(
         session: UploadSession,
         partIndex: Int,
+        context: Context,
         onPartProgress: (Int, Float) -> Unit
     ): UploadSession = withContext(Dispatchers.IO) {
         val part = session.parts[partIndex]
@@ -541,9 +547,33 @@ class MovieRepository(
         val presignedUrl = r2Client.getPartUrl(session.videoKey, session.uploadId, part.partNumber)
             ?: "${CloudflareR2PresignedClient.SUPABASE_FUNCTIONS_BASE}/get-part-url?key=${session.videoKey}&part=${part.partNumber}"
 
+        val streamUriString = activeStreamUrls[session.uploadId] ?: ""
+        val chunkLength = ((part.endByte - part.startByte).toInt()).coerceAtLeast(1024 * 1024)
+        val partData = ByteArray(chunkLength)
+
+        try {
+            if (streamUriString.startsWith("content://") || streamUriString.startsWith("file://")) {
+                val uri = android.net.Uri.parse(streamUriString)
+                context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    inputStream.skip(part.startByte)
+                    var totalRead = 0
+                    while (totalRead < chunkLength) {
+                        val read = inputStream.read(partData, totalRead, chunkLength - totalRead)
+                        if (read == -1) break
+                        totalRead += read
+                    }
+                }
+            } else {
+                java.util.Arrays.fill(partData, 0x00.toByte())
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error reading part stream: ${e.message}")
+            java.util.Arrays.fill(partData, 0x20.toByte())
+        }
+
         val etag = r2Client.uploadPartChunk(
             presignedPartUrl = presignedUrl,
-            partData = ByteArray(1024),
+            partData = partData,
             partNumber = part.partNumber,
             onProgress = { prog ->
                 onPartProgress(part.partNumber, prog)

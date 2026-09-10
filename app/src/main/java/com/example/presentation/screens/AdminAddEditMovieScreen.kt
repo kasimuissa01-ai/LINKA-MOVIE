@@ -113,6 +113,7 @@ fun AdminAddEditMovieScreen(
     modifier: Modifier = Modifier
 ) {
     val focusManager = LocalFocusManager.current
+    val context = LocalContext.current
 
     // TMDB Search State
     var tmdbQuery by remember { mutableStateOf("") }
@@ -150,7 +151,6 @@ fun AdminAddEditMovieScreen(
     var rating by remember { mutableStateOf(existingMovie?.rating?.toString() ?: "8.2") }
 
     // Video Gallery Picker State
-    val context = LocalContext.current
     var selectedVideoUri by remember { mutableStateOf<Uri?>(null) }
     var selectedVideoFileName by remember { mutableStateOf<String?>(null) }
 
@@ -1055,6 +1055,7 @@ fun AdminAddEditMovieScreen(
                                 val year = releaseYear.toIntOrNull() ?: 2024
                                 val rate = rating.toDoubleOrNull() ?: 8.0
                                 adminViewModel.addMovieWithMultipartUpload(
+                                    context = context,
                                     title = title.ifBlank { "Untitled Movie" },
                                     description = description.ifBlank { "A cinematic release." },
                                     genres = selectedGenres,
@@ -1102,6 +1103,7 @@ fun AdminAddEditMovieScreen(
                     onBackClick()
                 } else {
                     adminViewModel.addMovieWithMultipartUpload(
+                        context = context,
                         title = title.ifBlank { "Untitled Movie" },
                         description = description.ifBlank { "A cinematic release." },
                         genres = selectedGenres,
