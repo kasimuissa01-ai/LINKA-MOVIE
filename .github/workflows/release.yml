@@ -27,7 +27,9 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Decode or Generate Release Keystore
         env:
@@ -76,8 +78,15 @@ jobs:
           echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
           echo "Ref: $REF_NAME, VersionName: $VERSION_NAME, VersionCode: $VERSION_CODE"
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      - name: Ensure Gradle Executable
+        run: |
+          if [ ! -f "gradlew" ]; then
+            echo "Generating Gradle wrapper..."
+            gradle wrapper || true
+          fi
+          if [ -f "gradlew" ]; then
+            chmod +x gradlew
+          fi
 
       - name: Build Signed Release APK
         env:
@@ -86,9 +95,15 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'movieroom_store_pass' }}
         run: |
-          ./gradlew assembleRelease \
-            -PversionCode="${{ env.VERSION_CODE }}" \
-            -PversionName="${{ env.VERSION_NAME }}"
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleRelease \
+              -PversionCode="${{ env.VERSION_CODE }}" \
+              -PversionName="${{ env.VERSION_NAME }}"
+          else
+            gradle assembleRelease \
+              -PversionCode="${{ env.VERSION_CODE }}" \
+              -PversionName="${{ env.VERSION_NAME }}"
+          fi
 
       - name: Verify APK Output
         run: |
