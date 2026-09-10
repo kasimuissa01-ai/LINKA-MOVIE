@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if caller is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if caller has 'admin' custom claim or doc role
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'admin' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      // Any authenticated user can read their own profile; admins can read all
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      // Users can only update their display name; role cannot be altered by standard user
+      allow update: if isAuthenticated() && request.auth.uid == userId && 
+                    !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']);
+      // Only admins can create/promote users or write roles
+      allow write: if isAdmin();
+    }
+
+    // Movies Collection: title, description, genre, coverUrl, r2ObjectKey, durationSec, sizeBytes, uploadedAt
+    match /movies/{movieId} {
+      // Anyone authenticated can browse and read movie catalog metadata
+      allow read: if isAuthenticated();
+      // Only users with verified 'admin' role can create, edit, or delete movies
+      allow write: if isAdmin();
+    }
+
+    // Downloads Collection: downloads/{uid}/{movieId} (status, localPath, progress)
+    match /downloads/{userId}/{movieId} {
+      // Users can only access and update their own download tracking records
+      allow read, write: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+    }
+
+    // Upload Sessions for multipart chunk tracking
+    match /upload_sessions/{sessionId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

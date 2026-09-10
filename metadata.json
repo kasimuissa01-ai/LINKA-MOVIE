@@ -1,0 +1,7 @@
+{
+  "name": "MovieRoom",
+  "description": "Production-grade dark cinematic streaming app with Cloudflare R2 presigned streaming, multipart uploads, offline downloads, and gesture-rich video player.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

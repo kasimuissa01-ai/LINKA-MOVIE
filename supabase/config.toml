@@ -1,0 +1,19 @@
+project_id = "movieroom-stream"
+
+[api]
+port = 54321
+
+[functions.get-download-url]
+verify_jwt = false
+
+[functions.get-upload-url]
+verify_jwt = false
+
+[functions.create-multipart-upload]
+verify_jwt = false
+
+[functions.get-part-url]
+verify_jwt = false
+
+[functions.complete-multipart-upload]
+verify_jwt = false
