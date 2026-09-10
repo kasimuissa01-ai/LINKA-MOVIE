@@ -18,6 +18,8 @@ class AuthViewModel(
 
     val userSession: StateFlow<UserSession> = repository.userSession
 
+    fun isUserLoggedIn(): Boolean = repository.isUserLoggedIn()
+
     private val _authStatusMessage = MutableStateFlow<String?>(null)
     val authStatusMessage: StateFlow<String?> = _authStatusMessage.asStateFlow()
 

@@ -39,7 +39,8 @@ class MovieRepository(
     private val r2Client: CloudflareR2PresignedClient = CloudflareR2PresignedClient(),
     private val authService: FirebaseAuthService? = null,
     private val firestoreService: FirestoreService = FirestoreService(),
-    private val authRepository: AuthRepository = AuthRepository()
+    private val authRepository: AuthRepository = AuthRepository(),
+    private val sessionManager: com.example.data.local.SessionManager? = null
 ) {
     companion object {
         private const val TAG = "MovieRepository"
@@ -51,7 +52,7 @@ class MovieRepository(
 
     // Current user session & role management
     private val _userSession = MutableStateFlow(
-        UserSession(
+        sessionManager?.getSession() ?: UserSession(
             uid = "usr_stream_991",
             email = "alex.streamer@movieroom.io",
             role = UserRole.USER,
@@ -59,6 +60,8 @@ class MovieRepository(
         )
     )
     val userSession: StateFlow<UserSession> = _userSession.asStateFlow()
+
+    fun isUserLoggedIn(): Boolean = sessionManager?.isLoggedIn == true
 
     fun switchRole(role: UserRole) {
         val current = _userSession.value
@@ -68,6 +71,7 @@ class MovieRepository(
             token = if (role == UserRole.ADMIN) "dev_admin_token" else "dev_user_token"
         )
         _userSession.value = newSession
+        sessionManager?.saveSession(newSession)
 
         // Persist role in Firestore users/{uid}
         repositoryScope.launch {
@@ -124,12 +128,15 @@ class MovieRepository(
         verificationId: String,
         otpCode: String
     ): Result<String> = withContext(Dispatchers.IO) {
+        val assignedRole = if (AuthRepository.isAdminPhoneNumber(phoneNumber)) UserRole.ADMIN else UserRole.USER
         if (authService == null) {
             val uid = "user_${System.currentTimeMillis()}"
             val session = UserSession(
                 uid = uid,
                 email = "$phoneNumber@movieroom.stream",
-                role = UserRole.USER,
+                displayName = userName.ifBlank { "Alex Vance" },
+                phoneNumber = phoneNumber,
+                role = assignedRole,
                 token = "dev_phone_token"
             )
             _userSession.value = session
@@ -144,15 +151,18 @@ class MovieRepository(
                 val session = UserSession(
                     uid = uid,
                     email = fbUser?.phoneNumber ?: "$phoneNumber@movieroom.stream",
-                    role = UserRole.USER,
+                    displayName = userName.ifBlank { "Alex Vance" },
+                    phoneNumber = phoneNumber,
+                    role = assignedRole,
                     token = token
                 )
                 _userSession.value = session
+                sessionManager?.saveSession(session)
                 firestoreService.saveUserProfile(
                     uid = uid,
                     email = session.email,
                     displayName = userName,
-                    role = UserRole.USER
+                    role = assignedRole
                 )
                 Result.success("Welcome, $userName")
             },
@@ -162,15 +172,18 @@ class MovieRepository(
                 val session = UserSession(
                     uid = uid,
                     email = "$phoneNumber@movieroom.stream",
-                    role = UserRole.USER,
+                    displayName = userName.ifBlank { "Alex Vance" },
+                    phoneNumber = phoneNumber,
+                    role = assignedRole,
                     token = "dev_phone_token"
                 )
                 _userSession.value = session
+                sessionManager?.saveSession(session)
                 firestoreService.saveUserProfile(
                     uid = uid,
                     email = session.email,
                     displayName = userName,
-                    role = UserRole.USER
+                    role = assignedRole
                 )
                 Result.success("Welcome, $userName")
             }
@@ -188,6 +201,7 @@ class MovieRepository(
         result.fold(
             onSuccess = { session ->
                 _userSession.value = session
+                sessionManager?.saveSession(session)
                 Result.success("Welcome, ${userName.trim()}")
             },
             onFailure = { ex ->
@@ -200,6 +214,7 @@ class MovieRepository(
 
     fun setUserSession(session: UserSession) {
         _userSession.value = session
+        sessionManager?.saveSession(session)
     }
 
     /**
@@ -217,12 +232,14 @@ class MovieRepository(
                 val uid = fbUser?.uid ?: UUID.randomUUID().toString()
                 val token = authService.getIdToken() ?: "token_$uid"
                 firestoreService.saveUserProfile(uid, email, "User", role)
-                _userSession.value = UserSession(
+                val session = UserSession(
                     uid = uid,
                     email = email,
                     role = role,
                     token = token
                 )
+                _userSession.value = session
+                sessionManager?.saveSession(session)
                 Result.success("Account created successfully")
             },
             onFailure = { ex ->
@@ -236,6 +253,7 @@ class MovieRepository(
      */
     fun signOut() {
         authService?.signOut()
+        sessionManager?.clearSession()
         _userSession.value = UserSession(
             uid = "usr_guest_" + UUID.randomUUID().toString().take(6),
             email = "guest@movieroom.io",

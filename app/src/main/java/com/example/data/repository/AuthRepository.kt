@@ -28,6 +28,15 @@ class AuthRepository(
     companion object {
         private const val TAG = "AuthRepository"
         const val COLLECTION_USERS = "users"
+        const val ADMIN_PHONE_NUMBER = "0696102700"
+
+        fun isAdminPhoneNumber(phone: String): Boolean {
+            val digits = phone.filter { it.isDigit() }
+            return digits == "0696102700" ||
+                   digits == "255696102700" ||
+                   digits == "696102700" ||
+                   digits.endsWith("696102700")
+        }
     }
 
     private val _currentUserSession = MutableStateFlow<UserSession?>(null)
@@ -36,10 +45,14 @@ class AuthRepository(
     init {
         // Restore initial session if Firebase has a currently logged-in user
         auth?.currentUser?.let { user ->
+            val phone = user.phoneNumber ?: ""
+            val role = if (isAdminPhoneNumber(phone)) UserRole.ADMIN else UserRole.USER
             _currentUserSession.value = UserSession(
                 uid = user.uid,
-                email = user.email ?: (user.phoneNumber ?: "${user.uid}@movieroom.stream"),
-                role = UserRole.USER,
+                email = user.email ?: (if (phone.isNotBlank()) phone else "${user.uid}@movieroom.stream"),
+                displayName = user.displayName ?: "Alex Vance",
+                phoneNumber = phone.ifBlank { "+255 696 102 700" },
+                role = role,
                 token = "cached_token_${user.uid}"
             )
         }
@@ -57,8 +70,9 @@ class AuthRepository(
         displayName: String,
         phoneNumber: String
     ): Result<UserSession> = withContext(Dispatchers.IO) {
-        val trimmedName = displayName.trim()
+        val trimmedName = displayName.trim().ifBlank { "Alex Vance" }
         val trimmedPhone = phoneNumber.trim()
+        val assignedRole = if (isAdminPhoneNumber(trimmedPhone)) UserRole.ADMIN else UserRole.USER
 
         try {
             val firebaseAuth = auth
@@ -68,14 +82,17 @@ class AuthRepository(
                 val session = UserSession(
                     uid = uid,
                     email = if (trimmedPhone.isNotBlank()) "$trimmedPhone@movieroom.stream" else "$uid@movieroom.stream",
-                    role = UserRole.USER,
+                    displayName = trimmedName,
+                    phoneNumber = trimmedPhone,
+                    role = assignedRole,
                     token = "dev_anon_token_$uid"
                 )
                 saveUserToFirestore(
                     uid = uid,
                     displayName = trimmedName,
                     phoneNumber = trimmedPhone,
-                    isAnonymous = true
+                    isAnonymous = true,
+                    role = if (assignedRole == UserRole.ADMIN) "admin" else "user"
                 )
                 _currentUserSession.value = session
                 return@withContext Result.success(session)
@@ -105,7 +122,8 @@ class AuthRepository(
                 uid = uid,
                 displayName = trimmedName,
                 phoneNumber = trimmedPhone,
-                isAnonymous = true
+                isAnonymous = true,
+                role = if (assignedRole == UserRole.ADMIN) "admin" else "user"
             )
 
             // 4. Retrieve ID token for authenticated requests
@@ -118,11 +136,13 @@ class AuthRepository(
             val session = UserSession(
                 uid = uid,
                 email = user.email ?: (if (trimmedPhone.isNotBlank()) "$trimmedPhone@movieroom.stream" else "$uid@movieroom.stream"),
-                role = UserRole.USER,
+                displayName = trimmedName,
+                phoneNumber = trimmedPhone,
+                role = assignedRole,
                 token = idToken
             )
             _currentUserSession.value = session
-            Log.d(TAG, "Successfully signed in anonymously and saved profile to Firestore for user: $uid")
+            Log.d(TAG, "Successfully signed in anonymously and saved profile to Firestore for user: $uid, role=$assignedRole")
             Result.success(session)
 
         } catch (e: Exception) {
@@ -132,7 +152,9 @@ class AuthRepository(
             val fallbackSession = UserSession(
                 uid = fallbackUid,
                 email = if (trimmedPhone.isNotBlank()) "$trimmedPhone@movieroom.stream" else "$fallbackUid@movieroom.stream",
-                role = UserRole.USER,
+                displayName = trimmedName,
+                phoneNumber = trimmedPhone,
+                role = assignedRole,
                 token = "token_$fallbackUid"
             )
             _currentUserSession.value = fallbackSession

@@ -2,6 +2,8 @@ package com.example.presentation.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.remote.TmdbMovieResult
+import com.example.data.remote.TmdbService
 import com.example.data.repository.MovieRepository
 import com.example.domain.model.Movie
 import com.example.domain.model.UploadSession
@@ -26,7 +28,8 @@ data class UploadProgressState(
 )
 
 class AdminViewModel(
-    private val repository: MovieRepository
+    private val repository: MovieRepository,
+    private val tmdbService: TmdbService = TmdbService()
 ) : ViewModel() {
 
     val movies: StateFlow<List<Movie>> = repository.getAllMovies()
@@ -39,7 +42,44 @@ class AdminViewModel(
     private val _uploadState = MutableStateFlow(UploadProgressState())
     val uploadState: StateFlow<UploadProgressState> = _uploadState.asStateFlow()
 
+    // TMDB Search integration states
+    private val _tmdbSearchResults = MutableStateFlow<List<TmdbMovieResult>>(emptyList())
+    val tmdbSearchResults: StateFlow<List<TmdbMovieResult>> = _tmdbSearchResults.asStateFlow()
+
+    private val _isSearchingTmdb = MutableStateFlow(false)
+    val isSearchingTmdb: StateFlow<Boolean> = _isSearchingTmdb.asStateFlow()
+
+    private var tmdbSearchJob: Job? = null
     private var activeUploadJob: Job? = null
+
+    fun searchTmdb(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) {
+            _tmdbSearchResults.value = emptyList()
+            _isSearchingTmdb.value = false
+            return
+        }
+
+        tmdbSearchJob?.cancel()
+        tmdbSearchJob = viewModelScope.launch {
+            _isSearchingTmdb.value = true
+            delay(200) // Debounce typing
+            try {
+                val results = tmdbService.searchMovies(trimmed)
+                _tmdbSearchResults.value = results
+            } catch (e: Exception) {
+                _tmdbSearchResults.value = emptyList()
+            } finally {
+                _isSearchingTmdb.value = false
+            }
+        }
+    }
+
+    fun clearTmdbSearch() {
+        tmdbSearchJob?.cancel()
+        _tmdbSearchResults.value = emptyList()
+        _isSearchingTmdb.value = false
+    }
 
     fun addMovieWithMultipartUpload(
         title: String,
@@ -49,7 +89,8 @@ class AdminViewModel(
         fileSizeMb: Long,
         streamUrl: String = "",
         releaseYear: Int = 2026,
-        rating: Double = 4.8
+        rating: Double = 4.8,
+        isFeatured: Boolean = false
     ) {
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
         val videoKey = "movies/${title.lowercase().replace(" ", "_")}.mp4"
@@ -65,12 +106,12 @@ class AdminViewModel(
             else "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=800&auto=format&fit=crop&q=80",
             videoKey = videoKey,
             videoStreamUrl = fallbackStream,
-            durationMinutes = 110,
+            durationMinutes = 118,
             fileSizeMb = fileSizeMb,
             releaseYear = releaseYear,
             rating = rating,
-            cast = listOf("Cast Lead"),
-            isFeatured = false
+            cast = listOf("Movie Cast"),
+            isFeatured = isFeatured
         )
 
         activeUploadJob?.cancel()
@@ -100,7 +141,7 @@ class AdminViewModel(
                             overallProgress = overall
                         )
                     }
-                    delay(150)
+                    delay(120)
                 }
 
                 _uploadState.value = _uploadState.value.copy(

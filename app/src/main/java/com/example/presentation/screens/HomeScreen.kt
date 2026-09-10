@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -29,6 +30,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
@@ -38,6 +41,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.domain.model.Movie
+import com.example.presentation.components.DailyMovieRecommendationPopup
 import com.example.presentation.components.MoviePosterCard
 import com.example.presentation.viewmodel.DownloadViewModel
 import com.example.presentation.viewmodel.MovieViewModel
@@ -66,16 +72,36 @@ import com.example.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.os.Build
+import android.Manifest
+import com.example.presentation.viewmodel.AppUpdateViewModel
+
 @Composable
 fun HomeScreen(
     movieViewModel: MovieViewModel,
     downloadViewModel: DownloadViewModel,
     onMovieClick: (Movie) -> Unit,
     onPlayClick: (Movie) -> Unit,
+    updateViewModel: AppUpdateViewModel? = null,
     modifier: Modifier = Modifier
 ) {
     val state by movieViewModel.uiState.collectAsState()
+    val updateInfo by updateViewModel?.updateInfo?.collectAsState() ?: remember { mutableStateOf(null) }
     val context = LocalContext.current
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ -> }
+
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     if (state.isLoading) {
         Box(
@@ -105,6 +131,77 @@ fun HomeScreen(
                         downloadViewModel.startDownload(movie, context)
                     }
                 )
+            }
+        }
+
+        // Daily Movie Recommendation In-App Popup
+        if (state.allMovies.isNotEmpty()) {
+            item {
+                DailyMovieRecommendationPopup(
+                    movies = state.allMovies,
+                    onMovieClick = onMovieClick,
+                    onPlayClick = onPlayClick,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+        }
+
+        // Live App Update Available Banner
+        if (updateInfo?.isUpdateAvailable == true) {
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = CinematicRed.copy(alpha = 0.15f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .clickable { updateViewModel?.openUpdateDialog() }
+                        .testTag("home_update_banner")
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(CinematicRed),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Update Available (v${updateInfo?.latestVersion})",
+                                    color = TextPrimary,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Tap to download & install latest features",
+                                    color = TextSecondary,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = { updateViewModel?.openUpdateDialog() },
+                            colors = ButtonDefaults.buttonColors(containerColor = CinematicRed, contentColor = Color.White),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Text("Update", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
             }
         }
 
@@ -206,15 +303,41 @@ fun HeroCarousel(
                         .background(
                             Brush.verticalGradient(
                                 colors = listOf(
+                                    Color.Black.copy(alpha = 0.60f),
                                     Color.Transparent,
                                     Color(0x6609090C),
                                     Color(0xDD09090C),
                                     ObsidianBlack
                                 ),
-                                startY = 100f
+                                startY = 0f
                             )
                         )
                 )
+
+                // Top Floating Brand Bar
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                ) {
+                    AsyncImage(
+                        model = com.example.MainActivity.APP_LOGO_URL,
+                        contentDescription = "MovieRoom Logo",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "MovieRoom",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
 
                 // Bottom Content
                 Column(

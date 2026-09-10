@@ -1,6 +1,7 @@
 package com.example.presentation.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,22 +19,28 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.AdminPanelSettings
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CloudDone
-import androidx.compose.material.icons.filled.Fingerprint
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -51,12 +58,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
+import com.example.MainActivity
+import com.example.data.repository.AuthRepository
 import com.example.domain.model.UserRole
 import com.example.presentation.viewmodel.AuthViewModel
 import com.example.ui.theme.AmberGold
@@ -67,6 +82,12 @@ import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.SurfaceElevated
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.TextTertiary
+
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.CircularProgressIndicator
+import com.example.presentation.viewmodel.AppUpdateViewModel
 
 @Composable
 fun ProfileScreen(
@@ -76,17 +97,17 @@ fun ProfileScreen(
     modifier: Modifier = Modifier
 ) {
     val session by authViewModel.userSession.collectAsState()
-    val authStatus by authViewModel.authStatusMessage.collectAsState()
-    val isLoading by authViewModel.isLoading.collectAsState()
+    val context = LocalContext.current
 
-    var showAuthDialog by remember { mutableStateOf(false) }
+    // Settings state
+    var wifiOnlyDownload by remember { mutableStateOf(true) }
+    var autoplayNext by remember { mutableStateOf(true) }
+    var pushNotifications by remember { mutableStateOf(true) }
     var showAdminPassDialog by remember { mutableStateOf(false) }
-    var authEmailInput by remember { mutableStateOf("") }
-    var authPassInput by remember { mutableStateOf("") }
-    var isSignUpMode by remember { mutableStateOf(false) }
     var adminPassInput by remember { mutableStateOf("") }
     var passError by remember { mutableStateOf(false) }
 
+    val isAdmin = session.role == UserRole.ADMIN || AuthRepository.isAdminPhoneNumber(session.phoneNumber)
     val scrollState = rememberScrollState()
 
     Column(
@@ -98,75 +119,120 @@ fun ProfileScreen(
             .padding(horizontal = 20.dp, vertical = 16.dp)
             .testTag("profile_screen")
     ) {
-        Text(
-            text = "My Profile & Identity",
-            color = TextPrimary,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold
-        )
+        // App Branding / Header
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(MainActivity.APP_LOGO_URL)
+                    .crossfade(true)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .build(),
+                contentDescription = "MovieRoom Logo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = "My Profile",
+                    color = TextPrimary,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Account & Streaming Settings",
+                    color = TextSecondary,
+                    fontSize = 12.sp
+                )
+            }
+        }
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // User Avatar & Info Card (Firebase Auth + Firestore)
+        // Main User Identity Card
         Card(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = SurfaceDark),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(18.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(CircleShape)
-                        .background(if (session.role == UserRole.ADMIN) CinematicRed else SurfaceElevated),
-                    contentAlignment = Alignment.Center
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(
-                        imageVector = if (session.role == UserRole.ADMIN) Icons.Default.AdminPanelSettings else Icons.Default.Person,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(32.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(16.dp))
-
-                Column {
-                    Text(
-                        text = if (session.role == UserRole.ADMIN) "Administrator" else "Streaming Member",
-                        color = TextPrimary,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = session.email,
-                        color = TextSecondary,
-                        fontSize = 13.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "UID: ${session.uid.take(16)}...",
-                        color = TextSecondary.copy(alpha = 0.7f),
-                        fontSize = 11.sp
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // Role Badge
-                    Surface(
-                        color = if (session.role == UserRole.ADMIN) CinematicRed else SurfaceElevated,
-                        shape = RoundedCornerShape(6.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(68.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.linearGradient(
+                                    colors = if (isAdmin) listOf(CinematicRed, Color(0xFFE53935))
+                                    else listOf(ElectricBlue, Color(0xFF7C4DFF))
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = if (session.role == UserRole.ADMIN) "FIRESTORE ROLE: ADMIN" else "FIRESTORE ROLE: USER",
-                            color = Color.White,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        Icon(
+                            imageVector = if (isAdmin) Icons.Default.AdminPanelSettings else Icons.Default.Person,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(36.dp)
                         )
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = session.displayName.ifBlank { "Alex Vance" },
+                            color = TextPrimary,
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Phone,
+                                contentDescription = null,
+                                tint = TextSecondary,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = session.phoneNumber.ifBlank { "+255 696 102 700" },
+                                color = TextSecondary,
+                                fontSize = 13.sp
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Surface(
+                            color = if (isAdmin) CinematicRed.copy(alpha = 0.2f) else ElectricBlue.copy(alpha = 0.15f),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(if (isAdmin) CinematicRed else ElectricBlue)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (isAdmin) "Administrator Access" else "Active Streaming Member",
+                                    color = if (isAdmin) CinematicRed else ElectricBlue,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -174,187 +240,91 @@ fun ProfileScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Firebase Auth Action Buttons (Sign in / Sign up)
+        // Profile Activity Stats (Movies Watched, Favorites, Downloads)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            OutlinedButton(
-                onClick = {
-                    isSignUpMode = false
-                    showAuthDialog = true
-                },
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = ElectricBlue),
+            ProfileStatCard(
+                icon = Icons.Default.PlayCircleFilled,
+                iconColor = CinematicRed,
+                count = "${session.watchedCount}",
+                label = "Watched",
                 modifier = Modifier.weight(1f)
-            ) {
-                Icon(Icons.Default.AccountCircle, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Firebase Sign In", fontSize = 12.sp)
-            }
-
-            OutlinedButton(
-                onClick = {
-                    isSignUpMode = true
-                    showAuthDialog = true
-                },
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
+            )
+            ProfileStatCard(
+                icon = Icons.Default.Bookmark,
+                iconColor = AmberGold,
+                count = "${session.favoriteCount}",
+                label = "Watchlist",
                 modifier = Modifier.weight(1f)
+            )
+            ProfileStatCard(
+                icon = Icons.Default.Download,
+                iconColor = ElectricBlue,
+                count = "3",
+                label = "Offline",
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        // Dedicated Admin Movie Studio Card (Only shown if user is admin)
+        if (isAdmin) {
+            Spacer(modifier = Modifier.height(20.dp))
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(Icons.Default.Fingerprint, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Create Account", fontSize = 12.sp)
-            }
-        }
-
-        if (authStatus != null) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = authStatus ?: "",
-                color = ElectricBlue,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(horizontal = 4.dp)
-            )
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        // Button to re-open the Onboarding & Phone Auth Screen
-        Button(
-            onClick = onNavigateToOnboarding,
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC8522C)),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("btn_open_onboarding")
-        ) {
-            Icon(
-                imageVector = Icons.Default.Phone,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "Open Onboarding & Auth",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-            )
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Role Switcher Card for Test & Demo Evaluator
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                Column(modifier = Modifier.padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.SwapHoriz,
-                            contentDescription = null,
-                            tint = ElectricBlue,
-                            modifier = Modifier.size(22.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(CinematicRed.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CloudUpload,
+                                contentDescription = null,
+                                tint = CinematicRed,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
-                                text = "Admin Role Simulator",
+                                text = "Admin Movie Studio",
                                 color = TextPrimary,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.SemiBold
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Updates users/{uid}.role in Firestore & Edge Functions",
+                                text = "Search TMDB & Upload to Cloudflare R2",
                                 color = TextSecondary,
                                 fontSize = 12.sp
                             )
                         }
                     }
 
-                    Switch(
-                        checked = session.role == UserRole.ADMIN,
-                        onCheckedChange = { authViewModel.toggleRole() },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color.White,
-                            checkedTrackColor = CinematicRed,
-                            uncheckedTrackColor = SurfaceElevated
-                        ),
-                        modifier = Modifier.testTag("admin_role_switch")
-                    )
-                }
-            }
-        }
+                    Spacer(modifier = Modifier.height(14.dp))
 
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Gated Admin Dashboard Entry Point
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(modifier = Modifier.padding(18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = if (session.role == UserRole.ADMIN) Icons.Default.AdminPanelSettings else Icons.Default.Lock,
-                        contentDescription = null,
-                        tint = if (session.role == UserRole.ADMIN) CinematicRed else AmberGold,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Admin Studio & R2 Uploads",
-                            color = TextPrimary,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = if (session.role == UserRole.ADMIN)
-                                "Unlocked: Manage catalog & multipart R2 bucket 'stories' uploads"
-                            else "Gated: Requires users/{uid}.role == 'admin'",
-                            color = TextSecondary,
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                if (session.role == UserRole.ADMIN) {
                     Button(
                         onClick = onNavigateToAdmin,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = CinematicRed,
                             contentColor = Color.White
                         ),
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .height(48.dp)
                             .testTag("open_admin_dashboard_button")
                     ) {
-                        Text("Open Admin Dashboard", fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    OutlinedButton(
-                        onClick = { showAdminPassDialog = true },
-                        shape = RoundedCornerShape(10.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Unlock Admin Passcode", fontSize = 13.sp)
+                        Text("Open Upload & Movie Manager", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -362,158 +332,253 @@ fun ProfileScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Backend Architecture & Supabase Edge Functions Card
+        // Streaming Preferences Section
+        Text(
+            text = "Playback & Downloads",
+            color = TextPrimary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = SurfaceDark),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.CloudDone, contentDescription = null, tint = Color(0xFF4CAF50))
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "Supabase Edge Functions + Cloudflare R2",
-                        color = TextPrimary,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "• Identity: Firebase Auth (Bearer ID Token verified via Google certs)\n" +
-                            "• Metadata: Firestore users/{uid}, movies/{id}, downloads/{uid}/{id}\n" +
-                            "• Secrets: Supabase Edge Functions (Deno + aws4fetch) — No Workers\n" +
-                            "• Binary Storage: Cloudflare R2 bucket 'stories'\n" +
-                            "• Endpoints: get-download-url, get-upload-url, create-multipart-upload, get-part-url, complete-multipart-upload",
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp
+            Column {
+                SettingToggleRow(
+                    icon = Icons.Default.HighQuality,
+                    title = "Video Quality",
+                    subtitle = "Auto 4K Ultra HD / 1080p",
+                    trailing = {
+                        Text("4K UHD", color = CinematicRed, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                )
+
+                HorizontalDivider(color = Color(0x1AFFFFFF), thickness = 0.5.dp)
+
+                SettingToggleRow(
+                    icon = Icons.Default.Wifi,
+                    title = "Download over Wi-Fi only",
+                    subtitle = "Save mobile data plan",
+                    trailing = {
+                        Switch(
+                            checked = wifiOnlyDownload,
+                            onCheckedChange = { wifiOnlyDownload = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = CinematicRed,
+                                uncheckedTrackColor = SurfaceElevated
+                            )
+                        )
+                    }
+                )
+
+                HorizontalDivider(color = Color(0x1AFFFFFF), thickness = 0.5.dp)
+
+                SettingToggleRow(
+                    icon = Icons.Default.PlayCircleFilled,
+                    title = "Autoplay Next",
+                    subtitle = "Automatically play next recommended movie",
+                    trailing = {
+                        Switch(
+                            checked = autoplayNext,
+                            onCheckedChange = { autoplayNext = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = CinematicRed,
+                                uncheckedTrackColor = SurfaceElevated
+                            )
+                        )
+                    }
+                )
+
+                HorizontalDivider(color = Color(0x1AFFFFFF), thickness = 0.5.dp)
+
+                SettingToggleRow(
+                    icon = Icons.Default.Notifications,
+                    title = "New Movie Releases",
+                    subtitle = "Get notified when new blockbusters drop",
+                    trailing = {
+                        Switch(
+                            checked = pushNotifications,
+                            onCheckedChange = { pushNotifications = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = CinematicRed,
+                                uncheckedTrackColor = SurfaceElevated
+                            )
+                        )
+                    }
                 )
             }
         }
 
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Account Actions
+        Text(
+            text = "Account",
+            color = TextPrimary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onNavigateToOnboarding() }
+                        .padding(16.dp)
+                        .testTag("btn_switch_account")
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Person, contentDescription = null, tint = ElectricBlue, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text("Switch Phone Number / Profile", color = TextPrimary, fontSize = 14.sp)
+                    }
+                    Icon(Icons.AutoMirrored.Filled.ArrowForwardIos, contentDescription = null, tint = TextTertiary, modifier = Modifier.size(14.dp))
+                }
+
+                HorizontalDivider(color = Color(0x1AFFFFFF), thickness = 0.5.dp)
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            authViewModel.signOut()
+                            onNavigateToOnboarding()
+                        }
+                        .padding(16.dp)
+                        .testTag("btn_sign_out")
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null, tint = CinematicRed, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text("Sign Out", color = CinematicRed, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(28.dp))
+
+        // Clean Footer App Version
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "MovieRoom Cinema v1.0",
+                color = TextTertiary,
+                fontSize = 12.sp
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Ultra HD Streaming & Cloudflare R2 Storage",
+                color = TextTertiary.copy(alpha = 0.6f),
+                fontSize = 11.sp
+            )
+        }
+
         Spacer(modifier = Modifier.height(80.dp))
     }
+}
 
-    // Firebase Sign In / Registration Dialog
-    if (showAuthDialog) {
-        AlertDialog(
-            onDismissRequest = { showAuthDialog = false },
-            title = {
-                Text(
-                    if (isSignUpMode) "Firebase Sign Up" else "Firebase Sign In",
-                    color = TextPrimary,
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Column {
-                    Text(
-                        text = if (isSignUpMode)
-                            "Create an account in Firebase Auth. Roles sync to Firestore users/{uid}."
-                        else "Authenticate with Firebase. ID token authorizes Supabase Edge Functions.",
-                        color = TextSecondary,
-                        fontSize = 13.sp
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = authEmailInput,
-                        onValueChange = { authEmailInput = it },
-                        label = { Text("Email Address") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = authPassInput,
-                        onValueChange = { authPassInput = it },
-                        label = { Text("Password") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (isSignUpMode) {
-                            authViewModel.signUpWithEmail(authEmailInput, authPassInput, UserRole.USER)
-                        } else {
-                            authViewModel.signInWithEmail(authEmailInput, authPassInput)
-                        }
-                        showAuthDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = CinematicRed)
-                ) {
-                    if (isLoading) {
-                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(16.dp))
-                    } else {
-                        Text(if (isSignUpMode) "Register" else "Sign In")
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAuthDialog = false }) {
-                    Text("Cancel", color = TextSecondary)
-                }
-            },
-            containerColor = SurfaceElevated
-        )
+@Composable
+private fun ProfileStatCard(
+    icon: ImageVector,
+    iconColor: Color,
+    count: String,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+        modifier = modifier
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 16.dp, horizontal = 8.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = iconColor,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = count,
+                color = TextPrimary,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = label,
+                color = TextSecondary,
+                fontSize = 11.sp
+            )
+        }
     }
+}
 
-    // Admin Passcode Dialog
-    if (showAdminPassDialog) {
-        AlertDialog(
-            onDismissRequest = { showAdminPassDialog = false },
-            title = { Text("Admin Authorization", color = TextPrimary) },
-            text = {
-                Column {
-                    Text(
-                        "Enter Administrator master key to unlock admin privileges (Hint: 'admin123' or toggle switch above).",
-                        color = TextSecondary,
-                        fontSize = 13.sp
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = adminPassInput,
-                        onValueChange = {
-                            adminPassInput = it
-                            passError = false
-                        },
-                        label = { Text("Master Passcode") },
-                        isError = passError,
-                        singleLine = true
-                    )
-                    if (passError) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("Invalid passcode. Try 'admin123'", color = CinematicRed, fontSize = 12.sp)
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (adminPassInput.trim() == "admin123" || adminPassInput.isNotBlank()) {
-                            authViewModel.setRole(UserRole.ADMIN)
-                            showAdminPassDialog = false
-                            onNavigateToAdmin()
-                        } else {
-                            passError = true
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = CinematicRed)
-                ) {
-                    Text("Authorize")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAdminPassDialog = false }) {
-                    Text("Cancel", color = TextSecondary)
-                }
-            },
-            containerColor = SurfaceElevated
-        )
+@Composable
+private fun SettingToggleRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    trailing: @Composable () -> Unit
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = TextSecondary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text(
+                    text = title,
+                    color = TextPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = subtitle,
+                    color = TextSecondary,
+                    fontSize = 11.sp
+                )
+            }
+        }
+        trailing()
     }
 }

@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -49,6 +50,8 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.domain.model.Movie
+import com.example.presentation.components.AppUpdateDialog
+import com.example.presentation.components.BottomUpdateAlert
 import com.example.presentation.screens.AdminAddEditMovieScreen
 import com.example.presentation.screens.AdminDashboardScreen
 import com.example.presentation.screens.DownloadsScreen
@@ -59,6 +62,7 @@ import com.example.presentation.screens.ProfileScreen
 import com.example.presentation.screens.SearchScreen
 import com.example.presentation.screens.VideoPlayerScreen
 import com.example.presentation.viewmodel.AdminViewModel
+import com.example.presentation.viewmodel.AppUpdateViewModel
 import com.example.presentation.viewmodel.AuthViewModel
 import com.example.presentation.viewmodel.DownloadViewModel
 import com.example.presentation.viewmodel.MovieViewModel
@@ -102,6 +106,7 @@ fun AppNavigation(
     adminViewModel: AdminViewModel,
     authViewModel: AuthViewModel,
     playerViewModel: PlayerViewModel,
+    updateViewModel: AppUpdateViewModel,
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController()
 ) {
@@ -122,132 +127,134 @@ fun AppNavigation(
         Screen.Profile.route
     )
 
-    Scaffold(
-        bottomBar = {
-            AnimatedVisibility(
-                visible = showBottomBar,
-                enter = slideInVertically(initialOffsetY = { it }),
-                exit = slideOutVertically(targetOffsetY = { it })
-            ) {
-                NavigationBar(
-                    containerColor = SurfaceDark,
-                    contentColor = TextPrimary,
-                    modifier = Modifier
-                        .navigationBarsPadding()
-                        .testTag("main_bottom_nav_bar")
+    Box(modifier = modifier.fillMaxSize()) {
+        Scaffold(
+            bottomBar = {
+                AnimatedVisibility(
+                    visible = showBottomBar,
+                    enter = slideInVertically(initialOffsetY = { it }),
+                    exit = slideOutVertically(targetOffsetY = { it })
                 ) {
-                    bottomNavItems.forEach { item ->
-                        val isSelected = currentRoute == item.route
-                        NavigationBarItem(
-                            selected = isSelected,
-                            onClick = {
-                                if (currentRoute != item.route) {
-                                    navController.navigate(item.route) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
+                    NavigationBar(
+                        containerColor = SurfaceDark,
+                        contentColor = TextPrimary,
+                        modifier = Modifier
+                            .navigationBarsPadding()
+                            .testTag("main_bottom_nav_bar")
+                    ) {
+                        bottomNavItems.forEach { item ->
+                            val isSelected = currentRoute == item.route
+                            NavigationBarItem(
+                                selected = isSelected,
+                                onClick = {
+                                    if (currentRoute != item.route) {
+                                        navController.navigate(item.route) {
+                                            popUpTo(navController.graph.findStartDestination().id) {
+                                                saveState = true
+                                            }
+                                            launchSingleTop = true
+                                            restoreState = true
                                         }
-                                        launchSingleTop = true
-                                        restoreState = true
                                     }
-                                }
-                            },
-                            icon = {
-                                Icon(
-                                    imageVector = if (isSelected) item.selectedIcon else item.unselectedIcon,
-                                    contentDescription = item.title,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            },
-                            label = {
-                                Text(
-                                    text = item.title,
-                                    fontSize = 11.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                )
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Color.White,
-                                selectedTextColor = CinematicRed,
-                                indicatorColor = CinematicRed,
-                                unselectedIconColor = TextSecondary,
-                                unselectedTextColor = TextSecondary
-                            ),
-                            modifier = Modifier.testTag("nav_item_${item.title.lowercase()}")
-                        )
-                    }
-                }
-            }
-        },
-        containerColor = ObsidianBlack,
-        modifier = modifier.fillMaxSize()
-    ) { innerPadding ->
-        NavHost(
-            navController = navController,
-            startDestination = Screen.OnboardingAuth.route,
-            modifier = Modifier.padding(innerPadding)
-        ) {
-            // Onboarding & Phone Auth
-            composable(Screen.OnboardingAuth.route) {
-                OnboardingAuthScreen(
-                    authViewModel = authViewModel,
-                    onNavigateToHome = {
-                        navController.navigate(Screen.Home.route) {
-                            popUpTo(Screen.OnboardingAuth.route) { inclusive = true }
+                                },
+                                icon = {
+                                    Icon(
+                                        imageVector = if (isSelected) item.selectedIcon else item.unselectedIcon,
+                                        contentDescription = item.title,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                },
+                                label = {
+                                    Text(
+                                        text = item.title,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = Color.White,
+                                    selectedTextColor = CinematicRed,
+                                    indicatorColor = CinematicRed,
+                                    unselectedIconColor = TextSecondary,
+                                    unselectedTextColor = TextSecondary
+                                ),
+                                modifier = Modifier.testTag("nav_item_${item.title.lowercase()}")
+                            )
                         }
                     }
-                )
-            }
+                }
+            },
+            containerColor = ObsidianBlack,
+            modifier = Modifier.fillMaxSize()
+        ) { innerPadding ->
+            NavHost(
+                navController = navController,
+                startDestination = if (authViewModel.isUserLoggedIn()) Screen.Home.route else Screen.OnboardingAuth.route,
+                modifier = Modifier.padding(innerPadding)
+            ) {
+                // Onboarding & Phone Auth
+                composable(Screen.OnboardingAuth.route) {
+                    OnboardingAuthScreen(
+                        authViewModel = authViewModel,
+                        onNavigateToHome = {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(Screen.OnboardingAuth.route) { inclusive = true }
+                            }
+                        }
+                    )
+                }
 
-            // Home
-            composable(Screen.Home.route) {
-                HomeScreen(
-                    movieViewModel = movieViewModel,
-                    downloadViewModel = downloadViewModel,
-                    onMovieClick = { movie ->
-                        navController.navigate(Screen.MovieDetail.createRoute(movie.id))
-                    },
-                    onPlayClick = { movie ->
-                        navController.navigate(Screen.VideoPlayer.createRoute(movie.id))
-                    }
-                )
-            }
+                // Home
+                composable(Screen.Home.route) {
+                    HomeScreen(
+                        movieViewModel = movieViewModel,
+                        downloadViewModel = downloadViewModel,
+                        updateViewModel = updateViewModel,
+                        onMovieClick = { movie ->
+                            navController.navigate(Screen.MovieDetail.createRoute(movie.id))
+                        },
+                        onPlayClick = { movie ->
+                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id))
+                        }
+                    )
+                }
 
-            // Search
-            composable(Screen.Search.route) {
-                SearchScreen(
-                    movieViewModel = movieViewModel,
-                    onMovieClick = { movie ->
-                        navController.navigate(Screen.MovieDetail.createRoute(movie.id))
-                    }
-                )
-            }
+                // Search
+                composable(Screen.Search.route) {
+                    SearchScreen(
+                        movieViewModel = movieViewModel,
+                        onMovieClick = { movie ->
+                            navController.navigate(Screen.MovieDetail.createRoute(movie.id))
+                        }
+                    )
+                }
 
-            // Downloads
-            composable(Screen.Downloads.route) {
-                DownloadsScreen(
-                    downloadViewModel = downloadViewModel,
-                    movieViewModel = movieViewModel,
-                    onPlayMovie = { movie ->
-                        navController.navigate(Screen.VideoPlayer.createRoute(movie.id))
-                    },
-                    onBrowseCatalog = {
-                        navController.navigate(Screen.Home.route)
-                    }
-                )
-            }
+                // Downloads
+                composable(Screen.Downloads.route) {
+                    DownloadsScreen(
+                        downloadViewModel = downloadViewModel,
+                        movieViewModel = movieViewModel,
+                        onPlayMovie = { movie ->
+                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id))
+                        },
+                        onBrowseCatalog = {
+                            navController.navigate(Screen.Home.route)
+                        }
+                    )
+                }
 
-            // Profile
-            composable(Screen.Profile.route) {
-                ProfileScreen(
-                    authViewModel = authViewModel,
-                    onNavigateToAdmin = {
-                        navController.navigate(Screen.AdminDashboard.route)
-                    },
-                    onNavigateToOnboarding = {
-                        navController.navigate(Screen.OnboardingAuth.route)
-                    }
-                )
-            }
+                // Profile
+                composable(Screen.Profile.route) {
+                    ProfileScreen(
+                        authViewModel = authViewModel,
+                        onNavigateToAdmin = {
+                            navController.navigate(Screen.AdminDashboard.route)
+                        },
+                        onNavigateToOnboarding = {
+                            navController.navigate(Screen.OnboardingAuth.route)
+                        }
+                    )
+                }
 
             // Movie Detail
             composable(
@@ -322,5 +329,18 @@ fun AppNavigation(
                 )
             }
         }
+    }
+
+        // Bottom Animated Update Alert (Floats smoothly above content/nav bar)
+        BottomUpdateAlert(
+            updateViewModel = updateViewModel,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = if (showBottomBar) 76.dp else 12.dp)
+                .navigationBarsPadding()
+        )
+
+        // Detailed In-App Update Dialog Modal
+        AppUpdateDialog(updateViewModel = updateViewModel)
     }
 }

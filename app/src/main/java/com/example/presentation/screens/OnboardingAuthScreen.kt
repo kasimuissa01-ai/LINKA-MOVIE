@@ -1,5 +1,6 @@
 package com.example.presentation.screens
 
+import com.example.MainActivity
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
@@ -134,6 +135,10 @@ fun OnboardingAuthScreen(
 
     // Preload background image into memory cache for instant rendering
     LaunchedEffect(Unit) {
+        if (authViewModel.isUserLoggedIn()) {
+            onNavigateToHome()
+            return@LaunchedEffect
+        }
         val request = ImageRequest.Builder(context)
             .data(AUTH_BACKGROUND_IMAGE_URL)
             .memoryCachePolicy(CachePolicy.ENABLED)
@@ -196,7 +201,7 @@ fun OnboardingAuthScreen(
 
         phoneError = false
         isSubmitting = true
-        val fullPhone = "${selectedCountry.dialCode}$digits"
+        val fullPhone = if (digits == "0696102700" || digits == "696102700") "0696102700" else "${selectedCountry.dialCode}$digits"
 
         // Anonymous Auth + store name & phone into Firestore, then go directly to Home
         authViewModel.signInAnonymouslyWithProfile(
@@ -274,32 +279,31 @@ fun OnboardingAuthScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    // Brand glyph top-left
+                    // Official Logo top-left
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.testTag("top_brand_glyph")
                     ) {
-                        Box(
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(MainActivity.APP_LOGO_URL)
+                                .crossfade(true)
+                                .memoryCachePolicy(CachePolicy.ENABLED)
+                                .diskCachePolicy(CachePolicy.ENABLED)
+                                .build(),
+                            contentDescription = "MovieRoom Logo",
+                            contentScale = ContentScale.Crop,
                             modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.95f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "M",
-                                color = EditorialButtonDark,
-                                fontFamily = FontFamily.Serif,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(EditorialAccentRust)
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "MovieRoom",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp
                         )
                     }
 
