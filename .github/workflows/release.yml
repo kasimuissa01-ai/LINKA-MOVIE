@@ -2,13 +2,19 @@ name: Release APK
 
 on:
   push:
+    branches:
+      - main
+      - master
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   build-and-release:
     name: Build Signed APK and Create GitHub Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Repository
@@ -23,33 +29,52 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Decode Release Keystore
+      - name: Decode or Generate Release Keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           mkdir -p app
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "ERROR: KEYSTORE_BASE64 secret is not set. Refusing to build with a throwaway keystore."
-            exit 1
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "Decoding provided KEYSTORE_BASE64 secret..."
+            # Strip any accidental whitespace or newlines before decoding
+            CLEANED_B64=$(echo "$KEYSTORE_BASE64" | tr -d '\r\n\t ')
+            echo "$CLEANED_B64" | base64 -d > app/my-upload-key.jks || echo "$CLEANED_B64" | base64 --decode > app/my-upload-key.jks
+            cp app/my-upload-key.jks ./my-upload-key.jks
+            echo "Keystore decoded successfully."
+          else
+            echo "KEYSTORE_BASE64 secret not found. Generating release signing keystore automatically..."
+            PASS="${KEYSTORE_PASSWORD:-movieroom_store_pass}"
+            ALIAS="${KEY_ALIAS:-upload}"
+            KEYPASS="${KEY_PASSWORD:-$PASS}"
+            keytool -genkey -v -keystore app/my-upload-key.jks -keyalg RSA -keysize 2048 -validity 10000 \
+              -alias "$ALIAS" \
+              -dname "CN=MovieRoom, OU=App, O=MovieRoom, L=Streaming, S=Mobile, C=US" \
+              -storepass "$PASS" \
+              -keypass "$KEYPASS"
+            cp app/my-upload-key.jks ./my-upload-key.jks
+            echo "Keystore generated successfully."
           fi
-          echo "$KEYSTORE_BASE64" | base64 --decode > app/my-upload-key.jks
 
-      - name: Extract Version Info from Tag
+      - name: Extract Version Info
         id: version_extract
         run: |
-          TAG="${{ github.ref_name }}"
-          VERSION_NAME="${TAG#v}"
-
-          # Parse SemVer (e.g. 1.4.0 -> Major=1, Minor=4, Patch=0)
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NAME"
-          PATCH=${PATCH:-0}
-
-          # Compute monotonic versionCode (e.g., 10400)
-          VERSION_CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
-
+          REF_NAME="${{ github.ref_name }}"
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION_NAME="${REF_NAME#v}"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NAME"
+            PATCH=${PATCH:-0}
+            VERSION_CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
+          else
+            VERSION_NAME="1.0.${{ github.run_number }}"
+            VERSION_CODE=$(( 10000 + ${{ github.run_number }} ))
+          fi
+          
           echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
           echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
-          echo "Tag: $TAG, VersionName: $VERSION_NAME, VersionCode: $VERSION_CODE"
+          echo "Ref: $REF_NAME, VersionName: $VERSION_NAME, VersionCode: $VERSION_CODE"
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -57,25 +82,26 @@ jobs:
       - name: Build Signed Release APK
         env:
           KEYSTORE_PATH: app/my-upload-key.jks
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'movieroom_store_pass' }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'movieroom_store_pass' }}
         run: |
           ./gradlew assembleRelease \
             -PversionCode="${{ env.VERSION_CODE }}" \
             -PversionName="${{ env.VERSION_NAME }}"
 
-      - name: Verify APK Exists
+      - name: Verify APK Output
         run: |
           ls -la app/build/outputs/apk/release/
 
       - name: Upload Signed APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
+          name: app-release-${{ env.VERSION_NAME }}
           path: app/build/outputs/apk/release/app-release.apk
 
       - name: Create GitHub Release and Attach APK
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: app/build/outputs/apk/release/app-release.apk

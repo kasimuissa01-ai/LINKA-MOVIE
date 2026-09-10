@@ -105,18 +105,20 @@ private val EditorialErrorRed = Color(0xFFE53935)
 data class CountryCode(val code: String, val dialCode: String, val name: String, val flag: String)
 
 private val DefaultCountryCodes = listOf(
+    CountryCode("TZ", "+255", "Tanzania", "🇹🇿"),
+    CountryCode("KE", "+254", "Kenya", "🇰🇪"),
+    CountryCode("CD", "+243", "Congo (DRC)", "🇨🇩"),
+    CountryCode("BI", "+257", "Burundi", "🇧🇮"),
+    CountryCode("UG", "+256", "Uganda", "🇺🇬"),
+    CountryCode("RW", "+250", "Rwanda", "🇷🇼"),
+    CountryCode("NG", "+234", "Nigeria", "🇳🇬"),
+    CountryCode("ZA", "+27", "South Africa", "🇿🇦"),
     CountryCode("US", "+1", "United States", "🇺🇸"),
     CountryCode("GB", "+44", "United Kingdom", "🇬🇧"),
     CountryCode("CA", "+1", "Canada", "🇨🇦"),
     CountryCode("FR", "+33", "France", "🇫🇷"),
     CountryCode("DE", "+49", "Germany", "🇩🇪"),
-    CountryCode("ES", "+34", "Spain", "🇪🇸"),
-    CountryCode("IT", "+39", "Italy", "🇮🇹"),
-    CountryCode("JP", "+81", "Japan", "🇯🇵"),
-    CountryCode("IN", "+91", "India", "🇮🇳"),
-    CountryCode("AU", "+61", "Australia", "🇦🇺"),
-    CountryCode("BR", "+55", "Brazil", "🇧🇷"),
-    CountryCode("NG", "+234", "Nigeria", "🇳🇬")
+    CountryCode("IN", "+91", "India", "🇮🇳")
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
