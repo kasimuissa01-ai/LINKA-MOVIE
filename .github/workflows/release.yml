@@ -23,38 +23,30 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Decode or Generate Release Keystore
+      - name: Decode Release Keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           mkdir -p app
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 --decode > app/my-upload-key.jks
-            echo "Used provided KEYSTORE_BASE64 secret."
-          else
-            echo "KEYSTORE_BASE64 secret not found. Generating signing keystore automatically..."
-            PASS="${KEYSTORE_PASSWORD:-movieroom_store_pass}"
-            ALIAS="${KEY_ALIAS:-upload}"
-            KEYPASS="${KEY_PASSWORD:-$PASS}"
-            keytool -genkey -v -keystore app/my-upload-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias "$ALIAS" -dname "CN=MovieRoom, OU=App, O=MovieRoom, L=Streaming, S=Mobile, C=US" -storepass "$PASS" -keypass "$KEYPASS"
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "ERROR: KEYSTORE_BASE64 secret is not set. Refusing to build with a throwaway keystore."
+            exit 1
           fi
+          echo "$KEYSTORE_BASE64" | base64 --decode > app/my-upload-key.jks
 
       - name: Extract Version Info from Tag
         id: version_extract
         run: |
           TAG="${{ github.ref_name }}"
           VERSION_NAME="${TAG#v}"
-          
+
           # Parse SemVer (e.g. 1.4.0 -> Major=1, Minor=4, Patch=0)
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NAME"
           PATCH=${PATCH:-0}
-          
+
           # Compute monotonic versionCode (e.g., 10400)
           VERSION_CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
-          
+
           echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_ENV
           echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
           echo "Tag: $TAG, VersionName: $VERSION_NAME, VersionCode: $VERSION_CODE"
@@ -65,9 +57,9 @@ jobs:
       - name: Build Signed Release APK
         env:
           KEYSTORE_PATH: app/my-upload-key.jks
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || 'movieroom_store_pass' }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'upload' }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'movieroom_store_pass' }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           ./gradlew assembleRelease \
             -PversionCode="${{ env.VERSION_CODE }}" \
