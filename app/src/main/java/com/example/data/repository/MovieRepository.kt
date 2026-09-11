@@ -9,8 +9,11 @@ import com.example.data.local.MovieEntity
 import com.example.data.local.UploadStateDao
 import com.example.data.local.UploadStateEntity
 import com.example.data.remote.CloudflareR2PresignedClient
+import com.example.data.remote.CompleteUploadResult
 import com.example.data.remote.FirebaseAuthService
 import com.example.data.remote.FirestoreService
+import com.example.data.remote.R2UploadConfig
+import com.example.data.remote.R2UploadManager
 import com.example.domain.model.DownloadItem
 import com.example.domain.model.DownloadStatus
 import com.example.domain.model.Movie
@@ -37,6 +40,7 @@ class MovieRepository(
     private val downloadDao: DownloadDao,
     private val uploadStateDao: UploadStateDao,
     private val r2Client: CloudflareR2PresignedClient = CloudflareR2PresignedClient(),
+    val r2UploadManager: R2UploadManager = R2UploadManager(),
     private val authService: FirebaseAuthService? = null,
     private val firestoreService: FirestoreService = FirestoreService(),
     private val authRepository: AuthRepository = AuthRepository(),
@@ -618,6 +622,28 @@ class MovieRepository(
 
     suspend fun testSupabaseConnection(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         r2Client.testSupabaseConnection()
+    }
+
+    /**
+     * Uploads a video directly to Cloudflare R2 using presigned URLs from Render backend service.
+     * Render only receives metadata (/create, /complete, /abort); raw video bytes stream directly to R2.
+     */
+    suspend fun uploadMovieVideoWithRender(
+        context: Context,
+        videoUri: android.net.Uri,
+        customFilename: String? = null,
+        onProgress: ((progressPercent: Int, statusMessage: String) -> Unit)? = null
+    ): CompleteUploadResult {
+        return r2UploadManager.uploadVideo(
+            context = context,
+            uri = videoUri,
+            customFilename = customFilename,
+            onProgress = onProgress
+        )
+    }
+
+    suspend fun checkRenderConnection(): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        r2UploadManager.checkRenderService()
     }
 
     /**

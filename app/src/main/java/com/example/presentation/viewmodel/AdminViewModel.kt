@@ -52,7 +52,7 @@ class AdminViewModel(
     private var tmdbSearchJob: Job? = null
     private var activeUploadJob: Job? = null
 
-    // Supabase Edge Function Backend Connection Status (null = untested, true = online, false = offline)
+    // Render Backend Connection Status (null = untested, true = online, false = offline)
     private val _supabaseConnectionStatus = MutableStateFlow<Pair<Boolean?, String>>(null to "Untested")
     val supabaseConnectionStatus: StateFlow<Pair<Boolean?, String>> = _supabaseConnectionStatus.asStateFlow()
 
@@ -60,17 +60,21 @@ class AdminViewModel(
     val isCheckingConnection: StateFlow<Boolean> = _isCheckingConnection.asStateFlow()
 
     init {
-        checkSupabaseConnection()
+        checkBackendConnection()
     }
 
     fun checkSupabaseConnection() {
+        checkBackendConnection()
+    }
+
+    fun checkBackendConnection() {
         viewModelScope.launch {
             _isCheckingConnection.value = true
             try {
-                val (connected, details) = repository.testSupabaseConnection()
+                val (connected, details) = repository.checkRenderConnection()
                 _supabaseConnectionStatus.value = connected to details
             } catch (e: Exception) {
-                _supabaseConnectionStatus.value = false to (e.message ?: "Failed to connect")
+                _supabaseConnectionStatus.value = false to (e.message ?: "Failed to connect to Render")
             } finally {
                 _isCheckingConnection.value = false
             }
@@ -143,81 +147,74 @@ class AdminViewModel(
 
         activeUploadJob?.cancel()
         activeUploadJob = viewModelScope.launch {
-            try {
-                _uploadState.value = UploadProgressState(
-                    isUploading = true,
-                    statusMessage = "Initiating Multipart Upload..."
-                )
+            val isLocalVideoUri = streamUrl.startsWith("content://") || streamUrl.startsWith("file://")
 
-                var uploadSucceeded = true
-                var remoteError: String? = null
-
+            if (isLocalVideoUri) {
                 try {
-                    val session = repository.initiateMultipartUpload(newMovie, fileSizeMb, streamUrl)
-                    _uploadState.value = _uploadState.value.copy(
-                        session = session,
-                        statusMessage = "Uploading ${session.parts.size} chunks to Cloudflare R2..."
+                    _uploadState.value = UploadProgressState(
+                        isUploading = true,
+                        overallProgress = 0f,
+                        statusMessage = "Initiating direct R2 upload via Render..."
                     )
 
-                    var currentSession = session
-                    for (i in session.parts.indices) {
-                        _uploadState.value = _uploadState.value.copy(
-                            currentPartIndex = i + 1,
-                            statusMessage = "Uploading chunk ${i + 1}/${session.parts.size}..."
-                        )
+                    val videoUri = android.net.Uri.parse(streamUrl)
+                    val preferredFilename = "${sanitizedTitle}.mp4"
 
-                        currentSession = repository.executePartUpload(currentSession, i, context) { partNum, partProgress ->
-                            val overall = ((i + partProgress) / session.parts.size).coerceIn(0f, 1f)
-                            _uploadState.value = _uploadState.value.copy(
-                                overallProgress = overall
-                            )
-                        }
-                        delay(100)
+                    // Upload directly to Cloudflare R2 using presigned URLs from Render
+                    val uploadResult = repository.uploadMovieVideoWithRender(
+                        context = context,
+                        videoUri = videoUri,
+                        customFilename = preferredFilename
+                    ) { progressPct, statusMsg ->
+                        val fraction = (progressPct / 100f).coerceIn(0f, 1f)
+                        _uploadState.value = _uploadState.value.copy(
+                            overallProgress = fraction,
+                            statusMessage = statusMsg
+                        )
                     }
 
-                    _uploadState.value = _uploadState.value.copy(
-                        statusMessage = "Finalizing upload session in Cloudflare R2..."
+                    // Save the resulting video key and URL in the movie database
+                    val movieToSave = newMovie.copy(
+                        videoKey = uploadResult.key,
+                        videoStreamUrl = if (uploadResult.url.isNotBlank()) uploadResult.url else fallbackStream
                     )
-                    repository.completeMultipartUpload(currentSession)
+                    repository.insertMovie(movieToSave)
+
+                    _uploadState.value = _uploadState.value.copy(
+                        isUploading = false,
+                        isCompleted = true,
+                        overallProgress = 1.0f,
+                        statusMessage = "Movie '${movieToSave.title}' uploaded directly to Cloudflare R2 and published successfully!"
+                    )
                 } catch (e: Exception) {
-                    uploadSucceeded = false
-                    remoteError = e.message
-                }
-
-                // Always insert the movie into local Room DB and Firestore catalog
-                _uploadState.value = _uploadState.value.copy(
-                    statusMessage = "Registering movie metadata in catalog..."
-                )
-                repository.insertMovie(newMovie)
-
-                if (uploadSucceeded) {
+                    // Clearly display upload failure to user - do not mark as completed
                     _uploadState.value = _uploadState.value.copy(
                         isUploading = false,
-                        isCompleted = true,
-                        overallProgress = 1.0f,
-                        statusMessage = "Movie '${newMovie.title}' uploaded & published successfully to Cloudflare R2!"
-                    )
-                } else {
-                    _uploadState.value = _uploadState.value.copy(
-                        isUploading = false,
-                        isCompleted = true,
-                        overallProgress = 1.0f,
-                        statusMessage = "Movie '${newMovie.title}' published to Catalog! (Note: R2 Edge function returned: $remoteError; streaming locally/direct link)"
+                        isCompleted = false,
+                        overallProgress = 0f,
+                        error = e.message ?: "Upload failed",
+                        statusMessage = "Upload failed: ${e.message}"
                     )
                 }
-            } catch (e: Exception) {
-                // Ensure the movie is saved so the admin's work is never lost
+            } else {
+                // Direct stream URL / catalog entry
                 try {
                     repository.insertMovie(newMovie)
-                } catch (_: Exception) {}
-
-                _uploadState.value = _uploadState.value.copy(
-                    isUploading = false,
-                    isCompleted = true,
-                    overallProgress = 1.0f,
-                    statusMessage = "Movie '${newMovie.title}' published to Catalog! (${e.message})",
-                    error = e.message
-                )
+                    _uploadState.value = UploadProgressState(
+                        isUploading = false,
+                        isCompleted = true,
+                        overallProgress = 1.0f,
+                        statusMessage = "Movie '${newMovie.title}' saved to catalog with stream link!"
+                    )
+                } catch (e: Exception) {
+                    _uploadState.value = UploadProgressState(
+                        isUploading = false,
+                        isCompleted = false,
+                        overallProgress = 0f,
+                        error = e.message ?: "Failed to save movie",
+                        statusMessage = "Error: ${e.message}"
+                    )
+                }
             }
         }
     }

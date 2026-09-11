@@ -252,14 +252,14 @@ fun AdminAddEditMovieScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Supabase & Cloudflare R2 Connected",
+                        text = "Render & Cloudflare R2 Connected",
                         color = TextSecondary,
                         fontSize = 12.sp
                     )
                 }
             }
 
-            // Supabase backend status pill
+            // Render backend status pill
             Surface(
                 color = when (supabaseStatus.first) {
                     true -> Color(0xFF1B3D2B)
@@ -304,7 +304,7 @@ fun AdminAddEditMovieScreen(
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = when (supabaseStatus.first) {
-                            true -> "Supabase Live"
+                            true -> "Render Live"
                             false -> "Catalog Mode"
                             else -> "Testing..."
                         },
