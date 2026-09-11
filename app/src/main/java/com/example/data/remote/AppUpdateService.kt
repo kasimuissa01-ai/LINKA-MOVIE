@@ -53,6 +53,9 @@ class AppUpdateService(
 
     suspend fun checkForUpdates(currentVersionName: String): AppUpdateInfo = withContext(Dispatchers.IO) {
         try {
+            var json: JSONObject? = null
+
+            // First try latest release endpoint
             val request = Request.Builder()
                 .url(GITHUB_LATEST_RELEASE_API)
                 .header("Accept", "application/vnd.github+json")
@@ -60,13 +63,34 @@ class AppUpdateService(
                 .build()
 
             val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                Log.w(TAG, "GitHub release check response code: ${response.code}")
-                return@withContext AppUpdateInfo()
+            if (response.isSuccessful) {
+                val bodyString = response.body?.string()
+                if (!bodyString.isNullOrBlank()) {
+                    json = JSONObject(bodyString)
+                }
+            } else if (response.code == 404) {
+                // If /releases/latest returned 404, check /releases list
+                val listRequest = Request.Builder()
+                    .url("https://api.github.com/repos/$GITHUB_REPO/releases?per_page=1")
+                    .header("Accept", "application/vnd.github+json")
+                    .header("User-Agent", "MovieRoom-App")
+                    .build()
+                val listResponse = client.newCall(listRequest).execute()
+                if (listResponse.isSuccessful) {
+                    val listBody = listResponse.body?.string()
+                    if (!listBody.isNullOrBlank()) {
+                        val arr = org.json.JSONArray(listBody)
+                        if (arr.length() > 0) {
+                            json = arr.getJSONObject(0)
+                        }
+                    }
+                }
             }
 
-            val bodyString = response.body?.string() ?: return@withContext AppUpdateInfo()
-            val json = JSONObject(bodyString)
+            if (json == null) {
+                Log.d(TAG, "No GitHub releases found currently for $GITHUB_REPO")
+                return@withContext AppUpdateInfo(latestVersion = currentVersionName)
+            }
 
             val rawTag = json.optString("tag_name", "").trim()
             val tagName = rawTag.removePrefix("v").removePrefix("V")
@@ -93,7 +117,7 @@ class AppUpdateService(
             // If no direct apk in assets, check html_url or direct fallback
             if (apkDownloadUrl.isBlank()) {
                 val htmlUrl = json.optString("html_url", "")
-                if (htmlUrl.isNotBlank()) {
+                if (htmlUrl.isNotBlank() && rawTag.isNotBlank()) {
                     apkDownloadUrl = "$htmlUrl/expanded_assets/$rawTag"
                 }
             }
@@ -104,7 +128,7 @@ class AppUpdateService(
 
             AppUpdateInfo(
                 isUpdateAvailable = isNewer && apkDownloadUrl.isNotBlank(),
-                latestVersion = tagName,
+                latestVersion = if (tagName.isNotBlank()) tagName else currentVersionName,
                 releaseTitle = releaseTitle,
                 releaseNotes = releaseNotes,
                 downloadUrl = apkDownloadUrl,
@@ -112,7 +136,7 @@ class AppUpdateService(
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error checking for app updates: ${e.message}")
-            AppUpdateInfo()
+            AppUpdateInfo(latestVersion = currentVersionName)
         }
     }
 

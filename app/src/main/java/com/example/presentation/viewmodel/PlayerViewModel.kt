@@ -15,6 +15,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.example.data.repository.MovieRepository
 import com.example.domain.model.Movie
+import com.example.util.VideoCacheManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -77,7 +78,11 @@ class PlayerViewModel(
     fun initializePlayer(context: Context, movie: Movie) {
         if (exoPlayer != null) return
 
-        val player = ExoPlayer.Builder(context).build()
+        val player = try {
+            VideoCacheManager.buildFastPlayer(context)
+        } catch (e: Exception) {
+            ExoPlayer.Builder(context).build()
+        }
         exoPlayer = player
 
         player.addListener(object : Player.Listener {
@@ -98,10 +103,23 @@ class PlayerViewModel(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                _uiState.value = _uiState.value.copy(
-                    isPlaying = false,
-                    errorMessage = "Streaming error: ${error.errorCodeName} (${error.message})"
-                )
+                // If stream failed on an R2 URL and we haven't fallen back to videoStreamUrl yet, try fallback
+                val currentUrl = _uiState.value.currentPlaybackUrl
+                if (movie.videoStreamUrl.isNotBlank() && currentUrl != movie.videoStreamUrl && movie.videoStreamUrl.startsWith("http")) {
+                    android.util.Log.w("PlayerViewModel", "R2 playback failed, trying fallback stream: ${movie.videoStreamUrl}")
+                    _uiState.value = _uiState.value.copy(
+                        currentPlaybackUrl = movie.videoStreamUrl,
+                        errorMessage = null
+                    )
+                    player.setMediaItem(MediaItem.fromUri(movie.videoStreamUrl))
+                    player.prepare()
+                    player.playWhenReady = true
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        isPlaying = false,
+                        errorMessage = "You look like you have no internet connection. Please check your network or watch from your downloaded movies."
+                    )
+                }
             }
         })
 

@@ -267,10 +267,16 @@ fun AppNavigation(
                 if (movie != null) {
                     MovieDetailScreen(
                         movie = movie,
+                        allMovies = movieUiState.allMovies,
                         downloadViewModel = downloadViewModel,
                         onBackClick = { navController.popBackStack() },
-                        onPlayClick = {
-                            navController.navigate(Screen.VideoPlayer.createRoute(it.id))
+                        onPlayFullscreenClick = { selectedMovie ->
+                            navController.navigate(Screen.VideoPlayer.createRoute(selectedMovie.id))
+                        },
+                        onSelectRecommendedMovie = { recommendedMovie ->
+                            navController.navigate(Screen.MovieDetail.createRoute(recommendedMovie.id)) {
+                                launchSingleTop = true
+                            }
                         }
                     )
                 }

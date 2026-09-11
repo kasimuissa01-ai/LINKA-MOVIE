@@ -58,7 +58,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.domain.model.Movie
-import com.example.presentation.components.DailyMovieRecommendationPopup
 import com.example.presentation.components.MoviePosterCard
 import com.example.presentation.viewmodel.DownloadViewModel
 import com.example.presentation.viewmodel.MovieViewModel
@@ -79,6 +78,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.os.Build
 import android.Manifest
 import com.example.presentation.viewmodel.AppUpdateViewModel
+import com.example.util.VideoCacheManager
 
 @Composable
 fun HomeScreen(
@@ -100,6 +100,14 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    LaunchedEffect(state.featuredMovies) {
+        state.featuredMovies.take(3).forEach { movie ->
+            if (movie.videoStreamUrl.isNotBlank() && movie.videoStreamUrl.startsWith("http")) {
+                VideoCacheManager.prefetchVideoHeader(context, movie.videoStreamUrl)
+            }
         }
     }
 
@@ -130,18 +138,6 @@ fun HomeScreen(
                     onDownloadClick = { movie ->
                         downloadViewModel.startDownload(movie, context)
                     }
-                )
-            }
-        }
-
-        // Daily Movie Recommendation In-App Popup
-        if (state.allMovies.isNotEmpty()) {
-            item {
-                DailyMovieRecommendationPopup(
-                    movies = state.allMovies,
-                    onMovieClick = onMovieClick,
-                    onPlayClick = onPlayClick,
-                    modifier = Modifier.padding(top = 8.dp)
                 )
             }
         }

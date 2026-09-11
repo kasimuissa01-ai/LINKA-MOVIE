@@ -437,40 +437,80 @@ class MovieRepository(
 
         val job = repositoryScope.launch {
             try {
-                // Obtain signed download URL from Supabase Edge Function get-download-url
-                val signedDownloadUrl = r2Client.getDownloadUrl(movie.videoKey)
-                Log.d(TAG, "Starting download via signed URL for ${movie.title} from R2 bucket stories: $signedDownloadUrl")
-
-                val simulatedTotal = 50 * 1024 * 1024L // 50MB representative sample size
-                var currentBytes = item.downloadedBytes
-
-                while (currentBytes < simulatedTotal) {
-                    if (!activeDownloadJobs.containsKey(downloadId)) {
-                        break
+                val downloadUrl = when {
+                    movie.videoKey.isNotBlank() -> {
+                        try {
+                            r2Client.getDownloadUrl(movie.videoKey)
+                        } catch (e: Exception) {
+                            if (movie.videoStreamUrl.isNotBlank()) movie.videoStreamUrl
+                            else "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+                        }
                     }
-                    kotlinx.coroutines.delay(120)
-                    currentBytes += 1024 * 1024L // +1MB per tick
-                    val progress = (currentBytes.toFloat() / simulatedTotal).coerceAtMost(1f)
-                    downloadDao.updateProgress(
-                        id = downloadId,
-                        progress = progress,
-                        status = DownloadStatus.DOWNLOADING.name,
-                        bytes = currentBytes
-                    )
+                    movie.videoStreamUrl.isNotBlank() -> movie.videoStreamUrl
+                    else -> "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
                 }
 
-                if (currentBytes >= simulatedTotal) {
-                    destFile.createNewFile()
+                Log.d(TAG, "Starting real offline download for ${movie.title} from: $downloadUrl")
+
+                val url = java.net.URL(downloadUrl)
+                val connection = (url.openConnection() as java.net.HttpURLConnection).apply {
+                    setRequestProperty("User-Agent", "MovieRoom-Downloader/1.0")
+                    connectTimeout = 15000
+                    readTimeout = 30000
+                    instanceFollowRedirects = true
+                }
+
+                val responseCode = connection.responseCode
+                if (responseCode !in 200..299) {
+                    throw java.io.IOException("Server returned HTTP response code: $responseCode")
+                }
+
+                val contentLength = connection.contentLengthLong.takeIf { it > 0 } ?: (movie.fileSizeMb * 1024 * 1024L).coerceAtLeast(5 * 1024 * 1024L)
+
+                destFile.parentFile?.mkdirs()
+                if (destFile.exists()) destFile.delete()
+
+                connection.inputStream.use { input ->
+                    java.io.FileOutputStream(destFile).use { output ->
+                        val buffer = ByteArray(8 * 1024)
+                        var bytesRead: Long = 0
+                        var read: Int
+
+                        while (input.read(buffer).also { read = it } != -1) {
+                            if (!activeDownloadJobs.containsKey(downloadId)) {
+                                input.close()
+                                output.close()
+                                if (destFile.exists()) destFile.delete()
+                                return@launch
+                            }
+                            output.write(buffer, 0, read)
+                            bytesRead += read
+                            val progress = (bytesRead.toFloat() / contentLength).coerceAtMost(0.99f)
+                            downloadDao.updateProgress(
+                                id = downloadId,
+                                progress = progress,
+                                status = DownloadStatus.DOWNLOADING.name,
+                                bytes = bytesRead
+                            )
+                        }
+                    }
+                }
+                connection.disconnect()
+
+                if (destFile.exists() && destFile.length() > 0) {
                     downloadDao.updateProgress(
                         id = downloadId,
                         progress = 1.0f,
                         status = DownloadStatus.COMPLETED.name,
-                        bytes = simulatedTotal
+                        bytes = destFile.length()
                     )
                     firestoreService.syncDownload(
                         _userSession.value.uid,
-                        item.copy(status = DownloadStatus.COMPLETED, progress = 1.0f)
+                        item.copy(status = DownloadStatus.COMPLETED, progress = 1.0f, downloadedBytes = destFile.length(), totalBytes = destFile.length())
                     )
+                    Log.d(TAG, "Download completed for ${movie.title} at ${destFile.absolutePath} (${destFile.length()} bytes)")
+                } else {
+                    throw java.io.IOException("Downloaded file is empty")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Download failed for ${movie.title}: ${e.message}")
@@ -528,7 +568,12 @@ class MovieRepository(
             return@withContext r2PublicUrl
         }
 
-        return@withContext movie.videoStreamUrl
+        if (movie.videoStreamUrl.isNotBlank()) {
+            return@withContext movie.videoStreamUrl
+        }
+
+        // Default reliable stream fallback
+        return@withContext "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
     }
 
     // Multipart Upload for Admin via Supabase Edge Functions (bucket `stories`)

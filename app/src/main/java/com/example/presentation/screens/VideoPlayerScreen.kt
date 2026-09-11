@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
@@ -452,6 +453,30 @@ fun VideoPlayerScreen(
                             Icon(Icons.Default.Speed, contentDescription = "Speed", tint = Color.White)
                         }
 
+                        // Screen rotation toggle button
+                        IconButton(
+                            onClick = {
+                                activity?.let { act ->
+                                    val currentOrientation = act.requestedOrientation
+                                    if (currentOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE ||
+                                        currentOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE ||
+                                        currentOrientation == ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
+                                    ) {
+                                        act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                                    } else {
+                                        act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                    }
+                                }
+                            },
+                            modifier = Modifier.testTag("player_rotate_screen_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ScreenRotation,
+                                contentDescription = "Rotate Screen",
+                                tint = Color.White
+                            )
+                        }
+
                         // Lock Screen button
                         IconButton(
                             onClick = { playerViewModel.toggleLock() },
@@ -480,7 +505,7 @@ fun VideoPlayerScreen(
                             modifier = Modifier.padding(16.dp)
                         ) {
                             Text(
-                                text = "Unable to Stream Video",
+                                text = "Network Connection Notice",
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp
@@ -493,7 +518,7 @@ fun VideoPlayerScreen(
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Make sure R2.dev public access is allowed in your Cloudflare bucket settings.",
+                                text = "Please connect to the internet or enjoy your downloaded movies offline.",
                                 color = AmberGold,
                                 fontSize = 11.sp
                             )
