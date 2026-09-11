@@ -412,6 +412,13 @@ fun VideoPlayerScreen(
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Medium
                                 )
+                            } else if (uiState.currentPlaybackUrl.isNotBlank()) {
+                                Text(
+                                    text = uiState.currentPlaybackUrl.substringAfterLast('/'),
+                                    color = Color.LightGray,
+                                    fontSize = 10.sp,
+                                    maxLines = 1
+                                )
                             }
                         }
                     }
@@ -459,8 +466,43 @@ fun VideoPlayerScreen(
                     }
                 }
 
+                // Error banner if stream fails
+                uiState.errorMessage?.let { errorText ->
+                    Surface(
+                        color = Color(0xDDCC1111),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(32.dp)
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Text(
+                                text = "Unable to Stream Video",
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = errorText,
+                                color = Color.White.copy(alpha = 0.9f),
+                                fontSize = 12.sp
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Make sure R2.dev public access is allowed in your Cloudflare bucket settings.",
+                                color = AmberGold,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+
                 // Center Play/Pause & Quick Seek Buttons (Hidden if locked)
-                if (!uiState.isLocked) {
+                if (!uiState.isLocked && uiState.errorMessage == null) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(36.dp),

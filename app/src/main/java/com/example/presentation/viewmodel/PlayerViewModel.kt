@@ -53,7 +53,9 @@ data class PlayerUiState(
     // Subtitles
     val availableSubtitles: List<String> = listOf("Off", "English [CC]", "Spanish", "French"),
     val selectedSubtitle: String = "Off",
-    val isOfflinePlayback: Boolean = false
+    val isOfflinePlayback: Boolean = false,
+    val errorMessage: String? = null,
+    val currentPlaybackUrl: String = ""
 )
 
 @OptIn(UnstableApi::class)
@@ -89,16 +91,28 @@ class PlayerViewModel(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     _uiState.value = _uiState.value.copy(
-                        durationMs = player.duration.coerceAtLeast(0L)
+                        durationMs = player.duration.coerceAtLeast(0L),
+                        errorMessage = null
                     )
                 }
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                _uiState.value = _uiState.value.copy(
+                    isPlaying = false,
+                    errorMessage = "Streaming error: ${error.errorCodeName} (${error.message})"
+                )
             }
         })
 
         viewModelScope.launch {
             val playbackUrl = repository.resolvePlaybackUri(movie, context)
             val isOffline = playbackUrl.startsWith("file://") || playbackUrl.startsWith("/")
-            _uiState.value = _uiState.value.copy(isOfflinePlayback = isOffline)
+            _uiState.value = _uiState.value.copy(
+                isOfflinePlayback = isOffline,
+                currentPlaybackUrl = playbackUrl,
+                errorMessage = null
+            )
 
             val mediaItem = MediaItem.fromUri(playbackUrl)
             player.setMediaItem(mediaItem)

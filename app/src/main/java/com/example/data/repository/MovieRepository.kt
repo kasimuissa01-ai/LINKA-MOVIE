@@ -501,7 +501,7 @@ class MovieRepository(
 
     /**
      * Resolves playback URI: Checks local offline file existence first, then gets
-     * a signed presigned GET URL from Supabase Edge Function `get-download-url` for Cloudflare R2 bucket `stories`.
+     * the Cloudflare R2 stream URL, or falls back to videoStreamUrl.
      */
     suspend fun resolvePlaybackUri(movie: Movie, context: Context): String = withContext(Dispatchers.IO) {
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
@@ -511,11 +511,23 @@ class MovieRepository(
             return@withContext localFile.toURI().toString()
         }
 
-        // Fetch fresh signed GET URL from Supabase Edge Function get-download-url
-        val signedUrl = r2Client.getDownloadUrl(movie.videoKey)
-        if (signedUrl.isNotEmpty()) {
-            return@withContext signedUrl
+        // If the movie has a direct valid HTTP stream URL from R2 / CDN
+        if (movie.videoStreamUrl.startsWith("http://") || movie.videoStreamUrl.startsWith("https://")) {
+            // Check if it's already a public R2.dev or CDN link
+            if (!movie.videoStreamUrl.contains(".r2.cloudflarestorage.com")) {
+                return@withContext movie.videoStreamUrl
+            }
         }
+
+        // If movie has an R2 object key (e.g., videos/1789130365590-inception.mp4), build public R2 URL
+        if (movie.videoKey.isNotBlank()) {
+            val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
+            val cleanKey = movie.videoKey.trimStart('/')
+            val r2PublicUrl = "https://$publicR2Domain/$cleanKey"
+            Log.d(TAG, "Resolved public R2 URL for ${movie.title}: $r2PublicUrl")
+            return@withContext r2PublicUrl
+        }
+
         return@withContext movie.videoStreamUrl
     }
 
