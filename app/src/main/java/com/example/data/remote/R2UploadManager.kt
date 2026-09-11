@@ -34,7 +34,7 @@ object R2UploadConfig {
      * Public URL of the Render upload service.
      * Easy to change when deploying to different Render environments.
      */
-    var R2_UPLOAD_SERVICE_URL: String = "https://YOUR-RENDER-SERVICE.onrender.com"
+    var R2_UPLOAD_SERVICE_URL: String = "https://linka-movie.onrender.com"
 
     /** 50 MB part size for multipart upload */
     const val PART_SIZE: Long = 50 * 1024 * 1024L // 50 MB
