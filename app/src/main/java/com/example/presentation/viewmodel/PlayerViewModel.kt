@@ -37,6 +37,7 @@ data class DoubleTapSeekState(
 
 data class PlayerUiState(
     val isPlaying: Boolean = false,
+    val isLoading: Boolean = true,
     val currentPositionMs: Long = 0L,
     val durationMs: Long = 0L,
     val bufferedPositionMs: Long = 0L,
@@ -94,12 +95,12 @@ class PlayerViewModel(
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) {
-                    _uiState.value = _uiState.value.copy(
-                        durationMs = player.duration.coerceAtLeast(0L),
-                        errorMessage = null
-                    )
-                }
+                val isLoading = playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_IDLE
+                _uiState.value = _uiState.value.copy(
+                    isLoading = isLoading,
+                    durationMs = if (playbackState == Player.STATE_READY) player.duration.coerceAtLeast(0L) else _uiState.value.durationMs,
+                    errorMessage = if (playbackState == Player.STATE_READY) null else _uiState.value.errorMessage
+                )
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {

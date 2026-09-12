@@ -57,11 +57,14 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.Help
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
@@ -153,6 +156,40 @@ fun VideoPlayerScreen(
             },
             modifier = Modifier.fillMaxSize()
         )
+
+        // Loading State Overlay (keeps loading indicator visible when buffering or connecting)
+        if (uiState.isLoading && uiState.errorMessage == null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.85f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(24.dp)
+                ) {
+                    CircularProgressIndicator(
+                        color = CinematicRed,
+                        strokeWidth = 4.dp,
+                        modifier = Modifier.size(56.dp)
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Loading video stream...",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Preparing stream. Please wait...",
+                        color = Color.LightGray,
+                        fontSize = 13.sp
+                    )
+                }
+            }
+        }
 
         // Gesture detector overlay (tap to toggle, double-tap seek, vertical swipes)
         Box(
@@ -683,6 +720,47 @@ fun VideoPlayerScreen(
                                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                                 ) {
                                     Text("720P", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            // Fullscreen / Landscape Rotation Toggle Button
+                            val isLandscape = activity?.requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE ||
+                                    activity?.requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                            Surface(
+                                color = Color(0x55000000),
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .clickable {
+                                        activity?.let { act ->
+                                            val currentOrientation = act.requestedOrientation
+                                            if (currentOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE ||
+                                                currentOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE ||
+                                                currentOrientation == ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
+                                            ) {
+                                                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                                                android.widget.Toast.makeText(act, "Exiting Fullscreen", android.widget.Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                                android.widget.Toast.makeText(act, "Fullscreen Mode (Landscape)", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                    .testTag("player_fullscreen_button")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (isLandscape) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                                        contentDescription = "Fullscreen",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(if (isLandscape) "Exit" else "Full", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
                         }

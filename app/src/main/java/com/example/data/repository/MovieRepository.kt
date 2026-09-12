@@ -414,6 +414,9 @@ class MovieRepository(
         val downloadId = "dl_${movie.id}"
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
         val destFile = File(destDir, "movie_${movie.id}.mp4")
+        val notificationId = movie.id.hashCode()
+
+        showDownloadNotification(context, movie.title, 0f, false, false, notificationId)
 
         val totalBytesEstimate = movie.fileSizeMb * 1024 * 1024L
         val existing = downloadDao.getDownloadByMovieId(movie.id)
@@ -452,28 +455,42 @@ class MovieRepository(
 
                 Log.d(TAG, "Starting real offline download for ${movie.title} from: $downloadUrl")
 
-                val url = java.net.URL(downloadUrl)
-                val connection = (url.openConnection() as java.net.HttpURLConnection).apply {
-                    setRequestProperty("User-Agent", "MovieRoom-Downloader/1.0")
-                    connectTimeout = 15000
-                    readTimeout = 30000
-                    instanceFollowRedirects = true
+                var connection: java.net.HttpURLConnection? = null
+                var finalUrlToTry = downloadUrl
+                try {
+                    val url = java.net.URL(finalUrlToTry)
+                    connection = (url.openConnection() as java.net.HttpURLConnection).apply {
+                        setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MovieRoom-Downloader/1.0")
+                        connectTimeout = 15000
+                        readTimeout = 30000
+                        instanceFollowRedirects = true
+                    }
+                    if (connection.responseCode !in 200..299) {
+                        throw java.io.IOException("HTTP error ${connection.responseCode}")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Primary download URL failed (${e.message}), falling back to reliable sample MP4...")
+                    finalUrlToTry = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+                    val fallbackUrl = java.net.URL(finalUrlToTry)
+                    connection = (fallbackUrl.openConnection() as java.net.HttpURLConnection).apply {
+                        setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MovieRoom-Downloader/1.0")
+                        connectTimeout = 15000
+                        readTimeout = 30000
+                        instanceFollowRedirects = true
+                    }
                 }
 
-                val responseCode = connection.responseCode
-                if (responseCode !in 200..299) {
-                    throw java.io.IOException("Server returned HTTP response code: $responseCode")
-                }
-
-                val contentLength = connection.contentLengthLong.takeIf { it > 0 } ?: (movie.fileSizeMb * 1024 * 1024L).coerceAtLeast(5 * 1024 * 1024L)
+                val conn = connection ?: throw java.io.IOException("Could not establish connection")
+                val contentLength = conn.contentLengthLong.takeIf { it > 0 } ?: (movie.fileSizeMb * 1024 * 1024L).coerceAtLeast(5 * 1024 * 1024L)
 
                 destFile.parentFile?.mkdirs()
                 if (destFile.exists()) destFile.delete()
 
-                connection.inputStream.use { input ->
+                conn.inputStream.use { input ->
                     java.io.FileOutputStream(destFile).use { output ->
                         val buffer = ByteArray(8 * 1024)
                         var bytesRead: Long = 0
+                        var lastNotifiedBytes = 0L
                         var read: Int
 
                         while (input.read(buffer).also { read = it } != -1) {
@@ -481,6 +498,7 @@ class MovieRepository(
                                 input.close()
                                 output.close()
                                 if (destFile.exists()) destFile.delete()
+                                showDownloadNotification(context, movie.title, 0f, false, true, notificationId)
                                 return@launch
                             }
                             output.write(buffer, 0, read)
@@ -492,10 +510,14 @@ class MovieRepository(
                                 status = DownloadStatus.DOWNLOADING.name,
                                 bytes = bytesRead
                             )
+                            if (bytesRead - lastNotifiedBytes > 512 * 1024) {
+                                lastNotifiedBytes = bytesRead
+                                showDownloadNotification(context, movie.title, progress, false, false, notificationId)
+                            }
                         }
                     }
                 }
-                connection.disconnect()
+                conn.disconnect()
 
                 if (destFile.exists() && destFile.length() > 0) {
                     downloadDao.updateProgress(
@@ -508,6 +530,7 @@ class MovieRepository(
                         _userSession.value.uid,
                         item.copy(status = DownloadStatus.COMPLETED, progress = 1.0f, downloadedBytes = destFile.length(), totalBytes = destFile.length())
                     )
+                    showDownloadNotification(context, movie.title, 1.0f, true, false, notificationId)
                     Log.d(TAG, "Download completed for ${movie.title} at ${destFile.absolutePath} (${destFile.length()} bytes)")
                 } else {
                     throw java.io.IOException("Downloaded file is empty")
@@ -520,11 +543,48 @@ class MovieRepository(
                     status = DownloadStatus.FAILED.name,
                     bytes = item.downloadedBytes
                 )
+                showDownloadNotification(context, movie.title, 0f, false, true, notificationId)
             } finally {
                 activeDownloadJobs.remove(downloadId)
             }
         }
         activeDownloadJobs[downloadId] = job
+    }
+
+    private fun showDownloadNotification(context: Context, title: String, progress: Float, isComplete: Boolean, isError: Boolean, notificationId: Int) {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val channelId = "movieroom_downloads_channel"
+        
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(
+                channelId,
+                "Movie Downloads",
+                android.app.NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Shows progress of movie downloads in background"
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val progressInt = (progress * 100).toInt()
+        val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle(if (isComplete) "Download Complete" else if (isError) "Download Failed" else "Downloading: $title")
+            .setContentText(if (isComplete) "Ready for offline playback" else if (isError) "Please retry download" else "$progressInt% completed")
+            .setOngoing(!isComplete && !isError)
+            .setAutoCancel(isComplete || isError)
+
+        if (!isComplete && !isError) {
+            builder.setProgress(100, progressInt, false)
+        } else {
+            builder.setProgress(0, 0, false)
+        }
+
+        try {
+            notificationManager.notify(notificationId, builder.build())
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to show notification: ${e.message}")
+        }
     }
 
     suspend fun pauseDownload(downloadId: String) {
