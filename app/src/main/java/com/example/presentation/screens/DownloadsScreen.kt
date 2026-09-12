@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -41,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -71,6 +73,7 @@ fun DownloadsScreen(
 ) {
     val downloads by downloadViewModel.downloads.collectAsState()
     val movieState by movieViewModel.uiState.collectAsState()
+    val context = LocalContext.current
 
     Column(
         modifier = modifier
@@ -194,6 +197,9 @@ fun DownloadsScreen(
                         onPauseClick = {
                             downloadViewModel.pauseDownload(item.id)
                         },
+                        onRetryClick = {
+                            downloadViewModel.retryDownload(item, context)
+                        },
                         onDeleteClick = {
                             downloadViewModel.deleteDownload(item.id)
                         }
@@ -209,6 +215,7 @@ fun DownloadItemCard(
     item: DownloadItem,
     onPlayClick: () -> Unit,
     onPauseClick: () -> Unit,
+    onRetryClick: () -> Unit,
     onDeleteClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -309,6 +316,21 @@ fun DownloadItemCard(
                     } else if (item.status == DownloadStatus.DOWNLOADING) {
                         IconButton(onClick = onPauseClick, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.Pause, contentDescription = "Pause", tint = TextSecondary)
+                        }
+                    } else if (item.status == DownloadStatus.FAILED || item.status == DownloadStatus.PAUSED) {
+                        Button(
+                            onClick = onRetryClick,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CinematicRed,
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(16.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("retry_download_button_${item.id}")
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Retry", modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Retry Download", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 

@@ -82,7 +82,12 @@ class PlayerViewModel(
         val player = try {
             VideoCacheManager.buildFastPlayer(context)
         } catch (e: Exception) {
-            ExoPlayer.Builder(context).build()
+            val fallbackFactory = try { VideoCacheManager.buildRenderersFactory(context) } catch (_: Exception) { null }
+            if (fallbackFactory != null) {
+                ExoPlayer.Builder(context, fallbackFactory).build()
+            } else {
+                ExoPlayer.Builder(context).build()
+            }
         }
         exoPlayer = player
 
@@ -171,18 +176,16 @@ class PlayerViewModel(
     }
 
     fun toggleControls() {
-        if (_uiState.value.isLocked) {
-            // If locked, single tap briefly flashes the lock icon
-            _uiState.value = _uiState.value.copy(controlsVisible = true)
-            startControlsHideTimer()
-            return
-        }
-
         val newVisibility = !_uiState.value.controlsVisible
         _uiState.value = _uiState.value.copy(controlsVisible = newVisibility)
         if (newVisibility && (_uiState.value.isPlaying)) {
             startControlsHideTimer()
         }
+    }
+
+    fun hideControls() {
+        controlsTimeoutJob?.cancel()
+        _uiState.value = _uiState.value.copy(controlsVisible = false)
     }
 
     fun showControls(keepVisible: Boolean = false) {
@@ -192,11 +195,17 @@ class PlayerViewModel(
         }
     }
 
+    fun restartControlsHideTimer() {
+        if (_uiState.value.isPlaying) {
+            startControlsHideTimer()
+        }
+    }
+
     private fun startControlsHideTimer() {
         controlsTimeoutJob?.cancel()
         controlsTimeoutJob = viewModelScope.launch {
-            delay(4000)
-            if (_uiState.value.isPlaying && !_uiState.value.isLocked) {
+            delay(2800) // 2.8 seconds auto-hide
+            if (_uiState.value.isPlaying) {
                 _uiState.value = _uiState.value.copy(controlsVisible = false)
             }
         }
@@ -205,6 +214,7 @@ class PlayerViewModel(
     fun seekTo(positionMs: Long) {
         exoPlayer?.seekTo(positionMs)
         _uiState.value = _uiState.value.copy(currentPositionMs = positionMs)
+        restartControlsHideTimer()
     }
 
     fun seekRelative(seconds: Int, isForward: Boolean) {

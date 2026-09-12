@@ -39,6 +39,9 @@ interface MovieDao {
 
     @Query("SELECT COUNT(*) FROM movies")
     suspend fun getMovieCount(): Int
+
+    @Query("SELECT * FROM movies")
+    suspend fun getAllMoviesList(): List<MovieEntity>
 }
 
 @Dao

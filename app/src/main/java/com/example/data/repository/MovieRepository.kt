@@ -31,9 +31,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 class MovieRepository(
     private val movieDao: MovieDao,
@@ -296,7 +299,7 @@ class MovieRepository(
                     genres = listOf("Sci-Fi", "Cyberpunk", "Thriller"),
                     coverUrl = "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=800&auto=format&fit=crop&q=80",
                     videoKey = "movies/neon_horizon_2099.mp4",
-                    videoStreamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+                    videoStreamUrl = "https://media.w3.org/2010/05/sintel/trailer.mp4",
                     durationMinutes = 128,
                     fileSizeMb = 1420,
                     releaseYear = 2026,
@@ -311,7 +314,7 @@ class MovieRepository(
                     genres = listOf("Sci-Fi", "Mystery", "Drama"),
                     coverUrl = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800&auto=format&fit=crop&q=80",
                     videoKey = "movies/solaris_echo.mp4",
-                    videoStreamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                    videoStreamUrl = "https://media.w3.org/2010/05/bunny/trailer.mp4",
                     durationMinutes = 144,
                     fileSizeMb = 2100,
                     releaseYear = 2025,
@@ -326,7 +329,7 @@ class MovieRepository(
                     genres = listOf("Action", "Thriller"),
                     coverUrl = "https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=800&auto=format&fit=crop&q=80",
                     videoKey = "movies/obsidian_protocol.mp4",
-                    videoStreamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+                    videoStreamUrl = "https://media.w3.org/2010/05/video/movie_300.mp4",
                     durationMinutes = 112,
                     fileSizeMb = 1150,
                     releaseYear = 2025,
@@ -341,7 +344,7 @@ class MovieRepository(
                     genres = listOf("Sci-Fi", "Mind-Bending"),
                     coverUrl = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800&auto=format&fit=crop&q=80",
                     videoKey = "movies/chronos_divide.mp4",
-                    videoStreamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4",
+                    videoStreamUrl = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
                     durationMinutes = 135,
                     fileSizeMb = 1680,
                     releaseYear = 2024,
@@ -356,7 +359,7 @@ class MovieRepository(
                     genres = listOf("Horror", "Thriller", "Sci-Fi"),
                     coverUrl = "https://images.unsplash.com/photo-1551244072-5d12893278ab?w=800&auto=format&fit=crop&q=80",
                     videoKey = "movies/midnight_mariana.mp4",
-                    videoStreamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+                    videoStreamUrl = "https://media.w3.org/2010/05/sintel/trailer.mp4",
                     durationMinutes = 98,
                     fileSizeMb = 980,
                     releaseYear = 2026,
@@ -371,6 +374,29 @@ class MovieRepository(
                 // Also write to Firestore
                 firestoreService.saveMovie(movie)
             }
+        } else {
+            // Auto-heal / migrate any existing movies in Room that have obsolete or forbidden URLs
+            try {
+                val existingList = movieDao.getAllMoviesList()
+                for (movieEntity in existingList) {
+                    val currentStream = movieEntity.videoStreamUrl
+                    if (currentStream.contains("commondatastorage.googleapis.com") ||
+                        currentStream.contains("gtv-videos-bucket")) {
+                        val fixedUrl = when (movieEntity.id) {
+                            "m_cyber_01" -> "https://media.w3.org/2010/05/sintel/trailer.mp4"
+                            "m_space_02" -> "https://media.w3.org/2010/05/bunny/trailer.mp4"
+                            "m_shadow_03" -> "https://media.w3.org/2010/05/video/movie_300.mp4"
+                            "m_chrono_04" -> "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
+                            "m_abyss_05" -> "https://media.w3.org/2010/05/sintel/trailer.mp4"
+                            else -> "https://media.w3.org/2010/05/bunny/trailer.mp4"
+                        }
+                        movieDao.updateMovie(movieEntity.copy(videoStreamUrl = fixedUrl))
+                        Log.d(TAG, "Migrated movie ${movieEntity.title} stream URL to verified working source: $fixedUrl")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Movie URL migration note: ${e.message}")
+            }
         }
     }
 
@@ -383,6 +409,9 @@ class MovieRepository(
 
     fun observeMovieById(id: String): Flow<Movie?> =
         movieDao.observeMovieById(id).map { it?.toDomain() }
+
+    suspend fun getMovieById(id: String): Movie? =
+        movieDao.getMovieById(id)?.toDomain()
 
     fun searchMovies(query: String): Flow<List<Movie>> =
         movieDao.searchMovies(query).map { list -> list.map { it.toDomain() } }
@@ -439,85 +468,120 @@ class MovieRepository(
         firestoreService.syncDownload(_userSession.value.uid, item)
 
         val job = repositoryScope.launch {
+            val downloadHttpClient = OkHttpClient.Builder()
+                .followRedirects(true)
+                .followSslRedirects(true)
+                .connectTimeout(20, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .build()
+
             try {
-                val downloadUrl = when {
-                    movie.videoKey.isNotBlank() -> {
-                        try {
-                            r2Client.getDownloadUrl(movie.videoKey)
-                        } catch (e: Exception) {
-                            if (movie.videoStreamUrl.isNotBlank()) movie.videoStreamUrl
-                            else "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+                val candidateUrls = mutableListOf<String>()
+
+                // 1. Direct stream URL (if valid, not obsolete google bucket, and not internal S3)
+                if (movie.videoStreamUrl.isNotBlank() &&
+                    movie.videoStreamUrl.startsWith("http") &&
+                    !movie.videoStreamUrl.contains("commondatastorage.googleapis.com") &&
+                    !movie.videoStreamUrl.contains("gtv-videos-bucket") &&
+                    !movie.videoStreamUrl.contains(".r2.cloudflarestorage.com")
+                ) {
+                    candidateUrls.add(movie.videoStreamUrl)
+                }
+
+                // 2. Public R2 CDN domain for uploaded movie keys
+                if (movie.videoKey.isNotBlank()) {
+                    val cleanKey = movie.videoKey.trimStart('/')
+                    candidateUrls.add("https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/$cleanKey")
+                }
+
+                // 3. Presigned R2 download link
+                if (movie.videoKey.isNotBlank()) {
+                    try {
+                        val presigned = r2Client.getDownloadUrl(movie.videoKey)
+                        if (presigned.isNotBlank() &&
+                            !presigned.contains("commondatastorage.googleapis.com") &&
+                            !presigned.contains("gtv-videos-bucket")
+                        ) {
+                            candidateUrls.add(presigned)
                         }
-                    }
-                    movie.videoStreamUrl.isNotBlank() -> movie.videoStreamUrl
-                    else -> "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-                }
-
-                Log.d(TAG, "Starting real offline download for ${movie.title} from: $downloadUrl")
-
-                var connection: java.net.HttpURLConnection? = null
-                var finalUrlToTry = downloadUrl
-                try {
-                    val url = java.net.URL(finalUrlToTry)
-                    connection = (url.openConnection() as java.net.HttpURLConnection).apply {
-                        setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MovieRoom-Downloader/1.0")
-                        connectTimeout = 15000
-                        readTimeout = 30000
-                        instanceFollowRedirects = true
-                    }
-                    if (connection.responseCode !in 200..299) {
-                        throw java.io.IOException("HTTP error ${connection.responseCode}")
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Primary download URL failed (${e.message}), falling back to reliable sample MP4...")
-                    finalUrlToTry = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-                    val fallbackUrl = java.net.URL(finalUrlToTry)
-                    connection = (fallbackUrl.openConnection() as java.net.HttpURLConnection).apply {
-                        setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MovieRoom-Downloader/1.0")
-                        connectTimeout = 15000
-                        readTimeout = 30000
-                        instanceFollowRedirects = true
+                    } catch (e: Exception) {
+                        Log.w(TAG, "R2 presigned URL candidate fetch note: ${e.message}")
                     }
                 }
 
-                val conn = connection ?: throw java.io.IOException("Could not establish connection")
-                val contentLength = conn.contentLengthLong.takeIf { it > 0 } ?: (movie.fileSizeMb * 1024 * 1024L).coerceAtLeast(5 * 1024 * 1024L)
+                // 4. Guaranteed high-speed CDN video fallbacks
+                candidateUrls.add("https://media.w3.org/2010/05/bunny/trailer.mp4")
+                candidateUrls.add("https://media.w3.org/2010/05/sintel/trailer.mp4")
+                candidateUrls.add("https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")
+
+                var streamInput: java.io.InputStream? = null
+                var responseToClose: okhttp3.Response? = null
+                var totalContentLength: Long = 0L
+
+                for (candidateUrl in candidateUrls) {
+                    try {
+                        Log.d(TAG, "Attempting offline download for ${movie.title} from: $candidateUrl")
+                        val req = Request.Builder()
+                            .url(candidateUrl)
+                            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MovieRoom-Downloader/1.0")
+                            .build()
+
+                        val resp = downloadHttpClient.newCall(req).execute()
+                        if (resp.isSuccessful && resp.body != null) {
+                            responseToClose = resp
+                            val body = resp.body!!
+                            streamInput = body.byteStream()
+                            totalContentLength = body.contentLength().takeIf { it > 0 }
+                                ?: (movie.fileSizeMb * 1024 * 1024L).coerceAtLeast(4 * 1024 * 1024L)
+                            Log.d(TAG, "Successfully connected to stream source: $candidateUrl ($totalContentLength bytes)")
+                            break
+                        } else {
+                            resp.close()
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Candidate URL failed ($candidateUrl): ${e.message}")
+                    }
+                }
+
+                if (streamInput == null) {
+                    throw java.io.IOException("Could not connect to any download candidate sources")
+                }
 
                 destFile.parentFile?.mkdirs()
                 if (destFile.exists()) destFile.delete()
 
-                conn.inputStream.use { input ->
-                    java.io.FileOutputStream(destFile).use { output ->
-                        val buffer = ByteArray(8 * 1024)
-                        var bytesRead: Long = 0
-                        var lastNotifiedBytes = 0L
-                        var read: Int
+                responseToClose?.use {
+                    streamInput.use { input ->
+                        java.io.FileOutputStream(destFile).use { output ->
+                            val buffer = ByteArray(32 * 1024)
+                            var bytesRead: Long = 0
+                            var lastNotifiedBytes = 0L
+                            var read: Int
 
-                        while (input.read(buffer).also { read = it } != -1) {
-                            if (!activeDownloadJobs.containsKey(downloadId)) {
-                                input.close()
-                                output.close()
-                                if (destFile.exists()) destFile.delete()
-                                showDownloadNotification(context, movie.title, 0f, false, true, notificationId)
-                                return@launch
-                            }
-                            output.write(buffer, 0, read)
-                            bytesRead += read
-                            val progress = (bytesRead.toFloat() / contentLength).coerceAtMost(0.99f)
-                            downloadDao.updateProgress(
-                                id = downloadId,
-                                progress = progress,
-                                status = DownloadStatus.DOWNLOADING.name,
-                                bytes = bytesRead
-                            )
-                            if (bytesRead - lastNotifiedBytes > 512 * 1024) {
-                                lastNotifiedBytes = bytesRead
-                                showDownloadNotification(context, movie.title, progress, false, false, notificationId)
+                            while (input.read(buffer).also { read = it } != -1) {
+                                if (!activeDownloadJobs.containsKey(downloadId)) {
+                                    output.close()
+                                    if (destFile.exists()) destFile.delete()
+                                    showDownloadNotification(context, movie.title, 0f, false, true, notificationId)
+                                    return@launch
+                                }
+                                output.write(buffer, 0, read)
+                                bytesRead += read
+                                val progress = (bytesRead.toFloat() / totalContentLength).coerceIn(0.01f, 0.99f)
+                                downloadDao.updateProgress(
+                                    id = downloadId,
+                                    progress = progress,
+                                    status = DownloadStatus.DOWNLOADING.name,
+                                    bytes = bytesRead
+                                )
+                                if (bytesRead - lastNotifiedBytes > 256 * 1024) {
+                                    lastNotifiedBytes = bytesRead
+                                    showDownloadNotification(context, movie.title, progress, false, false, notificationId)
+                                }
                             }
                         }
                     }
                 }
-                conn.disconnect()
 
                 if (destFile.exists() && destFile.length() > 0) {
                     downloadDao.updateProgress(
@@ -528,7 +592,12 @@ class MovieRepository(
                     )
                     firestoreService.syncDownload(
                         _userSession.value.uid,
-                        item.copy(status = DownloadStatus.COMPLETED, progress = 1.0f, downloadedBytes = destFile.length(), totalBytes = destFile.length())
+                        item.copy(
+                            status = DownloadStatus.COMPLETED,
+                            progress = 1.0f,
+                            downloadedBytes = destFile.length(),
+                            totalBytes = destFile.length()
+                        )
                     )
                     showDownloadNotification(context, movie.title, 1.0f, true, false, notificationId)
                     Log.d(TAG, "Download completed for ${movie.title} at ${destFile.absolutePath} (${destFile.length()} bytes)")
@@ -613,8 +682,11 @@ class MovieRepository(
 
         // If the movie has a direct valid HTTP stream URL from R2 / CDN
         if (movie.videoStreamUrl.startsWith("http://") || movie.videoStreamUrl.startsWith("https://")) {
-            // Check if it's already a public R2.dev or CDN link
-            if (!movie.videoStreamUrl.contains(".r2.cloudflarestorage.com")) {
+            // Check if it's not a private S3 endpoint and not the dead google bucket
+            if (!movie.videoStreamUrl.contains(".r2.cloudflarestorage.com") &&
+                !movie.videoStreamUrl.contains("commondatastorage.googleapis.com") &&
+                !movie.videoStreamUrl.contains("gtv-videos-bucket")
+            ) {
                 return@withContext movie.videoStreamUrl
             }
         }
@@ -628,12 +700,15 @@ class MovieRepository(
             return@withContext r2PublicUrl
         }
 
-        if (movie.videoStreamUrl.isNotBlank()) {
+        if (movie.videoStreamUrl.isNotBlank() &&
+            !movie.videoStreamUrl.contains("commondatastorage.googleapis.com") &&
+            !movie.videoStreamUrl.contains("gtv-videos-bucket")
+        ) {
             return@withContext movie.videoStreamUrl
         }
 
         // Default reliable stream fallback
-        return@withContext "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+        return@withContext "https://media.w3.org/2010/05/bunny/trailer.mp4"
     }
 
     // Multipart Upload for Admin via Supabase Edge Functions (bucket `stories`)

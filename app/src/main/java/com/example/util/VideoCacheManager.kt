@@ -1,9 +1,14 @@
 package com.example.util
 
 import android.content.Context
+import android.media.MediaFormat
 import android.net.Uri
+import android.os.Build
+import android.os.Handler
 import android.util.Log
 import androidx.annotation.OptIn
+import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -13,9 +18,14 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.video.MediaCodecVideoRenderer
+import androidx.media3.exoplayer.video.VideoRendererEventListener
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -93,7 +103,93 @@ object VideoCacheManager {
     }
 
     /**
-     * Creates an ultra-fast, tuned ExoPlayer instance with caching and rapid start parameters.
+     * Builds a custom RenderersFactory supporting HDR tone mapping (HDR-to-SDR on SDR screens,
+     * and native wide color gamut on HDR screens) to ensure high-quality cinematic visuals.
+     */
+    fun buildRenderersFactory(context: Context): DefaultRenderersFactory {
+        return object : DefaultRenderersFactory(context.applicationContext) {
+            init {
+                setExtensionRendererMode(EXTENSION_RENDERER_MODE_ON)
+                setEnableDecoderFallback(true)
+                forceEnableMediaCodecAsynchronousQueueing()
+            }
+
+            override fun buildVideoRenderers(
+                context: Context,
+                extensionRendererMode: Int,
+                mediaCodecSelector: MediaCodecSelector,
+                enableDecoderFallback: Boolean,
+                eventHandler: Handler,
+                eventListener: VideoRendererEventListener,
+                allowedVideoJoiningTimeMs: Long,
+                out: ArrayList<Renderer>
+            ) {
+                val hdrVideoRenderer = object : MediaCodecVideoRenderer(
+                    context,
+                    codecAdapterFactory,
+                    mediaCodecSelector,
+                    allowedVideoJoiningTimeMs,
+                    enableDecoderFallback,
+                    eventHandler,
+                    eventListener,
+                    MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY
+                ) {
+                    override fun getMediaFormat(
+                        format: Format,
+                        codecMimeType: String,
+                        codecMaxValues: CodecMaxValues,
+                        codecOperatingRate: Float,
+                        deviceNeedsNoPostProcessWorkaround: Boolean,
+                        tunnelingAudioSessionId: Int
+                    ): MediaFormat {
+                        val mediaFormat = super.getMediaFormat(
+                            format,
+                            codecMimeType,
+                            codecMaxValues,
+                            codecOperatingRate,
+                            deviceNeedsNoPostProcessWorkaround,
+                            tunnelingAudioSessionId
+                        )
+
+                        // HDR Tone Mapping Configuration:
+                        // On Android 12+ (API 31+), enable hardware tone-mapping for HDR content
+                        // (HDR10, HLG, Dolby Vision) when played on SDR displays to prevent washed-out colors.
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val isDisplayHdr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                                try {
+                                    context.display?.isHdr == true
+                                } catch (e: Exception) {
+                                    false
+                                }
+                            } else false
+
+                            val isHdrContent = format.colorInfo?.colorTransfer == C.COLOR_TRANSFER_ST2084 ||
+                                    format.colorInfo?.colorTransfer == C.COLOR_TRANSFER_HLG
+
+                            if (isHdrContent && !isDisplayHdr) {
+                                // Request hardware MediaCodec tone mapping to SDR video
+                                mediaFormat.setInteger(
+                                    MediaFormat.KEY_COLOR_TRANSFER_REQUEST,
+                                    MediaFormat.COLOR_TRANSFER_SDR_VIDEO
+                                )
+                                Log.d(TAG, "ExoPlayer HDR Tone Mapping enabled (COLOR_TRANSFER_SDR_VIDEO) for ${format.sampleMimeType}")
+                            } else if (isDisplayHdr) {
+                                Log.d(TAG, "ExoPlayer Native HDR output enabled on HDR-supported display for ${format.sampleMimeType}")
+                            }
+                        }
+
+                        return mediaFormat
+                    }
+                }
+
+                out.add(hdrVideoRenderer)
+            }
+        }
+    }
+
+    /**
+     * Creates an ultra-fast, tuned ExoPlayer instance with caching, rapid start parameters,
+     * and HDR tone mapping support.
      */
     fun buildFastPlayer(context: Context): ExoPlayer {
         val cacheDataSourceFactory = createCacheDataSourceFactory(context)
@@ -111,7 +207,9 @@ object VideoCacheManager {
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        return ExoPlayer.Builder(context.applicationContext)
+        val renderersFactory = buildRenderersFactory(context)
+
+        return ExoPlayer.Builder(context.applicationContext, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .build()
