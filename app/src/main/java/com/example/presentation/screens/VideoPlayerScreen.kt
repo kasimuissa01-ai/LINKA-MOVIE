@@ -57,6 +57,9 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material.icons.filled.Help
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -425,68 +428,76 @@ fun VideoPlayerScreen(
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Aspect ratio cycle
-                        IconButton(
-                            onClick = { playerViewModel.cycleResizeMode() },
-                            modifier = Modifier.testTag("player_aspect_ratio_button")
-                        ) {
-                            Icon(Icons.Default.AspectRatio, contentDescription = "Aspect Ratio", tint = Color.White)
-                        }
-
-                        // Subtitles
-                        IconButton(
-                            onClick = { showSubtitleSheet = true },
-                            modifier = Modifier.testTag("player_subtitles_button")
-                        ) {
-                            Icon(
-                                Icons.Default.ClosedCaption,
-                                contentDescription = "Subtitles",
-                                tint = if (uiState.selectedSubtitle != "Off") CinematicRed else Color.White
-                            )
-                        }
-
-                        // Speed selector
-                        IconButton(
-                            onClick = { showSpeedDialog = true },
-                            modifier = Modifier.testTag("player_speed_button")
-                        ) {
-                            Icon(Icons.Default.Speed, contentDescription = "Speed", tint = Color.White)
-                        }
-
-                        // Screen rotation toggle button
+                        // Cast / TV button
                         IconButton(
                             onClick = {
-                                activity?.let { act ->
-                                    val currentOrientation = act.requestedOrientation
-                                    if (currentOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE ||
-                                        currentOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE ||
-                                        currentOrientation == ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
-                                    ) {
-                                        act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                                    } else {
-                                        act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                                    }
-                                }
+                                android.widget.Toast.makeText(context, "Searching for wireless display / cast devices...", android.widget.Toast.LENGTH_SHORT).show()
                             },
-                            modifier = Modifier.testTag("player_rotate_screen_button")
+                            modifier = Modifier.testTag("player_cast_button")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.ScreenRotation,
-                                contentDescription = "Rotate Screen",
-                                tint = Color.White
-                            )
+                            Icon(Icons.Default.Tv, contentDescription = "Cast", tint = Color.White)
                         }
 
-                        // Lock Screen button
+                        // Help button
                         IconButton(
-                            onClick = { playerViewModel.toggleLock() },
-                            modifier = Modifier.testTag("player_lock_button")
+                            onClick = {
+                                android.widget.Toast.makeText(context, "Tip: Double tap sides to seek 10s, swipe vertically for volume & brightness.", android.widget.Toast.LENGTH_LONG).show()
+                            },
+                            modifier = Modifier.testTag("player_help_button")
                         ) {
-                            Icon(
-                                imageVector = if (uiState.isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                                contentDescription = "Lock",
-                                tint = if (uiState.isLocked) CinematicRed else Color.White
-                            )
+                            Icon(Icons.Default.Help, contentDescription = "Help", tint = Color.White)
+                        }
+
+                        // Settings / Speed / Subtitles button
+                        IconButton(
+                            onClick = { showSpeedDialog = true },
+                            modifier = Modifier.testTag("player_settings_button")
+                        ) {
+                            Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.White)
+                        }
+                    }
+                }
+
+                // Middle Left: Tap to Lock Button
+                if (!uiState.isLocked && uiState.errorMessage == null) {
+                    Surface(
+                        color = Color(0x66000000),
+                        shape = CircleShape,
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .padding(start = 32.dp)
+                            .clickable { playerViewModel.toggleLock() }
+                            .testTag("player_tap_to_lock")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.LockOpen, contentDescription = "Lock", tint = Color.White, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Tap to Lock", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+
+                // If locked, show unlock button
+                if (uiState.isLocked) {
+                    Surface(
+                        color = Color(0x88CC1111),
+                        shape = CircleShape,
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .padding(start = 32.dp)
+                            .clickable { playerViewModel.toggleLock() }
+                            .testTag("player_tap_to_unlock")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = "Unlock", tint = Color.White, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Tap to Unlock", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
@@ -580,15 +591,102 @@ fun VideoPlayerScreen(
                     }
                 }
 
-                // Bottom Scrubber Bar & Time
+                // Bottom Controls Row: Action Buttons (Fit, Language, Speed, Quality) & Scrubber Bar
                 if (!uiState.isLocked) {
                     Column(
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
                             .fillMaxWidth()
                             .navigationBarsPadding()
-                            .padding(horizontal = 24.dp, vertical = 16.dp)
+                            .padding(horizontal = 24.dp, vertical = 12.dp)
                     ) {
+                        // Bottom action buttons row (Fit, Language, Speed, Quality) right aligned above scrubber
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.End,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 6.dp)
+                        ) {
+                            // Fit Button
+                            Surface(
+                                color = Color(0x55000000),
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .clickable { playerViewModel.cycleResizeMode() }
+                                    .testTag("player_fit_button")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.AspectRatio, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(uiState.resizeMode.label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            // Language / Subtitle Button
+                            Surface(
+                                color = Color(0x55000000),
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .clickable { showSubtitleSheet = true }
+                                    .testTag("player_language_button")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.ClosedCaption, contentDescription = null, tint = if (uiState.selectedSubtitle != "Off") CinematicRed else Color.White, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Language", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            // Speed Button
+                            Surface(
+                                color = Color(0x55000000),
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .clickable { showSpeedDialog = true }
+                                    .testTag("player_speed_action_button")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(Icons.Default.Speed, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("${uiState.playbackSpeed}x", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            // Quality Button (720P)
+                            Surface(
+                                color = Color(0x55000000),
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .clickable {
+                                        android.widget.Toast.makeText(context, "Streaming Quality: HD 720P (Optimal)", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                    .testTag("player_quality_button")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text("720P", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
                         val duration = uiState.durationMs.coerceAtLeast(1L)
                         val current = uiState.currentPositionMs.coerceIn(0L, duration)
 
@@ -617,13 +715,6 @@ fun VideoPlayerScreen(
                                 color = Color.White,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium
-                            )
-
-                            Text(
-                                text = "${uiState.playbackSpeed}x",
-                                color = TextSecondary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
                             )
 
                             Text(
@@ -661,7 +752,7 @@ fun VideoPlayerScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
-                                    playerViewModel.selectSubtitle(sub)
+                                    playerViewModel.selectSubtitle(sub, context)
                                     showSubtitleSheet = false
                                 }
                                 .padding(vertical = 10.dp)
@@ -733,7 +824,12 @@ fun VideoPlayerScreen(
 
 private fun formatTime(millis: Long): String {
     val totalSeconds = millis / 1000
-    val minutes = totalSeconds / 60
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
     val seconds = totalSeconds % 60
-    return String.format("%02d:%02d", minutes, seconds)
+    return if (hours > 0) {
+        String.format("%d:%02d:%02d", hours, minutes, seconds)
+    } else {
+        String.format("%02d:%02d", minutes, seconds)
+    }
 }

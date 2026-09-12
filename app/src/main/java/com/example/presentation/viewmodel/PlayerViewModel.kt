@@ -284,8 +284,28 @@ class PlayerViewModel(
     }
 
     // Subtitles
-    fun selectSubtitle(subtitle: String) {
+    fun selectSubtitle(subtitle: String, context: Context) {
         _uiState.value = _uiState.value.copy(selectedSubtitle = subtitle)
+        exoPlayer?.let { player ->
+            val trackSelector = player.trackSelector as? androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+            if (subtitle == "Off") {
+                trackSelector?.let { selector ->
+                    val params = selector.buildUponParameters()
+                        .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
+                        .build()
+                    player.trackSelectionParameters = params
+                }
+            } else {
+                trackSelector?.let { selector ->
+                    val params = selector.buildUponParameters()
+                        .setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, false)
+                        .setSelectUndeterminedTextLanguage(true)
+                        .build()
+                    player.trackSelectionParameters = params
+                }
+                android.widget.Toast.makeText(context, "Subtitles active: $subtitle", android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     // Playback Speed
