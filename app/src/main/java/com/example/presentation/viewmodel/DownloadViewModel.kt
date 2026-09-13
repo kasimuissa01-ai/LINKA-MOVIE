@@ -40,22 +40,7 @@ class DownloadViewModel(
             if (movie != null) {
                 repository.startDownload(movie, context)
             } else {
-                val fallbackMovie = Movie(
-                    id = item.movieId,
-                    title = item.movieTitle,
-                    description = "",
-                    genres = emptyList(),
-                    coverUrl = item.coverUrl,
-                    videoKey = "",
-                    videoStreamUrl = "https://media.w3.org/2010/05/bunny/trailer.mp4",
-                    durationMinutes = 120,
-                    fileSizeMb = (item.totalBytes / (1024 * 1024)).coerceAtLeast(50L),
-                    releaseYear = 2024,
-                    rating = 8.0,
-                    cast = emptyList(),
-                    isFeatured = false
-                )
-                repository.startDownload(fallbackMovie, context)
+                android.util.Log.w("DownloadViewModel", "Cannot retry download: movie ${item.movieId} not found in database.")
             }
         }
     }

@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+@OptIn(UnstableApi::class)
 enum class ScreenResizeMode(val label: String, val exoMode: Int) {
     FIT("Fit", AspectRatioFrameLayout.RESIZE_MODE_FIT),
     FILL("Fill", AspectRatioFrameLayout.RESIZE_MODE_FILL),
@@ -76,8 +77,34 @@ class PlayerViewModel(
     private var hudDismissJob: Job? = null
     private var doubleTapDismissJob: Job? = null
 
-    fun initializePlayer(context: Context, movie: Movie) {
-        if (exoPlayer != null) return
+    private val moviePositions = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private var currentMovieId: String? = null
+
+    fun saveMoviePosition(movieId: String, positionMs: Long) {
+        if (positionMs > 0L) {
+            moviePositions[movieId] = positionMs
+        }
+    }
+
+    fun getMovieLastPosition(movieId: String): Long {
+        return moviePositions[movieId] ?: 0L
+    }
+
+    fun initializePlayer(context: Context, movie: Movie, initialPositionMs: Long = 0L) {
+        currentMovieId = movie.id
+        val targetStartPos = if (initialPositionMs > 0L) {
+            saveMoviePosition(movie.id, initialPositionMs)
+            initialPositionMs
+        } else {
+            getMovieLastPosition(movie.id)
+        }
+
+        if (exoPlayer != null) {
+            if (targetStartPos > 0L && Math.abs((exoPlayer?.currentPosition ?: 0L) - targetStartPos) > 1500L) {
+                exoPlayer?.seekTo(targetStartPos)
+            }
+            return
+        }
 
         val player = try {
             VideoCacheManager.buildFastPlayer(context)
@@ -137,15 +164,15 @@ class PlayerViewModel(
                 }
 
                 // 2. If it was playing an online stream (R2 CDN or custom URL):
-                val directStream = movie.videoStreamUrl
-                val fallbackBunny = "https://media.w3.org/2010/05/bunny/trailer.mp4"
+                val directStream = movie.videoStreamUrl.trim()
 
                 if (directStream.isNotBlank() &&
                     currentUrl != directStream &&
-                    directStream.startsWith("http") &&
-                    !directStream.contains("commondatastorage.googleapis.com")
+                    (directStream.startsWith("http://") || directStream.startsWith("https://")) &&
+                    !directStream.contains("bunny/trailer.mp4") &&
+                    !directStream.contains("BigBuckBunny.mp4")
                 ) {
-                    android.util.Log.w("PlayerViewModel", "Switching to direct stream fallback: $directStream")
+                    android.util.Log.w("PlayerViewModel", "Switching to direct stream source: $directStream")
                     _uiState.value = _uiState.value.copy(
                         currentPlaybackUrl = directStream,
                         errorMessage = null,
@@ -154,21 +181,11 @@ class PlayerViewModel(
                     player.setMediaItem(MediaItem.fromUri(directStream))
                     player.prepare()
                     player.playWhenReady = true
-                } else if (currentUrl != fallbackBunny) {
-                    android.util.Log.w("PlayerViewModel", "Switching to CDN high-speed stream fallback: $fallbackBunny")
-                    _uiState.value = _uiState.value.copy(
-                        currentPlaybackUrl = fallbackBunny,
-                        errorMessage = null,
-                        isLoading = true
-                    )
-                    player.setMediaItem(MediaItem.fromUri(fallbackBunny))
-                    player.prepare()
-                    player.playWhenReady = true
                 } else {
                     _uiState.value = _uiState.value.copy(
                         isPlaying = false,
                         isLoading = false,
-                        errorMessage = "Stream playback encountered a connection issue. Tap to retry or watch from your downloaded movies."
+                        errorMessage = "Stream playback failed for '${movie.title}'. Please verify the video URL or network connection."
                     )
                 }
             }
@@ -176,6 +193,14 @@ class PlayerViewModel(
 
         viewModelScope.launch {
             val playbackUrl = repository.resolvePlaybackUri(movie, context)
+            if (playbackUrl.isBlank()) {
+                _uiState.value = _uiState.value.copy(
+                    isPlaying = false,
+                    isLoading = false,
+                    errorMessage = "No video stream is available for '${movie.title}'. Please upload a video or configure a stream URL."
+                )
+                return@launch
+            }
             val isOffline = playbackUrl.startsWith("file://") || playbackUrl.startsWith("/")
             _uiState.value = _uiState.value.copy(
                 isOfflinePlayback = isOffline,
@@ -185,6 +210,10 @@ class PlayerViewModel(
 
             val mediaItem = MediaItem.fromUri(playbackUrl)
             player.setMediaItem(mediaItem)
+            if (targetStartPos > 0L) {
+                player.seekTo(targetStartPos)
+                _uiState.value = _uiState.value.copy(currentPositionMs = targetStartPos)
+            }
             player.prepare()
             player.playWhenReady = true
 
@@ -201,12 +230,16 @@ class PlayerViewModel(
             viewModelScope.launch {
                 val playbackUrl = repository.resolvePlaybackUri(movie, context)
                 val isOffline = playbackUrl.startsWith("file://") || playbackUrl.startsWith("/")
+                val resumePos = getMovieLastPosition(movie.id)
                 _uiState.value = _uiState.value.copy(
                     isOfflinePlayback = isOffline,
                     currentPlaybackUrl = playbackUrl,
                     errorMessage = null
                 )
                 player.setMediaItem(MediaItem.fromUri(playbackUrl))
+                if (resumePos > 0L) {
+                    player.seekTo(resumePos)
+                }
                 player.prepare()
                 player.playWhenReady = true
             }
@@ -218,11 +251,15 @@ class PlayerViewModel(
         progressTrackerJob = viewModelScope.launch {
             while (true) {
                 exoPlayer?.let { player ->
+                    val pos = player.currentPosition.coerceAtLeast(0L)
                     _uiState.value = _uiState.value.copy(
-                        currentPositionMs = player.currentPosition.coerceAtLeast(0L),
+                        currentPositionMs = pos,
                         bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L),
                         durationMs = player.duration.coerceAtLeast(0L)
                     )
+                    currentMovieId?.let { id ->
+                        if (pos > 0L) moviePositions[id] = pos
+                    }
                 }
                 delay(300)
             }
@@ -402,7 +439,14 @@ class PlayerViewModel(
         }
     }
 
-    fun releasePlayer() {
+    fun releasePlayer(movieId: String? = null) {
+        exoPlayer?.let { player ->
+            val pos = player.currentPosition.coerceAtLeast(0L)
+            if (pos > 0L) {
+                movieId?.let { id -> moviePositions[id] = pos }
+                currentMovieId?.let { id -> moviePositions[id] = pos }
+            }
+        }
         progressTrackerJob?.cancel()
         controlsTimeoutJob?.cancel()
         hudDismissJob?.cancel()

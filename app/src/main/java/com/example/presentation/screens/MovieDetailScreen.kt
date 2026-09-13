@@ -86,6 +86,7 @@ import com.example.domain.model.DownloadStatus
 import com.example.domain.model.Movie
 import com.example.presentation.components.MoviePosterCard
 import com.example.presentation.viewmodel.DownloadViewModel
+import com.example.presentation.viewmodel.PlayerViewModel
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
 import com.example.ui.theme.ObsidianBlack
@@ -103,8 +104,9 @@ fun MovieDetailScreen(
     allMovies: List<Movie> = emptyList(),
     downloadViewModel: DownloadViewModel,
     movieRepository: MovieRepository? = null,
+    playerViewModel: PlayerViewModel? = null,
     onBackClick: () -> Unit,
-    onPlayFullscreenClick: (Movie) -> Unit,
+    onPlayFullscreenClick: (Movie, Long) -> Unit,
     onSelectRecommendedMovie: (Movie) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -112,6 +114,7 @@ fun MovieDetailScreen(
     val downloadItem = downloads.find { it.movieId == movie.id }
     val context = LocalContext.current
     val activity = context as? Activity
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val scrollState = rememberScrollState()
 
     // Dedicated Inline ExoPlayer for instantaneous automatic playback
@@ -131,6 +134,18 @@ fun MovieDetailScreen(
         player.apply {
             playWhenReady = true
             repeatMode = Player.REPEAT_MODE_OFF
+        }
+    }
+
+    // Auto-seamlessly rotate to full movie player when device is turned to landscape
+    LaunchedEffect(configuration.orientation) {
+        if (configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+            val currentPos = inlinePlayer.currentPosition.coerceAtLeast(0L)
+            if (inlinePlayer.isPlaying || currentPos > 0L) {
+                inlinePlayer.pause()
+                playerViewModel?.saveMoviePosition(movie.id, currentPos)
+                onPlayFullscreenClick(movie, currentPos)
+            }
         }
     }
 
@@ -174,21 +189,24 @@ fun MovieDetailScreen(
                     runCatching { localFile.delete() }
                 }
 
-                // Try reliable fallback streams
+                // Try movie stream URL
                 val fallbackStream = if (movie.videoStreamUrl.isNotBlank() &&
-                    movie.videoStreamUrl.startsWith("http") &&
-                    !movie.videoStreamUrl.contains("commondatastorage.googleapis.com")
+                    (movie.videoStreamUrl.startsWith("http://") || movie.videoStreamUrl.startsWith("https://")) &&
+                    !movie.videoStreamUrl.contains("bunny/trailer.mp4") &&
+                    !movie.videoStreamUrl.contains("BigBuckBunny.mp4")
                 ) {
                     movie.videoStreamUrl
                 } else if (movie.videoKey.isNotBlank()) {
                     "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/${movie.videoKey.trimStart('/')}"
                 } else {
-                    "https://media.w3.org/2010/05/bunny/trailer.mp4"
+                    ""
                 }
 
-                inlinePlayer.setMediaItem(MediaItem.fromUri(fallbackStream))
-                inlinePlayer.prepare()
-                inlinePlayer.play()
+                if (fallbackStream.isNotBlank()) {
+                    inlinePlayer.setMediaItem(MediaItem.fromUri(fallbackStream))
+                    inlinePlayer.prepare()
+                    inlinePlayer.play()
+                }
             }
         }
         inlinePlayer.addListener(listener)
@@ -196,23 +214,47 @@ fun MovieDetailScreen(
         // Resolve uri and auto-start (checking verified local offline file first)
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
         val localFile = java.io.File(destDir, "movie_${movie.id}.mp4")
-        val isVerifiedOffline = downloadItem?.status == DownloadStatus.COMPLETED && localFile.exists() && localFile.length() >= 1024 * 1024L
+        val internalFile = java.io.File(context.filesDir, "movie_${movie.id}.mp4")
 
-        val mediaUri = if (isVerifiedOffline) {
+        val storedPath = downloadItem?.localFilePath?.trim().orEmpty()
+        val isVerifiedOffline = downloadItem?.status == DownloadStatus.COMPLETED
+
+        val mediaUri = if (isVerifiedOffline && storedPath.startsWith("content://")) {
+            storedPath
+        } else if (isVerifiedOffline && storedPath.isNotBlank() && java.io.File(storedPath.removePrefix("file://")).exists() && java.io.File(storedPath.removePrefix("file://")).length() >= 1024 * 1024L) {
+            java.io.File(storedPath.removePrefix("file://")).toURI().toString()
+        } else if (isVerifiedOffline && localFile.exists() && localFile.length() >= 1024 * 1024L) {
             localFile.toURI().toString()
+        } else if (isVerifiedOffline && internalFile.exists() && internalFile.length() >= 1024 * 1024L) {
+            internalFile.toURI().toString()
+        } else if (movie.videoStreamUrl.isNotBlank() &&
+            (movie.videoStreamUrl.startsWith("http://") || movie.videoStreamUrl.startsWith("https://") ||
+             movie.videoStreamUrl.startsWith("content://") || movie.videoStreamUrl.startsWith("file://")) &&
+            !movie.videoStreamUrl.contains("bunny/trailer.mp4") &&
+            !movie.videoStreamUrl.contains("BigBuckBunny.mp4")
+        ) {
+            movie.videoStreamUrl
         } else if (movie.videoKey.isNotBlank()) {
             "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/${movie.videoKey.trimStart('/')}"
-        } else if (movie.videoStreamUrl.isNotBlank() && !movie.videoStreamUrl.contains("commondatastorage.googleapis.com")) {
-            movie.videoStreamUrl
         } else {
-            "https://media.w3.org/2010/05/bunny/trailer.mp4"
+            ""
         }
 
-        inlinePlayer.setMediaItem(MediaItem.fromUri(mediaUri))
-        inlinePlayer.prepare()
-        inlinePlayer.play()
+        if (mediaUri.isNotBlank()) {
+            inlinePlayer.setMediaItem(MediaItem.fromUri(mediaUri))
+            inlinePlayer.prepare()
+            val resumePos = playerViewModel?.getMovieLastPosition(movie.id) ?: 0L
+            if (resumePos > 0L) {
+                inlinePlayer.seekTo(resumePos)
+            }
+            inlinePlayer.play()
+        }
 
         onDispose {
+            val lastPos = inlinePlayer.currentPosition.coerceAtLeast(0L)
+            if (lastPos > 0L) {
+                playerViewModel?.saveMoviePosition(movie.id, lastPos)
+            }
             inlinePlayer.removeListener(listener)
             inlinePlayer.release()
         }
@@ -348,7 +390,10 @@ fun MovieDetailScreen(
                                 // Fullscreen Rotate Button
                                 IconButton(
                                     onClick = {
-                                        onPlayFullscreenClick(movie)
+                                        val currentPos = inlinePlayer.currentPosition.coerceAtLeast(0L)
+                                        inlinePlayer.pause()
+                                        playerViewModel?.saveMoviePosition(movie.id, currentPos)
+                                        onPlayFullscreenClick(movie, currentPos)
                                     },
                                     modifier = Modifier
                                         .size(38.dp)
@@ -545,7 +590,12 @@ fun MovieDetailScreen(
 
                     // Rotate to Fullscreen Button
                     IconButton(
-                        onClick = { onPlayFullscreenClick(movie) },
+                        onClick = {
+                            val currentPos = inlinePlayer.currentPosition.coerceAtLeast(0L)
+                            inlinePlayer.pause()
+                            playerViewModel?.saveMoviePosition(movie.id, currentPos)
+                            onPlayFullscreenClick(movie, currentPos)
+                        },
                         modifier = Modifier
                             .size(50.dp)
                             .clip(RoundedCornerShape(12.dp))

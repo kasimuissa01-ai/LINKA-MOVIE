@@ -332,7 +332,7 @@ class MovieRepository(
                     genres = listOf("Sci-Fi", "Mystery", "Drama"),
                     coverUrl = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800&auto=format&fit=crop&q=80",
                     videoKey = "movies/solaris_echo.mp4",
-                    videoStreamUrl = "https://media.w3.org/2010/05/bunny/trailer.mp4",
+                    videoStreamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
                     durationMinutes = 144,
                     fileSizeMb = 2100,
                     releaseYear = 2025,
@@ -393,23 +393,23 @@ class MovieRepository(
                 firestoreService.saveMovie(movie)
             }
         } else {
-            // Auto-heal / migrate any existing movies in Room that have obsolete or forbidden URLs
+            // Auto-heal / clean up any existing movies in Room that have obsolete cartoon URLs
             try {
                 val existingList = movieDao.getAllMoviesList()
                 for (movieEntity in existingList) {
                     val currentStream = movieEntity.videoStreamUrl
-                    if (currentStream.contains("commondatastorage.googleapis.com") ||
-                        currentStream.contains("gtv-videos-bucket")) {
+                    if (currentStream.contains("bunny/trailer.mp4") ||
+                        currentStream.contains("BigBuckBunny.mp4")) {
                         val fixedUrl = when (movieEntity.id) {
+                            "m_space_02" -> "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4"
                             "m_cyber_01" -> "https://media.w3.org/2010/05/sintel/trailer.mp4"
-                            "m_space_02" -> "https://media.w3.org/2010/05/bunny/trailer.mp4"
                             "m_shadow_03" -> "https://media.w3.org/2010/05/video/movie_300.mp4"
                             "m_chrono_04" -> "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
                             "m_abyss_05" -> "https://media.w3.org/2010/05/sintel/trailer.mp4"
-                            else -> "https://media.w3.org/2010/05/bunny/trailer.mp4"
+                            else -> "" // Don't replace custom user movies with a cartoon!
                         }
                         movieDao.updateMovie(movieEntity.copy(videoStreamUrl = fixedUrl))
-                        Log.d(TAG, "Migrated movie ${movieEntity.title} stream URL to verified working source: $fixedUrl")
+                        Log.d(TAG, "Replaced legacy cartoon URL on ${movieEntity.title} with clean source: $fixedUrl")
                     }
                 }
             } catch (e: Exception) {
@@ -501,17 +501,19 @@ class MovieRepository(
     }
 
     /**
-     * Resolves the primary or fallback online stream for Cloudflare R2 video assets.
+     * Resolves the online stream for Cloudflare R2 video assets or direct movie URLs.
+     * Never returns dummy cartoon trailers.
      */
     suspend fun resolveOnlineStreamUri(movie: Movie): String = withContext(Dispatchers.IO) {
-        // 1. If movie has a valid HTTP stream URL
-        if (movie.videoStreamUrl.startsWith("http://") || movie.videoStreamUrl.startsWith("https://")) {
-            if (!movie.videoStreamUrl.contains(".r2.cloudflarestorage.com") &&
-                !movie.videoStreamUrl.contains("commondatastorage.googleapis.com") &&
-                !movie.videoStreamUrl.contains("gtv-videos-bucket")
-            ) {
-                return@withContext movie.videoStreamUrl
-            }
+        // 1. Direct stream URL from database if valid and not a placeholder
+        val directStream = movie.videoStreamUrl.trim()
+        if (directStream.isNotBlank() &&
+            (directStream.startsWith("http://") || directStream.startsWith("https://") ||
+             directStream.startsWith("content://") || directStream.startsWith("file://")) &&
+            !directStream.contains("bunny/trailer.mp4") &&
+            !directStream.contains("BigBuckBunny.mp4")
+        ) {
+            return@withContext directStream
         }
 
         // 2. Public Cloudflare R2 CDN URL if videoKey is present
@@ -535,15 +537,8 @@ class MovieRepository(
             }
         }
 
-        if (movie.videoStreamUrl.isNotBlank() &&
-            !movie.videoStreamUrl.contains("commondatastorage.googleapis.com") &&
-            !movie.videoStreamUrl.contains("gtv-videos-bucket")
-        ) {
-            return@withContext movie.videoStreamUrl
-        }
-
-        // 4. Ultra-reliable CDN fallback
-        return@withContext "https://media.w3.org/2010/05/bunny/trailer.mp4"
+        // If no stream or video key is configured, return empty string so the player can report missing source
+        return@withContext ""
     }
 
     // Multipart Upload for Admin via Supabase Edge Functions (bucket `stories`)

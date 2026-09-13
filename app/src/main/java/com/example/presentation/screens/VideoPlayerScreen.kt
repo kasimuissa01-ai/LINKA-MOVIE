@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -107,6 +108,7 @@ import com.example.ui.theme.TextSecondary
 @Composable
 fun VideoPlayerScreen(
     movie: Movie,
+    initialPositionMs: Long = 0L,
     playerViewModel: PlayerViewModel,
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -139,8 +141,8 @@ fun VideoPlayerScreen(
     }
 
     // Deterministic Landscape + Immersive Fullscreen lifecycle
-    DisposableEffect(Unit) {
-        playerViewModel.initializePlayer(context, movie)
+    DisposableEffect(movie.id) {
+        playerViewModel.initializePlayer(context, movie, initialPositionMs)
 
         activity?.let { act ->
             // 1. Force Landscape orientation (SENSOR_LANDSCAPE allows natural 180° flips if user turns device)
@@ -175,7 +177,7 @@ fun VideoPlayerScreen(
         }
 
         onDispose {
-            playerViewModel.releasePlayer()
+            playerViewModel.releasePlayer(movie.id)
             restoreSystemUiAndOrientation()
         }
     }
@@ -749,6 +751,46 @@ fun VideoPlayerScreen(
                                     fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                                 )
+                            }
+
+                            Spacer(modifier = Modifier.width(10.dp))
+
+                            // Rotate Screen Toggle Button
+                            Surface(
+                                color = Color.White.copy(alpha = 0.15f),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .clickable {
+                                        activity?.let { act ->
+                                            val currentOrient = act.requestedOrientation
+                                            if (currentOrient == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
+                                                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                            } else {
+                                                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                            }
+                                        }
+                                        playerViewModel.restartControlsHideTimer()
+                                    }
+                                    .testTag("player_rotate_toggle_button")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ScreenRotation,
+                                        contentDescription = "Rotate Screen",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Rotate",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                         }
                     }

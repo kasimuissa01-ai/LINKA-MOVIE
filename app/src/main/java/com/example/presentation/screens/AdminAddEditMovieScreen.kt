@@ -140,8 +140,9 @@ fun AdminAddEditMovieScreen(
     }
     var streamUrl by remember {
         mutableStateOf(
-            existingMovie?.videoStreamUrl
-                ?: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+            existingMovie?.videoStreamUrl?.takeIf {
+                !it.contains("bunny/trailer.mp4") && !it.contains("BigBuckBunny.mp4")
+            } ?: ""
         )
     }
     var isFeaturedOnCarousel by remember {

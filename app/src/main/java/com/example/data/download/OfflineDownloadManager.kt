@@ -83,28 +83,106 @@ class OfflineDownloadManager(
 
     /**
      * Returns verified local file URI for offline playback if and only if:
-     * 1. Room marks status as COMPLETED
-     * 2. The local file actually exists on disk
-     * 3. The file is non-empty and has valid video size (>1MB)
+     * 1. Room marks status as COMPLETED and links to the requested movieId.
+     * 2. The contentUri or filePath stored in Room (or canonical movie_${movieId}.mp4) is verified.
+     * 3. The file is non-empty and has valid video size (>= 1MB).
      *
-     * If an orphan or partial file is found from a previous broken attempt, it is automatically
-     * purged to prevent ExoPlayer from failing and falsely showing "no internet connection".
+     * Correctly resolves both content:// URIs and filesystem paths while verifying that the file
+     * genuinely belongs to the intended movie ID, preventing incorrect file retrieval.
      */
     suspend fun getVerifiedOfflinePlaybackUri(movieId: String): String? = withContext(Dispatchers.IO) {
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
         val finalFile = File(destDir, "movie_${movieId}.mp4")
+        val internalFile = File(context.filesDir, "movie_${movieId}.mp4")
 
         val entity = downloadDao.getDownloadByMovieId(movieId)
         val isMarkedCompleted = entity != null && entity.status == DownloadStatus.COMPLETED.name
 
-        if (isMarkedCompleted && finalFile.exists() && finalFile.length() >= 1024 * 1024L) {
-            Log.d(TAG, "Verified complete offline file available for movie $movieId (${finalFile.length()} bytes)")
-            return@withContext finalFile.toURI().toString()
+        if (entity != null && isMarkedCompleted) {
+            // 1. Check localFilePath or contentUri stored in Room database
+            val storedPath = entity.localFilePath.trim()
+            if (storedPath.isNotBlank()) {
+                // Case A: content:// URI (Scoped storage / Storage Access Framework / MediaStore)
+                if (storedPath.startsWith("content://")) {
+                    try {
+                        val uri = android.net.Uri.parse(storedPath)
+                        val isValidDescriptor = context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                            pfd.statSize >= 1024 * 1024L
+                        } ?: false
+                        if (isValidDescriptor) {
+                            Log.d(TAG, "Verified contentUri offline file for movie $movieId: $storedPath")
+                            return@withContext storedPath
+                        } else {
+                            Log.w(TAG, "ContentUri descriptor invalid or < 1MB for movie $movieId: $storedPath")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed reading stored contentUri for movie $movieId: ${e.message}")
+                    }
+                }
+
+                // Case B: Standard filesystem path or file:// URI
+                val cleanPath = storedPath.removePrefix("file://")
+                val storedFile = File(cleanPath)
+                if (storedFile.exists() && storedFile.length() >= 1024 * 1024L) {
+                    val fileSize = storedFile.length()
+                    // Verify file identity links to movieId to prevent incorrect file retrieval
+                    val belongsToMovie = storedFile.name.contains(movieId) ||
+                            storedFile.absolutePath.contains(movieId) ||
+                            entity.movieId == movieId
+
+                    if (belongsToMovie) {
+                        // Purge legacy cartoon placeholder (~5.5MB when movie is > 20MB)
+                        if (entity.totalBytes > 20L * 1024L * 1024L && fileSize in 5_000_000L..6_000_000L) {
+                            Log.w(TAG, "Detected legacy cartoon placeholder ($fileSize bytes) for movie $movieId. Purging.")
+                            runCatching { storedFile.delete() }
+                            downloadDao.deleteById(entity.id)
+                            return@withContext null
+                        }
+                        Log.d(TAG, "Verified stored filePath from Room for movie $movieId: ${storedFile.absolutePath} ($fileSize bytes)")
+                        return@withContext storedFile.toURI().toString()
+                    } else {
+                        Log.w(TAG, "Stored filePath '${storedFile.name}' does not match movie ID $movieId. Skipping invalid mapping.")
+                    }
+                }
+            }
+
+            // 2. Check canonical external and internal files
+            val candidateFile = when {
+                finalFile.exists() && finalFile.length() >= 1024 * 1024L -> finalFile
+                internalFile.exists() && internalFile.length() >= 1024 * 1024L -> internalFile
+                else -> null
+            }
+
+            if (candidateFile != null) {
+                val fileSize = candidateFile.length()
+                if (entity.totalBytes > 20L * 1024L * 1024L && fileSize in 5_000_000L..6_000_000L) {
+                    Log.w(TAG, "Detected legacy cartoon placeholder ($fileSize bytes) in canonical location for movie $movieId. Purging.")
+                    runCatching { candidateFile.delete() }
+                    downloadDao.deleteById(entity.id)
+                    return@withContext null
+                }
+                // Keep Room database path synchronized with verified existing file
+                if (entity.localFilePath != candidateFile.absolutePath) {
+                    downloadDao.updateDownloadProgressAndPath(
+                        id = entity.id,
+                        progress = 1.0f,
+                        status = DownloadStatus.COMPLETED.name,
+                        bytes = fileSize,
+                        localPath = candidateFile.absolutePath
+                    )
+                }
+                Log.d(TAG, "Verified canonical file available for movie $movieId (${candidateFile.length()} bytes)")
+                return@withContext candidateFile.toURI().toString()
+            }
+
+            // If Room marked COMPLETED but no valid file was found, mark FAILED to prevent false offline status
+            Log.w(TAG, "Movie $movieId marked COMPLETED in Room but local file missing or corrupt. Updating status.")
+            downloadDao.updateStatus(entity.id, DownloadStatus.FAILED.name)
         }
 
-        // If file exists on disk but is NOT verified completed in Room or is < 1MB, it's corrupted/partial!
-        if (finalFile.exists() && !isMarkedCompleted) {
-            Log.w(TAG, "Found corrupt or unverified partial file for movie $movieId (${finalFile.length()} bytes). Cleaning up to preserve streaming...")
+        // Clean up unverified or corrupt partial file only if not actively downloading
+        if (finalFile.exists() && !isMarkedCompleted && activeDownloadJobs[movieId]?.isActive != true) {
+            Log.w(TAG, "Found corrupt or partial file for movie $movieId (${finalFile.length()} bytes). Cleaning up...")
             runCatching { finalFile.delete() }
         }
 
@@ -220,43 +298,48 @@ class OfflineDownloadManager(
         var downloadSuccess = false
         var lastError: Exception? = null
 
-        for (candidateUrl in candidates) {
-            if (!activeDownloadJobs.containsKey(downloadId)) {
-                Log.d(TAG, "Download was cancelled before trying $candidateUrl")
-                return@withContext
-            }
-
-            try {
-                Log.d(TAG, "Probing source candidate for ${movie.title}: $candidateUrl")
-                val probe = probeSource(candidateUrl, estimatedTotalBytes)
-                val effectiveTotalBytes = if (probe.contentLength > 0) probe.contentLength else estimatedTotalBytes
-
-                if (probe.supportsRange) {
-                    val isOver2GB = effectiveTotalBytes >= LARGE_FILE_THRESHOLD || movie.fileSizeMb >= 2048
-                    Log.d(TAG, "Executing Chunked Download Strategy (over2GB=$isOver2GB, size=${formatBytes(effectiveTotalBytes)}) from $candidateUrl")
-                    downloadSuccess = downloadInChunks(
-                        url = candidateUrl,
-                        tempFile = tempFile,
-                        finalFile = finalFile,
-                        movie = movie,
-                        downloadId = downloadId,
-                        totalBytes = effectiveTotalBytes
-                    )
-                } else {
-                    Log.d(TAG, "Server does not support Range requests, falling back to streaming with 64KB buffer for ${movie.title}")
-                    downloadSuccess = streamWithResumption(
-                        url = candidateUrl,
-                        tempFile = tempFile,
-                        finalFile = finalFile,
-                        movie = movie,
-                        downloadId = downloadId,
-                        estimatedTotalBytes = effectiveTotalBytes
-                    )
+        if (candidates.isEmpty()) {
+            lastError = IllegalStateException("No video stream URL or Cloudflare R2 key found for '${movie.title}'")
+            Log.e(TAG, "Download cannot proceed: ${lastError.message}")
+        } else {
+            for (candidateUrl in candidates) {
+                if (!activeDownloadJobs.containsKey(downloadId)) {
+                    Log.d(TAG, "Download was cancelled before trying $candidateUrl")
+                    return@withContext
                 }
-                if (downloadSuccess) break
-            } catch (e: Exception) {
-                lastError = e
-                Log.w(TAG, "Candidate $candidateUrl failed for ${movie.title}: ${e.message}")
+
+                try {
+                    Log.d(TAG, "Probing source candidate for ${movie.title}: $candidateUrl")
+                    val probe = probeSource(candidateUrl, estimatedTotalBytes)
+                    val effectiveTotalBytes = if (probe.contentLength > 0) probe.contentLength else estimatedTotalBytes
+
+                    if (probe.supportsRange) {
+                        val isOver2GB = effectiveTotalBytes >= LARGE_FILE_THRESHOLD || movie.fileSizeMb >= 2048
+                        Log.d(TAG, "Executing Chunked Download Strategy (over2GB=$isOver2GB, size=${formatBytes(effectiveTotalBytes)}) from $candidateUrl")
+                        downloadSuccess = downloadInChunks(
+                            url = candidateUrl,
+                            tempFile = tempFile,
+                            finalFile = finalFile,
+                            movie = movie,
+                            downloadId = downloadId,
+                            totalBytes = effectiveTotalBytes
+                        )
+                    } else {
+                        Log.d(TAG, "Server does not support Range requests, falling back to streaming with 64KB buffer for ${movie.title}")
+                        downloadSuccess = streamWithResumption(
+                            url = candidateUrl,
+                            tempFile = tempFile,
+                            finalFile = finalFile,
+                            movie = movie,
+                            downloadId = downloadId,
+                            estimatedTotalBytes = effectiveTotalBytes
+                        )
+                    }
+                    if (downloadSuccess) break
+                } catch (e: Exception) {
+                    lastError = e
+                    Log.w(TAG, "Candidate $candidateUrl failed for ${movie.title}: ${e.message}")
+                }
             }
         }
 
@@ -612,19 +695,29 @@ class OfflineDownloadManager(
     }
 
     /**
-     * Builds candidate URLs prioritizing Cloudflare R2 video keys, presigned URLs,
-     * direct stream URLs, and reliable media fallbacks.
+     * Builds candidate URLs prioritizing the movie's own stream URL and Cloudflare R2 video keys.
+     * Never injects unrelated cartoon trailers (e.g. Big Buck Bunny).
      */
     private suspend fun buildCandidateUrls(movie: Movie): List<String> = withContext(Dispatchers.IO) {
         val list = mutableListOf<String>()
 
-        // 1. Cloudflare R2 Public CDN URL if videoKey is present
+        // 1. Movie's direct videoStreamUrl from database if valid and not a placeholder
+        val directUrl = movie.videoStreamUrl.trim()
+        if (directUrl.isNotBlank() &&
+            (directUrl.startsWith("http://") || directUrl.startsWith("https://")) &&
+            !directUrl.contains("bunny/trailer.mp4") &&
+            !directUrl.contains("BigBuckBunny.mp4")
+        ) {
+            list.add(directUrl)
+        }
+
+        // 2. Cloudflare R2 Public CDN URL if videoKey is present
         if (movie.videoKey.isNotBlank()) {
             val cleanKey = movie.videoKey.trimStart('/')
             val r2CdnUrl = "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/$cleanKey"
             list.add(r2CdnUrl)
 
-            // 2. Cloudflare R2 Presigned Download URL
+            // 3. Cloudflare R2 Presigned Download URL
             try {
                 val presignedUrl = r2Client.getDownloadUrl(cleanKey)
                 if (presignedUrl.isNotBlank() && presignedUrl.startsWith("http")) {
@@ -634,18 +727,6 @@ class OfflineDownloadManager(
                 Log.w(TAG, "R2 presigned download URL generation error: ${e.message}")
             }
         }
-
-        // 3. Movie's own videoStreamUrl if valid
-        if (movie.videoStreamUrl.isNotBlank() &&
-            movie.videoStreamUrl.startsWith("http") &&
-            !movie.videoStreamUrl.contains("commondatastorage.googleapis.com")
-        ) {
-            list.add(movie.videoStreamUrl)
-        }
-
-        // 4. Reliable CDN fallback streams
-        list.add("https://media.w3.org/2010/05/bunny/trailer.mp4")
-        list.add("https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4")
 
         return@withContext list.distinct()
     }

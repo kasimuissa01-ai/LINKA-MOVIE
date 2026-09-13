@@ -125,8 +125,9 @@ class AdminViewModel(
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
         val sanitizedTitle = title.lowercase().replace(Regex("[^a-z0-9]"), "_").replace(Regex("_+"), "_")
         val videoKey = "movies/${sanitizedTitle}.mp4"
-        val fallbackStream = if (streamUrl.isNotBlank()) streamUrl
-        else "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+        val cleanStream = streamUrl.trim().takeIf {
+            !it.contains("bunny/trailer.mp4") && !it.contains("BigBuckBunny.mp4")
+        } ?: ""
 
         val newMovie = Movie(
             id = movieId,
@@ -136,7 +137,7 @@ class AdminViewModel(
             coverUrl = if (coverUrl.isNotBlank()) coverUrl
             else "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=800&auto=format&fit=crop&q=80",
             videoKey = videoKey,
-            videoStreamUrl = fallbackStream,
+            videoStreamUrl = cleanStream,
             durationMinutes = 118,
             fileSizeMb = fileSizeMb,
             releaseYear = releaseYear,
@@ -176,7 +177,7 @@ class AdminViewModel(
                     // Save the resulting video key and URL in the movie database
                     val movieToSave = newMovie.copy(
                         videoKey = uploadResult.key,
-                        videoStreamUrl = if (uploadResult.url.isNotBlank()) uploadResult.url else fallbackStream
+                        videoStreamUrl = if (uploadResult.url.isNotBlank()) uploadResult.url else cleanStream
                     )
                     repository.insertMovie(movieToSave)
 
@@ -232,8 +233,9 @@ class AdminViewModel(
     ) {
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
         val videoKey = "movies/${title.lowercase().replace(" ", "_")}.mp4"
-        val fallbackStream = if (streamUrl.isNotBlank()) streamUrl
-        else "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+        val cleanStream = streamUrl.trim().takeIf {
+            !it.contains("bunny/trailer.mp4") && !it.contains("BigBuckBunny.mp4")
+        } ?: ""
 
         val newMovie = Movie(
             id = movieId,
@@ -243,7 +245,7 @@ class AdminViewModel(
             coverUrl = if (coverUrl.isNotBlank()) coverUrl
             else "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=800&auto=format&fit=crop&q=80",
             videoKey = videoKey,
-            videoStreamUrl = fallbackStream,
+            videoStreamUrl = cleanStream,
             durationMinutes = 118,
             fileSizeMb = fileSizeMb,
             releaseYear = releaseYear,

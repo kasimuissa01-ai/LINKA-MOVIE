@@ -49,10 +49,10 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads ORDER BY id DESC")
     fun getAllDownloads(): Flow<List<DownloadEntity>>
 
-    @Query("SELECT * FROM downloads WHERE movieId = :movieId LIMIT 1")
+    @Query("SELECT * FROM downloads WHERE movieId = :movieId ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
     suspend fun getDownloadByMovieId(movieId: String): DownloadEntity?
 
-    @Query("SELECT * FROM downloads WHERE movieId = :movieId LIMIT 1")
+    @Query("SELECT * FROM downloads WHERE movieId = :movieId ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
     fun observeDownloadByMovieId(movieId: String): Flow<DownloadEntity?>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)

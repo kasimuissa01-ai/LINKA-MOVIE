@@ -82,8 +82,8 @@ sealed class Screen(val route: String) {
     object MovieDetail : Screen("movie_detail/{movieId}") {
         fun createRoute(movieId: String) = "movie_detail/$movieId"
     }
-    object VideoPlayer : Screen("video_player/{movieId}") {
-        fun createRoute(movieId: String) = "video_player/$movieId"
+    object VideoPlayer : Screen("video_player/{movieId}?startPos={startPos}") {
+        fun createRoute(movieId: String, startPos: Long = 0L) = "video_player/$movieId?startPos=$startPos"
     }
     object AdminDashboard : Screen("admin_dashboard")
     object AdminAddMovie : Screen("admin_add_movie")
@@ -269,9 +269,10 @@ fun AppNavigation(
                         movie = movie,
                         allMovies = movieUiState.allMovies,
                         downloadViewModel = downloadViewModel,
+                        playerViewModel = playerViewModel,
                         onBackClick = { navController.popBackStack() },
-                        onPlayFullscreenClick = { selectedMovie ->
-                            navController.navigate(Screen.VideoPlayer.createRoute(selectedMovie.id))
+                        onPlayFullscreenClick = { selectedMovie, startPos ->
+                            navController.navigate(Screen.VideoPlayer.createRoute(selectedMovie.id, startPos))
                         },
                         onSelectRecommendedMovie = { recommendedMovie ->
                             navController.navigate(Screen.MovieDetail.createRoute(recommendedMovie.id)) {
@@ -285,14 +286,44 @@ fun AppNavigation(
             // Video Player
             composable(
                 route = Screen.VideoPlayer.route,
-                arguments = listOf(navArgument("movieId") { type = NavType.StringType })
+                arguments = listOf(
+                    navArgument("movieId") { type = NavType.StringType },
+                    navArgument("startPos") {
+                        type = NavType.LongType
+                        defaultValue = 0L
+                    }
+                )
             ) { backStackEntry ->
                 val movieId = backStackEntry.arguments?.getString("movieId")
+                val startPos = backStackEntry.arguments?.getLong("startPos") ?: 0L
                 val movieUiState by movieViewModel.uiState.collectAsState()
-                val movie = movieUiState.allMovies.find { it.id == movieId }
-                if (movie != null) {
+                val downloadList by downloadViewModel.downloads.collectAsState()
+
+                val foundMovie = movieUiState.allMovies.find { it.id == movieId }
+                val downloadItem = downloadList.find { it.movieId == movieId }
+
+                val effectiveMovie = foundMovie ?: downloadItem?.let { item ->
+                    Movie(
+                        id = item.movieId,
+                        title = item.movieTitle,
+                        description = "Offline downloaded movie",
+                        genres = emptyList(),
+                        coverUrl = item.coverUrl,
+                        videoKey = "",
+                        videoStreamUrl = item.localFilePath,
+                        durationMinutes = 120,
+                        fileSizeMb = (item.totalBytes / (1024 * 1024L)).coerceAtLeast(100L),
+                        releaseYear = 2025,
+                        rating = 8.5,
+                        cast = emptyList(),
+                        isFeatured = false
+                    )
+                }
+
+                if (effectiveMovie != null) {
                     VideoPlayerScreen(
-                        movie = movie,
+                        movie = effectiveMovie,
+                        initialPositionMs = startPos,
                         playerViewModel = playerViewModel,
                         onBackClick = { navController.popBackStack() }
                     )
