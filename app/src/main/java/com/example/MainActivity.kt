@@ -103,7 +103,8 @@ class MainActivity : ComponentActivity() {
             r2Client = r2Client,
             authService = authService,
             firestoreService = firestoreService,
-            sessionManager = sessionManager
+            sessionManager = sessionManager,
+            appContext = applicationContext
         )
 
         movieViewModel = MovieViewModel(movieRepository)

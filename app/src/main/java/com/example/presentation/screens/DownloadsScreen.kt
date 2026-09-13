@@ -192,7 +192,22 @@ fun DownloadsScreen(
                     DownloadItemCard(
                         item = item,
                         onPlayClick = {
-                            correspondingMovie?.let { onPlayMovie(it) }
+                            val movieToPlay = correspondingMovie ?: Movie(
+                                id = item.movieId,
+                                title = item.movieTitle,
+                                description = "Downloaded movie ready for offline playback",
+                                genres = emptyList(),
+                                coverUrl = item.coverUrl,
+                                videoKey = "",
+                                videoStreamUrl = item.localFilePath,
+                                durationMinutes = 120,
+                                fileSizeMb = (item.totalBytes / (1024 * 1024L)).coerceAtLeast(100L),
+                                releaseYear = 2025,
+                                rating = 8.5,
+                                cast = emptyList(),
+                                isFeatured = false
+                            )
+                            onPlayMovie(movieToPlay)
                         },
                         onPauseClick = {
                             downloadViewModel.pauseDownload(item.id)

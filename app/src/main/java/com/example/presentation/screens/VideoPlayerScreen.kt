@@ -456,22 +456,43 @@ fun VideoPlayerScreen(
                         color = Color.White.copy(alpha = 0.9f),
                         fontSize = 13.sp
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Surface(
-                        color = Color.White.copy(alpha = 0.2f),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.clickable {
-                            restoreSystemUiAndOrientation()
-                            onBackClick()
-                        }
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Back to Details",
+                        Surface(
                             color = Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                        )
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.clickable {
+                                playerViewModel.retryPlayback(context, movie)
+                            }
+                        ) {
+                            Text(
+                                text = "Retry",
+                                color = Color(0xFFB00020),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            )
+                        }
+
+                        Surface(
+                            color = Color.White.copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.clickable {
+                                restoreSystemUiAndOrientation()
+                                onBackClick()
+                            }
+                        ) {
+                            Text(
+                                text = "Back to Details",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            )
+                        }
                     }
                 }
             }

@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.content.Context
 import android.util.Log
+import com.example.data.download.OfflineDownloadManager
 import com.example.data.local.DownloadDao
 import com.example.data.local.DownloadEntity
 import com.example.data.local.MovieDao
@@ -47,14 +48,31 @@ class MovieRepository(
     private val authService: FirebaseAuthService? = null,
     private val firestoreService: FirestoreService = FirestoreService(),
     private val authRepository: AuthRepository = AuthRepository(),
-    private val sessionManager: com.example.data.local.SessionManager? = null
+    private val sessionManager: com.example.data.local.SessionManager? = null,
+    private val appContext: Context? = null
 ) {
     companion object {
         private const val TAG = "MovieRepository"
     }
 
+    @Volatile
+    private var downloadManagerInstance: OfflineDownloadManager? = null
+
+    fun getDownloadManager(ctx: Context): OfflineDownloadManager {
+        return downloadManagerInstance ?: synchronized(this) {
+            downloadManagerInstance ?: OfflineDownloadManager(
+                downloadDao = downloadDao,
+                r2Client = r2Client,
+                context = ctx.applicationContext
+            ).also { downloadManagerInstance = it }
+        }
+    }
+
+    init {
+        appContext?.let { getDownloadManager(it) }
+    }
+
     private val repositoryScope = CoroutineScope(Dispatchers.IO + Job())
-    private val activeDownloadJobs = ConcurrentHashMap<String, Job>()
     private val activeStreamUrls = ConcurrentHashMap<String, String>()
     private val activeUploadJobs = ConcurrentHashMap<String, Job>()
 
@@ -439,250 +457,55 @@ class MovieRepository(
     fun observeDownloadForMovie(movieId: String): Flow<DownloadItem?> =
         downloadDao.observeDownloadByMovieId(movieId).map { it?.toDomain() }
 
-    suspend fun startDownload(movie: Movie, context: Context) {
-        val downloadId = "dl_${movie.id}"
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val destFile = File(destDir, "movie_${movie.id}.mp4")
-        val notificationId = movie.id.hashCode()
-
-        showDownloadNotification(context, movie.title, 0f, false, false, notificationId)
-
-        val totalBytesEstimate = movie.fileSizeMb * 1024 * 1024L
-        val existing = downloadDao.getDownloadByMovieId(movie.id)
-
-        val item = existing?.toDomain()?.copy(
-            status = DownloadStatus.DOWNLOADING
-        ) ?: DownloadItem(
-            id = downloadId,
-            movieId = movie.id,
-            movieTitle = movie.title,
-            coverUrl = movie.coverUrl,
-            localFilePath = destFile.absolutePath,
-            progress = 0f,
-            status = DownloadStatus.DOWNLOADING,
-            downloadedBytes = 0L,
-            totalBytes = totalBytesEstimate
-        )
-
-        downloadDao.insertOrUpdate(DownloadEntity.fromDomain(item))
-        firestoreService.syncDownload(_userSession.value.uid, item)
-
-        val job = repositoryScope.launch {
-            val downloadHttpClient = OkHttpClient.Builder()
-                .followRedirects(true)
-                .followSslRedirects(true)
-                .connectTimeout(20, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
-                .build()
-
-            try {
-                val candidateUrls = mutableListOf<String>()
-
-                // 1. Direct stream URL (if valid, not obsolete google bucket, and not internal S3)
-                if (movie.videoStreamUrl.isNotBlank() &&
-                    movie.videoStreamUrl.startsWith("http") &&
-                    !movie.videoStreamUrl.contains("commondatastorage.googleapis.com") &&
-                    !movie.videoStreamUrl.contains("gtv-videos-bucket") &&
-                    !movie.videoStreamUrl.contains(".r2.cloudflarestorage.com")
-                ) {
-                    candidateUrls.add(movie.videoStreamUrl)
-                }
-
-                // 2. Public R2 CDN domain for uploaded movie keys
-                if (movie.videoKey.isNotBlank()) {
-                    val cleanKey = movie.videoKey.trimStart('/')
-                    candidateUrls.add("https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/$cleanKey")
-                }
-
-                // 3. Presigned R2 download link
-                if (movie.videoKey.isNotBlank()) {
-                    try {
-                        val presigned = r2Client.getDownloadUrl(movie.videoKey)
-                        if (presigned.isNotBlank() &&
-                            !presigned.contains("commondatastorage.googleapis.com") &&
-                            !presigned.contains("gtv-videos-bucket")
-                        ) {
-                            candidateUrls.add(presigned)
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "R2 presigned URL candidate fetch note: ${e.message}")
-                    }
-                }
-
-                // 4. Guaranteed high-speed CDN video fallbacks
-                candidateUrls.add("https://media.w3.org/2010/05/bunny/trailer.mp4")
-                candidateUrls.add("https://media.w3.org/2010/05/sintel/trailer.mp4")
-                candidateUrls.add("https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4")
-
-                var streamInput: java.io.InputStream? = null
-                var responseToClose: okhttp3.Response? = null
-                var totalContentLength: Long = 0L
-
-                for (candidateUrl in candidateUrls) {
-                    try {
-                        Log.d(TAG, "Attempting offline download for ${movie.title} from: $candidateUrl")
-                        val req = Request.Builder()
-                            .url(candidateUrl)
-                            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) MovieRoom-Downloader/1.0")
-                            .build()
-
-                        val resp = downloadHttpClient.newCall(req).execute()
-                        if (resp.isSuccessful && resp.body != null) {
-                            responseToClose = resp
-                            val body = resp.body!!
-                            streamInput = body.byteStream()
-                            totalContentLength = body.contentLength().takeIf { it > 0 }
-                                ?: (movie.fileSizeMb * 1024 * 1024L).coerceAtLeast(4 * 1024 * 1024L)
-                            Log.d(TAG, "Successfully connected to stream source: $candidateUrl ($totalContentLength bytes)")
-                            break
-                        } else {
-                            resp.close()
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Candidate URL failed ($candidateUrl): ${e.message}")
-                    }
-                }
-
-                if (streamInput == null) {
-                    throw java.io.IOException("Could not connect to any download candidate sources")
-                }
-
-                destFile.parentFile?.mkdirs()
-                if (destFile.exists()) destFile.delete()
-
-                responseToClose?.use {
-                    streamInput.use { input ->
-                        java.io.FileOutputStream(destFile).use { output ->
-                            val buffer = ByteArray(32 * 1024)
-                            var bytesRead: Long = 0
-                            var lastNotifiedBytes = 0L
-                            var read: Int
-
-                            while (input.read(buffer).also { read = it } != -1) {
-                                if (!activeDownloadJobs.containsKey(downloadId)) {
-                                    output.close()
-                                    if (destFile.exists()) destFile.delete()
-                                    showDownloadNotification(context, movie.title, 0f, false, true, notificationId)
-                                    return@launch
-                                }
-                                output.write(buffer, 0, read)
-                                bytesRead += read
-                                val progress = (bytesRead.toFloat() / totalContentLength).coerceIn(0.01f, 0.99f)
-                                downloadDao.updateProgress(
-                                    id = downloadId,
-                                    progress = progress,
-                                    status = DownloadStatus.DOWNLOADING.name,
-                                    bytes = bytesRead
-                                )
-                                if (bytesRead - lastNotifiedBytes > 256 * 1024) {
-                                    lastNotifiedBytes = bytesRead
-                                    showDownloadNotification(context, movie.title, progress, false, false, notificationId)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (destFile.exists() && destFile.length() > 0) {
-                    downloadDao.updateProgress(
-                        id = downloadId,
-                        progress = 1.0f,
-                        status = DownloadStatus.COMPLETED.name,
-                        bytes = destFile.length()
-                    )
-                    firestoreService.syncDownload(
-                        _userSession.value.uid,
-                        item.copy(
-                            status = DownloadStatus.COMPLETED,
-                            progress = 1.0f,
-                            downloadedBytes = destFile.length(),
-                            totalBytes = destFile.length()
-                        )
-                    )
-                    showDownloadNotification(context, movie.title, 1.0f, true, false, notificationId)
-                    Log.d(TAG, "Download completed for ${movie.title} at ${destFile.absolutePath} (${destFile.length()} bytes)")
-                } else {
-                    throw java.io.IOException("Downloaded file is empty")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Download failed for ${movie.title}: ${e.message}")
-                downloadDao.updateProgress(
-                    id = downloadId,
-                    progress = item.progress,
-                    status = DownloadStatus.FAILED.name,
-                    bytes = item.downloadedBytes
-                )
-                showDownloadNotification(context, movie.title, 0f, false, true, notificationId)
-            } finally {
-                activeDownloadJobs.remove(downloadId)
-            }
-        }
-        activeDownloadJobs[downloadId] = job
-    }
-
-    private fun showDownloadNotification(context: Context, title: String, progress: Float, isComplete: Boolean, isError: Boolean, notificationId: Int) {
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        val channelId = "movieroom_downloads_channel"
-        
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            val channel = android.app.NotificationChannel(
-                channelId,
-                "Movie Downloads",
-                android.app.NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Shows progress of movie downloads in background"
-            }
-            notificationManager.createNotificationChannel(channel)
-        }
-
-        val progressInt = (progress * 100).toInt()
-        val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(if (isComplete) "Download Complete" else if (isError) "Download Failed" else "Downloading: $title")
-            .setContentText(if (isComplete) "Ready for offline playback" else if (isError) "Please retry download" else "$progressInt% completed")
-            .setOngoing(!isComplete && !isError)
-            .setAutoCancel(isComplete || isError)
-
-        if (!isComplete && !isError) {
-            builder.setProgress(100, progressInt, false)
-        } else {
-            builder.setProgress(0, 0, false)
-        }
-
-        try {
-            notificationManager.notify(notificationId, builder.build())
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to show notification: ${e.message}")
-        }
+    fun startDownload(movie: Movie, context: Context) {
+        getDownloadManager(context).startDownload(movie)
     }
 
     suspend fun pauseDownload(downloadId: String) {
-        activeDownloadJobs[downloadId]?.cancel()
-        activeDownloadJobs.remove(downloadId)
-        downloadDao.updateProgress(downloadId, 0.5f, DownloadStatus.PAUSED.name, 25 * 1024 * 1024L)
+        downloadManagerInstance?.pauseDownload(downloadId) ?: run {
+            downloadDao.updateStatus(downloadId, DownloadStatus.PAUSED.name)
+        }
     }
 
-    suspend fun deleteDownload(downloadId: String) {
-        activeDownloadJobs[downloadId]?.cancel()
-        activeDownloadJobs.remove(downloadId)
-        downloadDao.deleteById(downloadId)
+    suspend fun retryDownload(downloadId: String, movie: Movie, context: Context) {
+        getDownloadManager(context).retryDownload(downloadId, movie)
+    }
+
+    suspend fun deleteDownload(downloadId: String, movieId: String = downloadId) {
+        downloadManagerInstance?.deleteDownload(downloadId, movieId) ?: run {
+            downloadDao.deleteById(downloadId)
+            appContext?.let { ctx ->
+                val destDir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
+                val finalFile = File(destDir, "movie_${movieId}.mp4")
+                val partFile = File(destDir, "movie_${movieId}.mp4.download")
+                runCatching { if (finalFile.exists()) finalFile.delete() }
+                runCatching { if (partFile.exists()) partFile.delete() }
+            }
+        }
     }
 
     /**
-     * Resolves playback URI: Checks local offline file existence first, then gets
-     * the Cloudflare R2 stream URL, or falls back to videoStreamUrl.
+     * Resolves playback URI:
+     * 1. Checks OfflineDownloadManager for a verified complete offline download (>1MB).
+     * 2. If an unverified or corrupt partial file is detected on disk, purges it to prevent playback errors.
+     * 3. Seamlessly falls back to Cloudflare R2 / CDN online stream.
      */
     suspend fun resolvePlaybackUri(movie: Movie, context: Context): String = withContext(Dispatchers.IO) {
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val localFile = File(destDir, "movie_${movie.id}.mp4")
-        if (localFile.exists() && localFile.length() > 0) {
-            Log.d(TAG, "Offline file found for ${movie.title} at ${localFile.absolutePath}")
-            return@withContext localFile.toURI().toString()
+        val verifiedOffline = getDownloadManager(context).getVerifiedOfflinePlaybackUri(movie.id)
+        if (verifiedOffline != null) {
+            Log.d(TAG, "Resolved verified offline playback for ${movie.title}: $verifiedOffline")
+            return@withContext verifiedOffline
         }
 
-        // If the movie has a direct valid HTTP stream URL from R2 / CDN
+        return@withContext resolveOnlineStreamUri(movie)
+    }
+
+    /**
+     * Resolves the primary or fallback online stream for Cloudflare R2 video assets.
+     */
+    suspend fun resolveOnlineStreamUri(movie: Movie): String = withContext(Dispatchers.IO) {
+        // 1. If movie has a valid HTTP stream URL
         if (movie.videoStreamUrl.startsWith("http://") || movie.videoStreamUrl.startsWith("https://")) {
-            // Check if it's not a private S3 endpoint and not the dead google bucket
             if (!movie.videoStreamUrl.contains(".r2.cloudflarestorage.com") &&
                 !movie.videoStreamUrl.contains("commondatastorage.googleapis.com") &&
                 !movie.videoStreamUrl.contains("gtv-videos-bucket")
@@ -691,13 +514,25 @@ class MovieRepository(
             }
         }
 
-        // If movie has an R2 object key (e.g., videos/1789130365590-inception.mp4), build public R2 URL
+        // 2. Public Cloudflare R2 CDN URL if videoKey is present
         if (movie.videoKey.isNotBlank()) {
             val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
             val cleanKey = movie.videoKey.trimStart('/')
             val r2PublicUrl = "https://$publicR2Domain/$cleanKey"
-            Log.d(TAG, "Resolved public R2 URL for ${movie.title}: $r2PublicUrl")
+            Log.d(TAG, "Resolved public R2 CDN stream URL for ${movie.title}: $r2PublicUrl")
             return@withContext r2PublicUrl
+        }
+
+        // 3. Cloudflare R2 Presigned Download URL
+        if (movie.videoKey.isNotBlank()) {
+            try {
+                val presigned = r2Client.getPresignedDownloadUrl(movie.videoKey.trimStart('/'))
+                if (presigned.isNotBlank() && presigned.startsWith("http")) {
+                    return@withContext presigned
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Presigned R2 stream resolution error: ${e.message}")
+            }
         }
 
         if (movie.videoStreamUrl.isNotBlank() &&
@@ -707,7 +542,7 @@ class MovieRepository(
             return@withContext movie.videoStreamUrl
         }
 
-        // Default reliable stream fallback
+        // 4. Ultra-reliable CDN fallback
         return@withContext "https://media.w3.org/2010/05/bunny/trailer.mp4"
     }
 

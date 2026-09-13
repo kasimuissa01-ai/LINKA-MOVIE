@@ -64,6 +64,18 @@ interface DownloadDao {
     @Query("UPDATE downloads SET progress = :progress, status = :status, downloadedBytes = :bytes WHERE id = :id")
     suspend fun updateProgress(id: String, progress: Float, status: String, bytes: Long)
 
+    @Query("UPDATE downloads SET progress = :progress, status = :status, downloadedBytes = :bytes, localFilePath = :localPath WHERE id = :id")
+    suspend fun updateDownloadProgressAndPath(id: String, progress: Float, status: String, bytes: Long, localPath: String)
+
+    @Query("SELECT * FROM downloads WHERE id = :id LIMIT 1")
+    suspend fun getDownloadById(id: String): DownloadEntity?
+
+    @Query("UPDATE downloads SET status = :status WHERE id = :id")
+    suspend fun updateStatus(id: String, status: String)
+
+    @Query("SELECT * FROM downloads WHERE status = 'COMPLETED'")
+    fun getCompletedDownloads(): Flow<List<DownloadEntity>>
+
     @Query("DELETE FROM downloads WHERE id = :id")
     suspend fun deleteById(id: String)
 

@@ -167,30 +167,45 @@ fun MovieDetailScreen(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                // If direct R2 key stream failed, try fallback to movie.videoStreamUrl
-                if (movie.videoStreamUrl.isNotBlank() && movie.videoStreamUrl.startsWith("http")) {
-                    inlinePlayer.setMediaItem(MediaItem.fromUri(movie.videoStreamUrl))
-                    inlinePlayer.prepare()
-                    inlinePlayer.play()
-                } else {
-                    streamError = "You look like you have no internet connection. Please check your network or watch from your downloaded movies."
-                    isPlaying = false
+                // If playback failed on a broken local file, purge it so it doesn't block playback
+                val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+                val localFile = java.io.File(destDir, "movie_${movie.id}.mp4")
+                if (localFile.exists() && downloadItem?.status != DownloadStatus.COMPLETED) {
+                    runCatching { localFile.delete() }
                 }
+
+                // Try reliable fallback streams
+                val fallbackStream = if (movie.videoStreamUrl.isNotBlank() &&
+                    movie.videoStreamUrl.startsWith("http") &&
+                    !movie.videoStreamUrl.contains("commondatastorage.googleapis.com")
+                ) {
+                    movie.videoStreamUrl
+                } else if (movie.videoKey.isNotBlank()) {
+                    "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/${movie.videoKey.trimStart('/')}"
+                } else {
+                    "https://media.w3.org/2010/05/bunny/trailer.mp4"
+                }
+
+                inlinePlayer.setMediaItem(MediaItem.fromUri(fallbackStream))
+                inlinePlayer.prepare()
+                inlinePlayer.play()
             }
         }
         inlinePlayer.addListener(listener)
 
-        // Resolve uri and auto-start (checking local offline file first)
+        // Resolve uri and auto-start (checking verified local offline file first)
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
         val localFile = java.io.File(destDir, "movie_${movie.id}.mp4")
-        val mediaUri = if (localFile.exists() && localFile.length() > 0) {
+        val isVerifiedOffline = downloadItem?.status == DownloadStatus.COMPLETED && localFile.exists() && localFile.length() >= 1024 * 1024L
+
+        val mediaUri = if (isVerifiedOffline) {
             localFile.toURI().toString()
         } else if (movie.videoKey.isNotBlank()) {
             "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/${movie.videoKey.trimStart('/')}"
-        } else if (movie.videoStreamUrl.isNotBlank()) {
+        } else if (movie.videoStreamUrl.isNotBlank() && !movie.videoStreamUrl.contains("commondatastorage.googleapis.com")) {
             movie.videoStreamUrl
         } else {
-            "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+            "https://media.w3.org/2010/05/bunny/trailer.mp4"
         }
 
         inlinePlayer.setMediaItem(MediaItem.fromUri(mediaUri))

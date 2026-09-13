@@ -109,21 +109,66 @@ class PlayerViewModel(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                // If stream failed on an R2 URL and we haven't fallen back to videoStreamUrl yet, try fallback
                 val currentUrl = _uiState.value.currentPlaybackUrl
-                if (movie.videoStreamUrl.isNotBlank() && currentUrl != movie.videoStreamUrl && movie.videoStreamUrl.startsWith("http")) {
-                    android.util.Log.w("PlayerViewModel", "R2 playback failed, trying fallback stream: ${movie.videoStreamUrl}")
+                android.util.Log.e("PlayerViewModel", "Playback error on $currentUrl: ${error.message} (code: ${error.errorCodeName})")
+
+                // 1. If it was playing a local offline file (file://) and failed:
+                // The local file on disk is corrupted, partial, or unreadable.
+                // Purge the bad file and seamlessly switch to online stream.
+                if (currentUrl.startsWith("file://") || currentUrl.startsWith("/")) {
+                    android.util.Log.w("PlayerViewModel", "Corrupted or unreadable local file detected. Purging file and seamlessly failing over to online stream...")
+                    viewModelScope.launch {
+                        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+                        val localFile = java.io.File(destDir, "movie_${movie.id}.mp4")
+                        runCatching { if (localFile.exists()) localFile.delete() }
+
+                        val onlineUrl = repository.resolveOnlineStreamUri(movie)
+                        _uiState.value = _uiState.value.copy(
+                            isOfflinePlayback = false,
+                            currentPlaybackUrl = onlineUrl,
+                            errorMessage = null,
+                            isLoading = true
+                        )
+                        player.setMediaItem(MediaItem.fromUri(onlineUrl))
+                        player.prepare()
+                        player.playWhenReady = true
+                    }
+                    return
+                }
+
+                // 2. If it was playing an online stream (R2 CDN or custom URL):
+                val directStream = movie.videoStreamUrl
+                val fallbackBunny = "https://media.w3.org/2010/05/bunny/trailer.mp4"
+
+                if (directStream.isNotBlank() &&
+                    currentUrl != directStream &&
+                    directStream.startsWith("http") &&
+                    !directStream.contains("commondatastorage.googleapis.com")
+                ) {
+                    android.util.Log.w("PlayerViewModel", "Switching to direct stream fallback: $directStream")
                     _uiState.value = _uiState.value.copy(
-                        currentPlaybackUrl = movie.videoStreamUrl,
-                        errorMessage = null
+                        currentPlaybackUrl = directStream,
+                        errorMessage = null,
+                        isLoading = true
                     )
-                    player.setMediaItem(MediaItem.fromUri(movie.videoStreamUrl))
+                    player.setMediaItem(MediaItem.fromUri(directStream))
+                    player.prepare()
+                    player.playWhenReady = true
+                } else if (currentUrl != fallbackBunny) {
+                    android.util.Log.w("PlayerViewModel", "Switching to CDN high-speed stream fallback: $fallbackBunny")
+                    _uiState.value = _uiState.value.copy(
+                        currentPlaybackUrl = fallbackBunny,
+                        errorMessage = null,
+                        isLoading = true
+                    )
+                    player.setMediaItem(MediaItem.fromUri(fallbackBunny))
                     player.prepare()
                     player.playWhenReady = true
                 } else {
                     _uiState.value = _uiState.value.copy(
                         isPlaying = false,
-                        errorMessage = "You look like you have no internet connection. Please check your network or watch from your downloaded movies."
+                        isLoading = false,
+                        errorMessage = "Stream playback encountered a connection issue. Tap to retry or watch from your downloaded movies."
                     )
                 }
             }
@@ -144,6 +189,27 @@ class PlayerViewModel(
             player.playWhenReady = true
 
             startProgressTracker()
+        }
+    }
+
+    fun retryPlayback(context: Context, movie: Movie) {
+        _uiState.value = _uiState.value.copy(
+            isLoading = true,
+            errorMessage = null
+        )
+        exoPlayer?.let { player ->
+            viewModelScope.launch {
+                val playbackUrl = repository.resolvePlaybackUri(movie, context)
+                val isOffline = playbackUrl.startsWith("file://") || playbackUrl.startsWith("/")
+                _uiState.value = _uiState.value.copy(
+                    isOfflinePlayback = isOffline,
+                    currentPlaybackUrl = playbackUrl,
+                    errorMessage = null
+                )
+                player.setMediaItem(MediaItem.fromUri(playbackUrl))
+                player.prepare()
+                player.playWhenReady = true
+            }
         }
     }
 
