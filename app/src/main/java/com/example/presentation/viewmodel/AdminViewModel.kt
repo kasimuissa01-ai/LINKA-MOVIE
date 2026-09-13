@@ -174,10 +174,17 @@ class AdminViewModel(
                         )
                     }
 
-                    // Save the resulting video key and URL in the movie database
+                    // Save the resulting video key and verified Cloudflare R2 URL in the movie database & Supabase table
+                    val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
+                    val publicR2Url = if (uploadResult.url.isNotBlank() && uploadResult.url.startsWith("http")) {
+                        uploadResult.url
+                    } else {
+                        "https://$publicR2Domain/${uploadResult.key.removePrefix("/")}"
+                    }
+
                     val movieToSave = newMovie.copy(
                         videoKey = uploadResult.key,
-                        videoStreamUrl = if (uploadResult.url.isNotBlank()) uploadResult.url else cleanStream
+                        videoStreamUrl = publicR2Url
                     )
                     repository.insertMovie(movieToSave)
 
@@ -185,7 +192,7 @@ class AdminViewModel(
                         isUploading = false,
                         isCompleted = true,
                         overallProgress = 1.0f,
-                        statusMessage = "Movie '${movieToSave.title}' uploaded directly to Cloudflare R2 and published successfully!"
+                        statusMessage = "Movie '${movieToSave.title}' uploaded directly to Cloudflare R2 and synced to Supabase table!"
                     )
                 } catch (e: Exception) {
                     // Clearly display upload failure to user - do not mark as completed
@@ -198,14 +205,30 @@ class AdminViewModel(
                     )
                 }
             } else {
-                // Direct stream URL / catalog entry
+                // Direct stream URL / R2 link / catalog entry
                 try {
-                    repository.insertMovie(newMovie)
+                    val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
+                    val effectiveStream = when {
+                        cleanStream.isNotBlank() && (cleanStream.startsWith("http://") || cleanStream.startsWith("https://")) -> {
+                            cleanStream
+                        }
+                        cleanStream.isNotBlank() -> {
+                            val key = if (cleanStream.startsWith("movies/")) cleanStream else "movies/$cleanStream"
+                            "https://$publicR2Domain/${key.removePrefix("/")}"
+                        }
+                        newMovie.videoKey.isNotBlank() -> {
+                            "https://$publicR2Domain/${newMovie.videoKey.removePrefix("/")}"
+                        }
+                        else -> cleanStream
+                    }
+
+                    val movieToSave = newMovie.copy(videoStreamUrl = effectiveStream)
+                    repository.insertMovie(movieToSave)
                     _uploadState.value = UploadProgressState(
                         isUploading = false,
                         isCompleted = true,
                         overallProgress = 1.0f,
-                        statusMessage = "Movie '${newMovie.title}' saved to catalog with stream link!"
+                        statusMessage = "Movie '${movieToSave.title}' saved to catalog and synced to Supabase table!"
                     )
                 } catch (e: Exception) {
                     _uploadState.value = UploadProgressState(
@@ -237,6 +260,21 @@ class AdminViewModel(
             !it.contains("bunny/trailer.mp4") && !it.contains("BigBuckBunny.mp4")
         } ?: ""
 
+        val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
+        val effectiveStream = when {
+            cleanStream.isNotBlank() && (cleanStream.startsWith("http://") || cleanStream.startsWith("https://")) -> {
+                cleanStream
+            }
+            cleanStream.isNotBlank() && !cleanStream.startsWith("content://") && !cleanStream.startsWith("file://") -> {
+                val key = if (cleanStream.startsWith("movies/")) cleanStream else "movies/$cleanStream"
+                "https://$publicR2Domain/${key.removePrefix("/")}"
+            }
+            videoKey.isNotBlank() -> {
+                "https://$publicR2Domain/${videoKey.removePrefix("/")}"
+            }
+            else -> ""
+        }
+
         val newMovie = Movie(
             id = movieId,
             title = title,
@@ -245,7 +283,7 @@ class AdminViewModel(
             coverUrl = if (coverUrl.isNotBlank()) coverUrl
             else "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=800&auto=format&fit=crop&q=80",
             videoKey = videoKey,
-            videoStreamUrl = cleanStream,
+            videoStreamUrl = effectiveStream,
             durationMinutes = 118,
             fileSizeMb = fileSizeMb,
             releaseYear = releaseYear,
@@ -261,7 +299,7 @@ class AdminViewModel(
                     isUploading = false,
                     isCompleted = true,
                     overallProgress = 1.0f,
-                    statusMessage = "Movie '${newMovie.title}' saved and published immediately to catalog!"
+                    statusMessage = "Movie '${newMovie.title}' saved and synced to Supabase table!"
                 )
             } catch (e: Exception) {
                 _uploadState.value = UploadProgressState(
@@ -282,8 +320,19 @@ class AdminViewModel(
     }
 
     fun updateMovie(movie: Movie) {
+        val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
+        val effectiveStream = when {
+            movie.videoStreamUrl.isNotBlank() && (movie.videoStreamUrl.startsWith("http://") || movie.videoStreamUrl.startsWith("https://")) -> {
+                movie.videoStreamUrl
+            }
+            movie.videoKey.isNotBlank() -> {
+                "https://$publicR2Domain/${movie.videoKey.removePrefix("/")}"
+            }
+            else -> movie.videoStreamUrl
+        }
+        val updatedMovie = movie.copy(videoStreamUrl = effectiveStream)
         viewModelScope.launch {
-            repository.updateMovie(movie)
+            repository.updateMovie(updatedMovie)
         }
     }
 

@@ -72,6 +72,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -161,6 +162,14 @@ fun AdminAddEditMovieScreen(
     ) { uri: Uri? ->
         if (uri != null) {
             selectedVideoUri = uri
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                // Some media picker URIs do not allow persistable flags; safely continue
+            }
             var displayName = "Selected_Video.mp4"
             var calculatedSizeMb = 0L
 
@@ -777,16 +786,34 @@ fun AdminAddEditMovieScreen(
                 Spacer(modifier = Modifier.height(10.dp))
 
                 // Direct Stream URL / Custom fallback
-                Text(
-                    text = "Video Stream Source / Path",
-                    color = TextSecondary,
-                    fontSize = 12.sp
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Video Stream Source / Cloudflare R2 Key",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (title.isNotBlank()) {
+                        TextButton(
+                            onClick = {
+                                val sanitized = title.lowercase().trim().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+                                streamUrl = "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/movies/${sanitized}.mp4"
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text("Set R2 Link", color = ElectricBlue, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 OutlinedTextField(
                     value = streamUrl,
                     onValueChange = { streamUrl = it },
-                    placeholder = { Text("Gallery URI or R2 stream link", color = TextTertiary) },
+                    placeholder = { Text("https://pub-5399...r2.dev/movies/... or R2 key", color = TextTertiary, fontSize = 13.sp) },
                     leadingIcon = { Icon(Icons.Default.Videocam, contentDescription = null, tint = ElectricBlue) },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = ElectricBlue,
@@ -801,6 +828,22 @@ fun AdminAddEditMovieScreen(
                         .fillMaxWidth()
                         .testTag("input_video_stream_url")
                 )
+
+                if (streamUrl.contains("r2.dev") || streamUrl.contains("movies/")) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        color = Color(0x224CAF50),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = "✓ Cloudflare R2 Stream URL • Ready to sync to Supabase table",
+                            color = Color(0xFF81C784),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
             }
         }
 
@@ -1253,12 +1296,22 @@ fun AdminAddEditMovieScreen(
                 val rate = rating.toDoubleOrNull() ?: 8.0
 
                 if (existingMovie != null) {
+                    val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
+                    val resolvedStream = when {
+                        streamUrl.isNotBlank() && (streamUrl.startsWith("http://") || streamUrl.startsWith("https://")) -> streamUrl
+                        streamUrl.isNotBlank() && !streamUrl.startsWith("content://") && !streamUrl.startsWith("file://") -> {
+                            val key = if (streamUrl.startsWith("movies/")) streamUrl else "movies/$streamUrl"
+                            "https://$publicR2Domain/${key.removePrefix("/")}"
+                        }
+                        existingMovie.videoKey.isNotBlank() -> "https://$publicR2Domain/${existingMovie.videoKey.removePrefix("/")}"
+                        else -> streamUrl
+                    }
                     val updated = existingMovie.copy(
                         title = title,
                         description = description,
                         genres = selectedGenres,
                         coverUrl = coverUrl,
-                        videoStreamUrl = streamUrl,
+                        videoStreamUrl = resolvedStream,
                         durationMinutes = 115,
                         fileSizeMb = size,
                         releaseYear = year,

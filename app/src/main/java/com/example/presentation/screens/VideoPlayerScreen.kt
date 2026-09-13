@@ -85,6 +85,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import com.example.domain.model.Movie
+import com.example.presentation.components.CinematicLoadingOverlay
 import com.example.presentation.viewmodel.PlayerViewModel
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
@@ -405,33 +406,17 @@ fun VideoPlayerScreen(
             }
         }
 
-        // 5. Loading State Overlay (Displays only during initial buffer or network delay)
-        if (uiState.isLoading && uiState.errorMessage == null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.5f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    CircularProgressIndicator(
-                        color = CinematicRed,
-                        strokeWidth = 3.5.dp,
-                        modifier = Modifier.size(48.dp)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "Loading stream...",
-                        color = Color.White.copy(alpha = 0.85f),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
+        // 5. Cinematic Loading State Overlay (Displays while fetching from Supabase repo or buffering)
+        CinematicLoadingOverlay(
+            visible = uiState.isLoading && uiState.errorMessage == null,
+            movie = movie,
+            loadingStage = uiState.loadingStage,
+            isResolvingStreamUrl = uiState.isResolvingStreamUrl,
+            onBackClick = {
+                restoreSystemUiAndOrientation()
+                onBackClick()
             }
-        }
+        )
 
         // 6. Error notice banner
         uiState.errorMessage?.let { errorText ->

@@ -90,8 +90,8 @@ object VideoCacheManager {
         val cache = getCache(context)
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(8000)
-            .setReadTimeoutMs(20000)
+            .setConnectTimeoutMs(30000)
+            .setReadTimeoutMs(60000)
             .setUserAgent("MovieRoom-Player/1.0")
 
         val upstreamFactory = DefaultDataSource.Factory(context.applicationContext, httpDataSourceFactory)
@@ -100,6 +100,57 @@ object VideoCacheManager {
             .setCache(cache)
             .setUpstreamDataSourceFactory(upstreamFactory)
             .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+    }
+
+    /**
+     * Builds a smart DataSource.Factory:
+     * - Directs local files (file://, content://) straight to DefaultDataSource to avoid cache lockups and disk contention on 2GB videos.
+     * - Streams HTTP/HTTPS sources through CacheDataSource with high-resilience 30s/60s network timeouts.
+     */
+    fun createSmartDataSourceFactory(context: Context): androidx.media3.datasource.DataSource.Factory {
+        val cacheDataSourceFactory = createCacheDataSourceFactory(context)
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(30000)
+            .setReadTimeoutMs(60000)
+            .setUserAgent("MovieRoom-Player/1.0")
+        val directFactory = DefaultDataSource.Factory(context.applicationContext, httpDataSourceFactory)
+
+        return androidx.media3.datasource.DataSource.Factory {
+            val cacheSource = cacheDataSourceFactory.createDataSource()
+            val directSource = directFactory.createDataSource()
+
+            object : androidx.media3.datasource.DataSource {
+                private var activeSource: androidx.media3.datasource.DataSource = cacheSource
+
+                override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) {
+                    cacheSource.addTransferListener(transferListener)
+                    directSource.addTransferListener(transferListener)
+                }
+
+                override fun open(dataSpec: androidx.media3.datasource.DataSpec): Long {
+                    val scheme = dataSpec.uri.scheme?.lowercase()
+                    activeSource = if (scheme == "content" || scheme == "file" || scheme == "android.resource") {
+                        directSource
+                    } else {
+                        cacheSource
+                    }
+                    return activeSource.open(dataSpec)
+                }
+
+                override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                    return activeSource.read(buffer, offset, length)
+                }
+
+                override fun getUri(): android.net.Uri? = activeSource.uri
+
+                override fun getResponseHeaders(): Map<String, List<String>> = activeSource.responseHeaders
+
+                override fun close() {
+                    activeSource.close()
+                }
+            }
+        }
     }
 
     /**
@@ -188,22 +239,23 @@ object VideoCacheManager {
     }
 
     /**
-     * Creates an ultra-fast, tuned ExoPlayer instance with caching, rapid start parameters,
-     * and HDR tone mapping support.
+     * Creates an ultra-fast, tuned ExoPlayer instance with smart caching, rapid start parameters,
+     * high-capacity buffering for 2GB+ streams, and HDR tone mapping support.
      */
     fun buildFastPlayer(context: Context): ExoPlayer {
-        val cacheDataSourceFactory = createCacheDataSourceFactory(context)
+        val smartDataSourceFactory = createSmartDataSourceFactory(context)
         val mediaSourceFactory = DefaultMediaSourceFactory(context.applicationContext)
-            .setDataSourceFactory(cacheDataSourceFactory)
+            .setDataSourceFactory(smartDataSourceFactory)
 
-        // Aggressively optimize LoadControl for instant first-frame playback
+        // Aggressively optimize LoadControl for instant first-frame playback and smooth multi-GB streaming
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs = */ 2000,
-                /* maxBufferMs = */ 30000,
-                /* bufferForPlaybackMs = */ 500, // Starts as soon as 500ms of video is buffered!
-                /* bufferForPlaybackAfterRebufferMs = */ 1000
+                /* minBufferMs = */ 15000,
+                /* maxBufferMs = */ 60000,
+                /* bufferForPlaybackMs = */ 1000, // Starts as soon as 1s of video is buffered
+                /* bufferForPlaybackAfterRebufferMs = */ 2000
             )
+            .setTargetBufferBytes(120 * 1024 * 1024) // 120MB buffer allocation for large 2GB videos
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 

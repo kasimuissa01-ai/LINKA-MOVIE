@@ -49,7 +49,8 @@ class MovieRepository(
     private val firestoreService: FirestoreService = FirestoreService(),
     private val authRepository: AuthRepository = AuthRepository(),
     private val sessionManager: com.example.data.local.SessionManager? = null,
-    private val appContext: Context? = null
+    private val appContext: Context? = null,
+    val supabaseDbClient: com.example.data.remote.SupabaseDatabaseClient = com.example.data.remote.SupabaseDatabaseClient()
 ) {
     companion object {
         private const val TAG = "MovieRepository"
@@ -295,12 +296,28 @@ class MovieRepository(
     }
 
     private suspend fun seedInitialCatalogIfEmpty() {
-        // Try syncing from remote Firestore first
+        // 1. Try syncing from remote Supabase table first
+        try {
+            val remoteSupabaseMovies = supabaseDbClient.getMovies()
+            if (remoteSupabaseMovies.isNotEmpty()) {
+                remoteSupabaseMovies.forEach { movie ->
+                    movieDao.insertMovie(MovieEntity.fromDomain(movie))
+                }
+                Log.d(TAG, "Synced catalog from Supabase with ${remoteSupabaseMovies.size} verified movies")
+                return
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Supabase catalog fetch note: ${e.message}")
+        }
+
+        // 2. Fallback: Try syncing from remote Firestore
         try {
             val remoteMovies = firestoreService.fetchMovies()
             if (remoteMovies.isNotEmpty()) {
                 remoteMovies.forEach { movie ->
                     movieDao.insertMovie(MovieEntity.fromDomain(movie))
+                    // Push to Supabase so edge cache is primed
+                    repositoryScope.launch { supabaseDbClient.upsertMovie(movie) }
                 }
                 return
             }
@@ -389,8 +406,10 @@ class MovieRepository(
 
             initialMovies.forEach { movie ->
                 movieDao.insertMovie(MovieEntity.fromDomain(movie))
-                // Also write to Firestore
                 firestoreService.saveMovie(movie)
+                repositoryScope.launch {
+                    supabaseDbClient.upsertMovie(movie)
+                }
             }
         } else {
             // Auto-heal / clean up any existing movies in Room that have obsolete cartoon URLs
@@ -434,20 +453,50 @@ class MovieRepository(
     fun searchMovies(query: String): Flow<List<Movie>> =
         movieDao.searchMovies(query).map { list -> list.map { it.toDomain() } }
 
-    suspend fun insertMovie(movie: Movie) {
+    suspend fun insertMovie(movie: Movie) = withContext(Dispatchers.IO) {
         movieDao.insertMovie(MovieEntity.fromDomain(movie))
         firestoreService.saveMovie(movie)
+        try {
+            supabaseDbClient.upsertMovie(movie)
+        } catch (e: Exception) {
+            Log.w(TAG, "Supabase upsert warning: ${e.message}")
+        }
     }
 
-    suspend fun updateMovie(movie: Movie) {
+    suspend fun updateMovie(movie: Movie) = withContext(Dispatchers.IO) {
         movieDao.updateMovie(MovieEntity.fromDomain(movie))
         firestoreService.saveMovie(movie)
+        try {
+            supabaseDbClient.upsertMovie(movie)
+        } catch (e: Exception) {
+            Log.w(TAG, "Supabase update warning: ${e.message}")
+        }
     }
 
-    suspend fun deleteMovie(movieId: String) {
+    suspend fun deleteMovie(movieId: String) = withContext(Dispatchers.IO) {
         movieDao.deleteMovieById(movieId)
         downloadDao.deleteByMovieId(movieId)
         firestoreService.deleteMovie(movieId)
+        try {
+            supabaseDbClient.deleteMovie(movieId)
+        } catch (e: Exception) {
+            Log.w(TAG, "Supabase delete warning: ${e.message}")
+        }
+    }
+
+    suspend fun syncCatalogFromSupabase(): List<Movie> = withContext(Dispatchers.IO) {
+        try {
+            val movies = supabaseDbClient.getMovies()
+            if (movies.isNotEmpty()) {
+                movies.forEach { movie ->
+                    movieDao.insertMovie(MovieEntity.fromDomain(movie))
+                }
+            }
+            movies
+        } catch (e: Exception) {
+            Log.w(TAG, "syncCatalogFromSupabase error: ${e.message}")
+            emptyList()
+        }
     }
 
     // Downloads
@@ -505,15 +554,37 @@ class MovieRepository(
      * Never returns dummy cartoon trailers.
      */
     suspend fun resolveOnlineStreamUri(movie: Movie): String = withContext(Dispatchers.IO) {
-        // 1. Direct stream URL from database if valid and not a placeholder
         val directStream = movie.videoStreamUrl.trim()
+
+        // 0. Direct local file or gallery content URI
+        if (directStream.startsWith("content://") || directStream.startsWith("file://")) {
+            return@withContext directStream
+        }
+
+        // 1. Direct stream URL from database if valid and not a placeholder
         if (directStream.isNotBlank() &&
-            (directStream.startsWith("http://") || directStream.startsWith("https://") ||
-             directStream.startsWith("content://") || directStream.startsWith("file://")) &&
+            (directStream.startsWith("http://") || directStream.startsWith("https://")) &&
             !directStream.contains("bunny/trailer.mp4") &&
             !directStream.contains("BigBuckBunny.mp4")
         ) {
             return@withContext directStream
+        }
+
+        // 2. Query Supabase table for verified edge URL
+        if (movie.id.isNotBlank()) {
+            try {
+                val remoteMovies = supabaseDbClient.getMovies()
+                val remoteMovie = remoteMovies.firstOrNull { it.id == movie.id }
+                if (remoteMovie != null) {
+                    val remoteUrl = remoteMovie.videoStreamUrl.trim()
+                    if (remoteUrl.isNotBlank() && (remoteUrl.startsWith("http://") || remoteUrl.startsWith("https://"))) {
+                        Log.d(TAG, "Caught verified streaming URL from Supabase for ${movie.title}: $remoteUrl")
+                        return@withContext remoteUrl
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error catching URL from Supabase: ${e.message}")
+            }
         }
 
         // 2. Public Cloudflare R2 CDN URL if videoKey is present

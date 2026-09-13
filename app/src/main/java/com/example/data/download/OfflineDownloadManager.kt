@@ -728,6 +728,20 @@ class OfflineDownloadManager(
             }
         }
 
+        // 4. Query Supabase movies table for verified edge URL
+        if (list.isEmpty() && movie.id.isNotBlank()) {
+            try {
+                val supabaseClient = com.example.data.remote.SupabaseDatabaseClient()
+                val remoteMovies = supabaseClient.getMovies()
+                val match = remoteMovies.firstOrNull { it.id == movie.id }
+                if (match != null && match.videoStreamUrl.isNotBlank() && match.videoStreamUrl.startsWith("http")) {
+                    list.add(match.videoStreamUrl)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Supabase candidate URL fetch error: ${e.message}")
+            }
+        }
+
         return@withContext list.distinct()
     }
 
