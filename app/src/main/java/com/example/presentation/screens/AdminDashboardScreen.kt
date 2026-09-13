@@ -25,7 +25,10 @@ import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -75,8 +78,10 @@ fun AdminDashboardScreen(
     modifier: Modifier = Modifier
 ) {
     val movies by adminViewModel.movies.collectAsState()
+    val uploadState by adminViewModel.uploadState.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
     var movieToDelete by remember { mutableStateOf<Movie?>(null) }
+    var syncBannerMessage by remember { mutableStateOf<String?>(null) }
 
     val filteredMovies = movies.filter {
         searchQuery.isBlank() ||
@@ -135,6 +140,63 @@ fun AdminDashboardScreen(
                             color = TextSecondary,
                             fontSize = 12.sp
                         )
+                    }
+                }
+
+                // Sync & Repair R2 URLs button
+                Button(
+                    onClick = {
+                        adminViewModel.repairAndSyncAllMoviesToR2 { count ->
+                            syncBannerMessage = "Successfully repaired and updated $count movies with R2 URLs in your Supabase table!"
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (uploadState.isUploading) SurfaceElevated else CinematicRed
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                    enabled = !uploadState.isUploading,
+                    modifier = Modifier.testTag("admin_sync_r2_button")
+                ) {
+                    if (uploadState.isUploading) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Syncing...", color = Color.White, fontSize = 12.sp)
+                    } else {
+                        Icon(Icons.Default.Sync, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Sync R2 URLs", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            // Sync Status Notification Banner
+            syncBannerMessage?.let { msg ->
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    color = Color(0x224CAF50),
+                    shape = RoundedCornerShape(8.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x664CAF50)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(12.dp)
+                    ) {
+                        Text(
+                            text = msg,
+                            color = Color(0xFF81C784),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { syncBannerMessage = null }) {
+                            Text("OK", color = Color.White, fontSize = 12.sp)
+                        }
                     }
                 }
             }

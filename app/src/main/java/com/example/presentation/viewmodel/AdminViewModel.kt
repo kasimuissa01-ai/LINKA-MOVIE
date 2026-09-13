@@ -341,4 +341,20 @@ class AdminViewModel(
             repository.deleteMovie(movieId)
         }
     }
+
+    fun repairAndSyncAllMoviesToR2(onComplete: (Int) -> Unit) {
+        viewModelScope.launch {
+            _uploadState.value = UploadProgressState(
+                isUploading = true,
+                statusMessage = "Repairing & syncing all movie URLs to Cloudflare R2 in Supabase table..."
+            )
+            val updated = repository.repairAndSyncR2UrlsToSupabase()
+            _uploadState.value = UploadProgressState(
+                isUploading = false,
+                isCompleted = true,
+                statusMessage = "Successfully updated $updated movies in Supabase table with R2 URLs!"
+            )
+            onComplete(updated)
+        }
+    }
 }

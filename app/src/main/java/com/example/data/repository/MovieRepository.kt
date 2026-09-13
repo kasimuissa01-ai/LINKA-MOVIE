@@ -499,6 +499,42 @@ class MovieRepository(
         }
     }
 
+    /**
+     * Updates all movies in local DB and Supabase PostgreSQL table to ensure
+     * their `video_stream_url` and `video_key` are synced to the verified Cloudflare R2 URLs.
+     */
+    suspend fun repairAndSyncR2UrlsToSupabase(): Int = withContext(Dispatchers.IO) {
+        val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
+        var count = 0
+        try {
+            val localList = movieDao.getAllMoviesList().map { it.toDomain() }
+            val remoteList = try { supabaseDbClient.getMovies() } catch (e: Exception) { emptyList() }
+            val combined = (localList + remoteList).distinctBy { it.id }
+
+            for (movie in combined) {
+                val key = when {
+                    movie.videoKey.isNotBlank() -> movie.videoKey.trimStart('/')
+                    else -> {
+                        val sanitized = movie.title.lowercase().trim().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+                        "movies/$sanitized.mp4"
+                    }
+                }
+                val r2Url = "https://$publicR2Domain/$key"
+                val updated = movie.copy(
+                    videoKey = key,
+                    videoStreamUrl = r2Url
+                )
+                movieDao.insertMovie(MovieEntity.fromDomain(updated))
+                supabaseDbClient.upsertMovie(updated)
+                count++
+            }
+            Log.d(TAG, "Repaired and synced $count movies with Cloudflare R2 URLs in Supabase table")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in repairAndSyncR2UrlsToSupabase: ${e.message}", e)
+        }
+        count
+    }
+
     // Downloads
     fun getAllDownloads(): Flow<List<DownloadItem>> =
         downloadDao.getAllDownloads().map { list -> list.map { it.toDomain() } }
