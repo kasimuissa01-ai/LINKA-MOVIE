@@ -8,6 +8,7 @@ import com.example.data.remote.CloudflareR2PresignedClient
 import com.example.domain.model.DownloadItem
 import com.example.domain.model.DownloadStatus
 import com.example.domain.model.Movie
+import com.example.util.R2UrlUtils
 import java.io.File
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
@@ -696,46 +697,39 @@ class OfflineDownloadManager(
 
     /**
      * Builds candidate URLs prioritizing the movie's own stream URL and Cloudflare R2 video keys.
-     * Never injects unrelated cartoon trailers (e.g. Big Buck Bunny).
+     * Guarantees that unauthenticated S3 API endpoints are converted to the public R2 CDN domain.
      */
     private suspend fun buildCandidateUrls(movie: Movie): List<String> = withContext(Dispatchers.IO) {
         val list = mutableListOf<String>()
 
-        // 1. Movie's direct videoStreamUrl from database if valid and not a placeholder
-        val directUrl = movie.videoStreamUrl.trim()
-        if (directUrl.isNotBlank() &&
-            (directUrl.startsWith("http://") || directUrl.startsWith("https://")) &&
-            !directUrl.contains("bunny/trailer.mp4") &&
-            !directUrl.contains("BigBuckBunny.mp4")
+        // 1. Canonicalized direct videoStreamUrl
+        val canonicalDirect = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+        if (canonicalDirect.isNotBlank() &&
+            (canonicalDirect.startsWith("http://") || canonicalDirect.startsWith("https://")) &&
+            !canonicalDirect.contains("bunny/trailer.mp4") &&
+            !canonicalDirect.contains("BigBuckBunny.mp4")
         ) {
-            list.add(directUrl)
+            list.add(canonicalDirect)
         }
 
         // 2. Cloudflare R2 Public CDN URL if videoKey is present
-        if (movie.videoKey.isNotBlank()) {
-            val cleanKey = movie.videoKey.trimStart('/')
-            val r2CdnUrl = "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/$cleanKey"
+        val cleanKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
+        if (cleanKey.isNotBlank()) {
+            val r2CdnUrl = "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/$cleanKey"
             list.add(r2CdnUrl)
-
-            // 3. Cloudflare R2 Presigned Download URL
-            try {
-                val presignedUrl = r2Client.getDownloadUrl(cleanKey)
-                if (presignedUrl.isNotBlank() && presignedUrl.startsWith("http")) {
-                    list.add(presignedUrl)
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "R2 presigned download URL generation error: ${e.message}")
-            }
         }
 
-        // 4. Query Supabase movies table for verified edge URL
+        // 3. Query Supabase movies table for verified edge URL
         if (list.isEmpty() && movie.id.isNotBlank()) {
             try {
                 val supabaseClient = com.example.data.remote.SupabaseDatabaseClient()
                 val remoteMovies = supabaseClient.getMovies()
                 val match = remoteMovies.firstOrNull { it.id == movie.id }
-                if (match != null && match.videoStreamUrl.isNotBlank() && match.videoStreamUrl.startsWith("http")) {
-                    list.add(match.videoStreamUrl)
+                if (match != null) {
+                    val canonicalRemote = R2UrlUtils.canonicalizeStreamUrl(match.videoStreamUrl, match.videoKey)
+                    if (canonicalRemote.isNotBlank() && canonicalRemote.startsWith("http")) {
+                        list.add(canonicalRemote)
+                    }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Supabase candidate URL fetch error: ${e.message}")

@@ -87,6 +87,7 @@ import com.example.domain.model.Movie
 import com.example.presentation.components.MoviePosterCard
 import com.example.presentation.viewmodel.DownloadViewModel
 import com.example.presentation.viewmodel.PlayerViewModel
+import com.example.util.R2UrlUtils
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
 import com.example.ui.theme.ObsidianBlack
@@ -189,18 +190,8 @@ fun MovieDetailScreen(
                     runCatching { localFile.delete() }
                 }
 
-                // Try movie stream URL
-                val fallbackStream = if (movie.videoStreamUrl.isNotBlank() &&
-                    (movie.videoStreamUrl.startsWith("http://") || movie.videoStreamUrl.startsWith("https://")) &&
-                    !movie.videoStreamUrl.contains("bunny/trailer.mp4") &&
-                    !movie.videoStreamUrl.contains("BigBuckBunny.mp4")
-                ) {
-                    movie.videoStreamUrl
-                } else if (movie.videoKey.isNotBlank()) {
-                    "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/${movie.videoKey.trimStart('/')}"
-                } else {
-                    ""
-                }
+                // Try canonical movie stream URL from public R2 CDN
+                val fallbackStream = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
 
                 if (fallbackStream.isNotBlank()) {
                     inlinePlayer.setMediaItem(MediaItem.fromUri(fallbackStream))
@@ -227,17 +218,8 @@ fun MovieDetailScreen(
             localFile.toURI().toString()
         } else if (isVerifiedOffline && internalFile.exists() && internalFile.length() >= 1024 * 1024L) {
             internalFile.toURI().toString()
-        } else if (movie.videoStreamUrl.isNotBlank() &&
-            (movie.videoStreamUrl.startsWith("http://") || movie.videoStreamUrl.startsWith("https://") ||
-             movie.videoStreamUrl.startsWith("content://") || movie.videoStreamUrl.startsWith("file://")) &&
-            !movie.videoStreamUrl.contains("bunny/trailer.mp4") &&
-            !movie.videoStreamUrl.contains("BigBuckBunny.mp4")
-        ) {
-            movie.videoStreamUrl
-        } else if (movie.videoKey.isNotBlank()) {
-            "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/${movie.videoKey.trimStart('/')}"
         } else {
-            ""
+            R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
         }
 
         if (mediaUri.isNotBlank()) {

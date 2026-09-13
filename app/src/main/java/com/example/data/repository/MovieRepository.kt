@@ -22,6 +22,7 @@ import com.example.domain.model.UploadPart
 import com.example.domain.model.UploadSession
 import com.example.domain.model.UserRole
 import com.example.domain.model.UserSession
+import com.example.util.R2UrlUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -454,20 +455,28 @@ class MovieRepository(
         movieDao.searchMovies(query).map { list -> list.map { it.toDomain() } }
 
     suspend fun insertMovie(movie: Movie) = withContext(Dispatchers.IO) {
-        movieDao.insertMovie(MovieEntity.fromDomain(movie))
-        firestoreService.saveMovie(movie)
+        val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+        val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
+        val canonicalMovie = movie.copy(videoStreamUrl = canonicalStream, videoKey = canonicalKey)
+
+        movieDao.insertMovie(MovieEntity.fromDomain(canonicalMovie))
+        firestoreService.saveMovie(canonicalMovie)
         try {
-            supabaseDbClient.upsertMovie(movie)
+            supabaseDbClient.upsertMovie(canonicalMovie)
         } catch (e: Exception) {
             Log.w(TAG, "Supabase upsert warning: ${e.message}")
         }
     }
 
     suspend fun updateMovie(movie: Movie) = withContext(Dispatchers.IO) {
-        movieDao.updateMovie(MovieEntity.fromDomain(movie))
-        firestoreService.saveMovie(movie)
+        val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+        val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
+        val canonicalMovie = movie.copy(videoStreamUrl = canonicalStream, videoKey = canonicalKey)
+
+        movieDao.updateMovie(MovieEntity.fromDomain(canonicalMovie))
+        firestoreService.saveMovie(canonicalMovie)
         try {
-            supabaseDbClient.upsertMovie(movie)
+            supabaseDbClient.upsertMovie(canonicalMovie)
         } catch (e: Exception) {
             Log.w(TAG, "Supabase update warning: ${e.message}")
         }
@@ -489,7 +498,10 @@ class MovieRepository(
             val movies = supabaseDbClient.getMovies()
             if (movies.isNotEmpty()) {
                 movies.forEach { movie ->
-                    movieDao.insertMovie(MovieEntity.fromDomain(movie))
+                    val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+                    val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
+                    val canonicalMovie = movie.copy(videoStreamUrl = canonicalStream, videoKey = canonicalKey)
+                    movieDao.insertMovie(MovieEntity.fromDomain(canonicalMovie))
                 }
             }
             movies
@@ -504,7 +516,6 @@ class MovieRepository(
      * their `video_stream_url` and `video_key` are synced to the verified Cloudflare R2 URLs.
      */
     suspend fun repairAndSyncR2UrlsToSupabase(): Int = withContext(Dispatchers.IO) {
-        val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
         var count = 0
         try {
             val localList = movieDao.getAllMoviesList().map { it.toDomain() }
@@ -512,17 +523,14 @@ class MovieRepository(
             val combined = (localList + remoteList).distinctBy { it.id }
 
             for (movie in combined) {
-                val key = when {
-                    movie.videoKey.isNotBlank() -> movie.videoKey.trimStart('/')
-                    else -> {
-                        val sanitized = movie.title.lowercase().trim().replace(Regex("[^a-z0-9]+"), "_").trim('_')
-                        "movies/$sanitized.mp4"
-                    }
+                val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+                val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl).ifBlank {
+                    val sanitized = movie.title.lowercase().trim().replace(Regex("[^a-z0-9]+"), "_").trim('_')
+                    "movies/$sanitized.mp4"
                 }
-                val r2Url = "https://$publicR2Domain/$key"
                 val updated = movie.copy(
-                    videoKey = key,
-                    videoStreamUrl = r2Url
+                    videoKey = canonicalKey,
+                    videoStreamUrl = if (canonicalStream.isNotBlank()) canonicalStream else "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/$canonicalKey"
                 )
                 movieDao.insertMovie(MovieEntity.fromDomain(updated))
                 supabaseDbClient.upsertMovie(updated)
@@ -587,23 +595,23 @@ class MovieRepository(
 
     /**
      * Resolves the online stream for Cloudflare R2 video assets or direct movie URLs.
-     * Never returns dummy cartoon trailers.
+     * Guarantees that raw S3 endpoints (*.r2.cloudflarestorage.com) are converted to the public R2 CDN.
      */
     suspend fun resolveOnlineStreamUri(movie: Movie): String = withContext(Dispatchers.IO) {
-        val directStream = movie.videoStreamUrl.trim()
+        val canonicalDirect = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
 
         // 0. Direct local file or gallery content URI
-        if (directStream.startsWith("content://") || directStream.startsWith("file://")) {
-            return@withContext directStream
+        if (canonicalDirect.startsWith("content://") || canonicalDirect.startsWith("file://") || canonicalDirect.startsWith("/")) {
+            return@withContext canonicalDirect
         }
 
         // 1. Direct stream URL from database if valid and not a placeholder
-        if (directStream.isNotBlank() &&
-            (directStream.startsWith("http://") || directStream.startsWith("https://")) &&
-            !directStream.contains("bunny/trailer.mp4") &&
-            !directStream.contains("BigBuckBunny.mp4")
+        if (canonicalDirect.isNotBlank() &&
+            (canonicalDirect.startsWith("http://") || canonicalDirect.startsWith("https://")) &&
+            !canonicalDirect.contains("bunny/trailer.mp4") &&
+            !canonicalDirect.contains("BigBuckBunny.mp4")
         ) {
-            return@withContext directStream
+            return@withContext canonicalDirect
         }
 
         // 2. Query Supabase table for verified edge URL
@@ -612,7 +620,7 @@ class MovieRepository(
                 val remoteMovies = supabaseDbClient.getMovies()
                 val remoteMovie = remoteMovies.firstOrNull { it.id == movie.id }
                 if (remoteMovie != null) {
-                    val remoteUrl = remoteMovie.videoStreamUrl.trim()
+                    val remoteUrl = R2UrlUtils.canonicalizeStreamUrl(remoteMovie.videoStreamUrl, remoteMovie.videoKey)
                     if (remoteUrl.isNotBlank() && (remoteUrl.startsWith("http://") || remoteUrl.startsWith("https://"))) {
                         Log.d(TAG, "Caught verified streaming URL from Supabase for ${movie.title}: $remoteUrl")
                         return@withContext remoteUrl
@@ -623,25 +631,12 @@ class MovieRepository(
             }
         }
 
-        // 2. Public Cloudflare R2 CDN URL if videoKey is present
-        if (movie.videoKey.isNotBlank()) {
-            val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
-            val cleanKey = movie.videoKey.trimStart('/')
-            val r2PublicUrl = "https://$publicR2Domain/$cleanKey"
+        // 3. Public Cloudflare R2 CDN URL if videoKey is present
+        val cleanKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
+        if (cleanKey.isNotBlank()) {
+            val r2PublicUrl = "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/$cleanKey"
             Log.d(TAG, "Resolved public R2 CDN stream URL for ${movie.title}: $r2PublicUrl")
             return@withContext r2PublicUrl
-        }
-
-        // 3. Cloudflare R2 Presigned Download URL
-        if (movie.videoKey.isNotBlank()) {
-            try {
-                val presigned = r2Client.getPresignedDownloadUrl(movie.videoKey.trimStart('/'))
-                if (presigned.isNotBlank() && presigned.startsWith("http")) {
-                    return@withContext presigned
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Presigned R2 stream resolution error: ${e.message}")
-            }
         }
 
         // If no stream or video key is configured, return empty string so the player can report missing source

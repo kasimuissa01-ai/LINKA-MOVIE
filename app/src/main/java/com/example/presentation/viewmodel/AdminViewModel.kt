@@ -7,6 +7,7 @@ import com.example.data.remote.TmdbService
 import com.example.data.repository.MovieRepository
 import com.example.domain.model.Movie
 import com.example.domain.model.UploadSession
+import com.example.util.R2UrlUtils
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -175,15 +176,11 @@ class AdminViewModel(
                     }
 
                     // Save the resulting video key and verified Cloudflare R2 URL in the movie database & Supabase table
-                    val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
-                    val publicR2Url = if (uploadResult.url.isNotBlank() && uploadResult.url.startsWith("http")) {
-                        uploadResult.url
-                    } else {
-                        "https://$publicR2Domain/${uploadResult.key.removePrefix("/")}"
-                    }
+                    val cleanKey = R2UrlUtils.extractCleanVideoKey(uploadResult.key, uploadResult.url)
+                    val publicR2Url = "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/$cleanKey"
 
                     val movieToSave = newMovie.copy(
-                        videoKey = uploadResult.key,
+                        videoKey = cleanKey,
                         videoStreamUrl = publicR2Url
                     )
                     repository.insertMovie(movieToSave)
@@ -207,22 +204,13 @@ class AdminViewModel(
             } else {
                 // Direct stream URL / R2 link / catalog entry
                 try {
-                    val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
-                    val effectiveStream = when {
-                        cleanStream.isNotBlank() && (cleanStream.startsWith("http://") || cleanStream.startsWith("https://")) -> {
-                            cleanStream
-                        }
-                        cleanStream.isNotBlank() -> {
-                            val key = if (cleanStream.startsWith("movies/")) cleanStream else "movies/$cleanStream"
-                            "https://$publicR2Domain/${key.removePrefix("/")}"
-                        }
-                        newMovie.videoKey.isNotBlank() -> {
-                            "https://$publicR2Domain/${newMovie.videoKey.removePrefix("/")}"
-                        }
-                        else -> cleanStream
-                    }
+                    val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(cleanStream, newMovie.videoKey)
+                    val canonicalKey = R2UrlUtils.extractCleanVideoKey(newMovie.videoKey, cleanStream)
 
-                    val movieToSave = newMovie.copy(videoStreamUrl = effectiveStream)
+                    val movieToSave = newMovie.copy(
+                        videoKey = canonicalKey,
+                        videoStreamUrl = canonicalStream
+                    )
                     repository.insertMovie(movieToSave)
                     _uploadState.value = UploadProgressState(
                         isUploading = false,

@@ -1,6 +1,7 @@
 package com.example.data.remote.model
 
 import com.example.domain.model.Movie
+import com.example.util.R2UrlUtils
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 import org.json.JSONArray
@@ -82,17 +83,20 @@ data class SupabaseMovieEntity(
         get() = videoStreamUrl
 
     /**
-     * Converts this Supabase table entity to the app's domain [Movie] model.
+     * Converts this Supabase table entity to the app's domain [Movie] model,
+     * ensuring video stream URLs always point to public Cloudflare R2 CDN rather than S3 API.
      */
     fun toDomain(): Movie {
+        val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(videoStreamUrl, videoKey)
+        val canonicalKey = R2UrlUtils.extractCleanVideoKey(videoKey, videoStreamUrl)
         return Movie(
             id = id,
             title = title,
             description = description,
             genres = genres,
             coverUrl = coverUrl,
-            videoKey = videoKey,
-            videoStreamUrl = videoStreamUrl,
+            videoKey = canonicalKey,
+            videoStreamUrl = canonicalStream,
             durationMinutes = durationMinutes,
             fileSizeMb = fileSizeMb,
             releaseYear = releaseYear,
@@ -106,14 +110,16 @@ data class SupabaseMovieEntity(
      * Serializes this entity into a [JSONObject] matching Supabase REST API schema.
      */
     fun toJsonObject(): JSONObject {
+        val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(videoStreamUrl, videoKey)
+        val canonicalKey = R2UrlUtils.extractCleanVideoKey(videoKey, videoStreamUrl)
         return JSONObject().apply {
             put("id", id)
             put("title", title)
             put("description", description)
             put("genres", JSONArray(genres))
             put("cover_url", coverUrl)
-            put("video_key", videoKey)
-            put("video_stream_url", videoStreamUrl)
+            put("video_key", canonicalKey)
+            put("video_stream_url", canonicalStream)
             put("duration_minutes", durationMinutes)
             put("file_size_mb", fileSizeMb)
             put("release_year", releaseYear)
@@ -125,23 +131,15 @@ data class SupabaseMovieEntity(
     }
 
     companion object {
-        private const val DEFAULT_R2_DOMAIN = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
-
         /**
          * Creates a [SupabaseMovieEntity] from a domain [Movie] model,
-         * automatically resolving the Cloudflare R2 stream URL if needed.
+         * automatically resolving the Cloudflare R2 stream URL to public CDN.
          */
         fun fromDomain(movie: Movie): SupabaseMovieEntity {
-            val resolvedKey = movie.videoKey.ifBlank { "movies/${movie.id}.mp4" }.trim()
-            val resolvedStreamUrl = when {
-                movie.videoStreamUrl.isNotBlank() && (movie.videoStreamUrl.startsWith("http://") || movie.videoStreamUrl.startsWith("https://")) -> {
-                    movie.videoStreamUrl.trim()
-                }
-                resolvedKey.isNotBlank() -> {
-                    "https://$DEFAULT_R2_DOMAIN/${resolvedKey.removePrefix("/")}"
-                }
-                else -> movie.videoStreamUrl.trim()
+            val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl).ifBlank {
+                "movies/${movie.id}.mp4"
             }
+            val resolvedStreamUrl = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, canonicalKey)
 
             return SupabaseMovieEntity(
                 id = movie.id,
@@ -149,7 +147,7 @@ data class SupabaseMovieEntity(
                 description = movie.description,
                 coverUrl = movie.coverUrl,
                 videoStreamUrl = resolvedStreamUrl,
-                videoKey = resolvedKey,
+                videoKey = canonicalKey,
                 genres = movie.genres,
                 durationMinutes = movie.durationMinutes,
                 fileSizeMb = movie.fileSizeMb,
