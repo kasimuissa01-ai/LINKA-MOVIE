@@ -82,6 +82,9 @@ class PlayerViewModel(
     private val moviePositions = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private var currentMovieId: String? = null
 
+    private var accumulatedVolume: Float = -1f
+    private var accumulatedBrightness: Float = -1f
+
     fun saveMoviePosition(movieId: String, positionMs: Long) {
         if (positionMs > 0L) {
             moviePositions[movieId] = positionMs
@@ -292,14 +295,24 @@ class PlayerViewModel(
         }
     }
 
+    fun pause() {
+        exoPlayer?.pause()
+        _uiState.value = _uiState.value.copy(isPlaying = false)
+        showControls(keepVisible = true)
+    }
+
+    fun play() {
+        exoPlayer?.play()
+        _uiState.value = _uiState.value.copy(isPlaying = true)
+        startControlsHideTimer()
+    }
+
     fun togglePlayPause() {
         exoPlayer?.let { player ->
             if (player.isPlaying) {
-                player.pause()
-                showControls(keepVisible = true)
+                pause()
             } else {
-                player.play()
-                startControlsHideTimer()
+                play()
             }
         }
     }
@@ -363,42 +376,118 @@ class PlayerViewModel(
         }
     }
 
-    // Vertical Gesture Controls
-    fun onVolumeSwipe(deltaRatio: Float, context: Context) {
-        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat()
+    // Vertical Gesture & Direct Controls (Volume & Brightness)
+    fun onVolumeDragStart(context: Context) {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat().coerceAtLeast(1f)
         val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
-
-        val newVolume = (currentVolume + (deltaRatio * maxVolume)).coerceIn(0f, maxVolume)
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newVolume.toInt(), 0)
-
-        val normalized = newVolume / maxVolume
+        accumulatedVolume = (currentVolume / maxVolume).coerceIn(0f, 1f)
         _uiState.value = _uiState.value.copy(
             showVolumeHud = true,
-            volumeLevel = normalized
+            showBrightnessHud = false,
+            volumeLevel = accumulatedVolume
+        )
+    }
+
+    fun onVolumeSwipe(deltaRatio: Float, context: Context) {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat().coerceAtLeast(1f)
+        if (accumulatedVolume < 0f) {
+            val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat()
+            accumulatedVolume = (currentVolume / maxVolume).coerceIn(0f, 1f)
+        }
+
+        // Apply smooth sensitivity multiplier
+        accumulatedVolume = (accumulatedVolume + (deltaRatio * 1.25f)).coerceIn(0f, 1f)
+        val targetIndex = Math.round(accumulatedVolume * maxVolume).toInt().coerceIn(0, maxVolume.toInt())
+
+        try {
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetIndex, 0)
+        } catch (e: Exception) {
+            android.util.Log.w("PlayerViewModel", "Error setting stream volume: ${e.message}")
+        }
+
+        _uiState.value = _uiState.value.copy(
+            showVolumeHud = true,
+            showBrightnessHud = false,
+            volumeLevel = accumulatedVolume
         )
         scheduleHudDismiss()
     }
 
+    fun setVolumeDirect(normalized: Float, context: Context) {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).toFloat().coerceAtLeast(1f)
+        accumulatedVolume = normalized.coerceIn(0f, 1f)
+        val targetIndex = Math.round(accumulatedVolume * maxVolume).toInt().coerceIn(0, maxVolume.toInt())
+        try {
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetIndex, 0)
+        } catch (e: Exception) {
+            android.util.Log.w("PlayerViewModel", "Error direct volume: ${e.message}")
+        }
+        _uiState.value = _uiState.value.copy(
+            showVolumeHud = true,
+            showBrightnessHud = false,
+            volumeLevel = accumulatedVolume
+        )
+        scheduleHudDismiss()
+    }
+
+    fun onBrightnessDragStart(window: Window?) {
+        window ?: return
+        val cur = window.attributes.screenBrightness
+        accumulatedBrightness = if (cur < 0f) 0.5f else cur.coerceIn(0.05f, 1.0f)
+        _uiState.value = _uiState.value.copy(
+            showBrightnessHud = true,
+            showVolumeHud = false,
+            brightnessLevel = accumulatedBrightness
+        )
+    }
+
     fun onBrightnessSwipe(deltaRatio: Float, window: Window?) {
         window ?: return
-        val current = if (window.attributes.screenBrightness < 0) 0.5f else window.attributes.screenBrightness
-        val newBrightness = (current + deltaRatio).coerceIn(0.05f, 1.0f)
+        if (accumulatedBrightness < 0f) {
+            val cur = window.attributes.screenBrightness
+            accumulatedBrightness = if (cur < 0f) 0.5f else cur.coerceIn(0.05f, 1.0f)
+        }
+
+        accumulatedBrightness = (accumulatedBrightness + (deltaRatio * 1.25f)).coerceIn(0.02f, 1.0f)
         val layoutParams = window.attributes
-        layoutParams.screenBrightness = newBrightness
+        layoutParams.screenBrightness = accumulatedBrightness
         window.attributes = layoutParams
 
         _uiState.value = _uiState.value.copy(
             showBrightnessHud = true,
-            brightnessLevel = newBrightness
+            showVolumeHud = false,
+            brightnessLevel = accumulatedBrightness
         )
+        scheduleHudDismiss()
+    }
+
+    fun setBrightnessDirect(normalized: Float, window: Window?) {
+        window ?: return
+        accumulatedBrightness = normalized.coerceIn(0.02f, 1.0f)
+        val layoutParams = window.attributes
+        layoutParams.screenBrightness = accumulatedBrightness
+        window.attributes = layoutParams
+        _uiState.value = _uiState.value.copy(
+            showBrightnessHud = true,
+            showVolumeHud = false,
+            brightnessLevel = accumulatedBrightness
+        )
+        scheduleHudDismiss()
+    }
+
+    fun onDragEnd() {
+        accumulatedVolume = -1f
+        accumulatedBrightness = -1f
         scheduleHudDismiss()
     }
 
     private fun scheduleHudDismiss() {
         hudDismissJob?.cancel()
         hudDismissJob = viewModelScope.launch {
-            delay(1200)
+            delay(1400)
             _uiState.value = _uiState.value.copy(
                 showVolumeHud = false,
                 showBrightnessHud = false

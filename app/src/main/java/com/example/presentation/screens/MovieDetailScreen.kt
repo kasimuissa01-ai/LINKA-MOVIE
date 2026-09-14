@@ -3,8 +3,12 @@ package com.example.presentation.screens
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -237,8 +241,43 @@ fun MovieDetailScreen(
             if (lastPos > 0L) {
                 playerViewModel?.saveMoviePosition(movie.id, lastPos)
             }
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             inlinePlayer.removeListener(listener)
             inlinePlayer.release()
+        }
+    }
+
+    // Lifecycle Observer: Pause inline trailer when user leaves the app or backgrounds it
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE,
+                Lifecycle.Event.ON_STOP -> {
+                    inlinePlayer.pause()
+                    isPlaying = false
+                    activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    if (isPlaying) {
+                        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    LaunchedEffect(isPlaying) {
+        if (isPlaying) {
+            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
 
@@ -282,12 +321,17 @@ fun MovieDetailScreen(
                         PlayerView(ctx).apply {
                             player = inlinePlayer
                             useController = false
+                            keepScreenOn = true
                             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                             layoutParams = FrameLayout.LayoutParams(
                                 ViewGroup.LayoutParams.MATCH_PARENT,
                                 ViewGroup.LayoutParams.MATCH_PARENT
                             )
                         }
+                    },
+                    update = { playerView ->
+                        playerView.player = inlinePlayer
+                        playerView.keepScreenOn = isPlaying
                     },
                     modifier = Modifier.fillMaxSize()
                 )

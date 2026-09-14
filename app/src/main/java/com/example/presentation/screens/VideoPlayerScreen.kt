@@ -20,8 +20,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -82,6 +82,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import com.example.domain.model.Movie
@@ -149,14 +152,17 @@ fun VideoPlayerScreen(
             // 1. Force Landscape orientation (SENSOR_LANDSCAPE allows natural 180° flips if user turns device)
             act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 
-            // 2. Hide all system bars for true edge-to-edge immersive playback
+            // 2. Keep screen ON continuously while video player is active
+            act.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+            // 3. Hide all system bars for true edge-to-edge immersive playback
             val window = act.window
             val insetsController = WindowCompat.getInsetsController(window, window.decorView)
             insetsController.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             insetsController.hide(WindowInsetsCompat.Type.systemBars())
 
-            // 3. Extend video into display cutout / notch area
+            // 4. Extend video into display cutout / notch area
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 window.attributes = window.attributes.apply {
                     layoutInDisplayCutoutMode =
@@ -164,7 +170,7 @@ fun VideoPlayerScreen(
                 }
             }
 
-            // 4. Enable HDR wide color gamut mode if device screen supports HDR
+            // 5. Enable HDR wide color gamut mode if device screen supports HDR
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 try {
                     val isHdrDisplay = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -178,8 +184,32 @@ fun VideoPlayerScreen(
         }
 
         onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             playerViewModel.releasePlayer(movie.id)
             restoreSystemUiAndOrientation()
+        }
+    }
+
+    // Lifecycle Observer: Stop/Pause playback when user exits or backgrounds the app
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE,
+                Lifecycle.Event.ON_STOP -> {
+                    playerViewModel.pause()
+                    activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
 
@@ -190,6 +220,7 @@ fun VideoPlayerScreen(
         if (uiState.controlsVisible) {
             playerViewModel.hideControls()
         } else {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             restoreSystemUiAndOrientation()
             onBackClick()
         }
@@ -202,7 +233,7 @@ fun VideoPlayerScreen(
             .testTag("video_player_screen")
     ) {
         val totalWidth = constraints.maxWidth.toFloat()
-        val totalHeight = constraints.maxHeight.toFloat()
+        val totalHeight = constraints.maxHeight.toFloat().coerceAtLeast(1f)
 
         // 1. Fullscreen Video Surface
         AndroidView(
@@ -210,6 +241,7 @@ fun VideoPlayerScreen(
                 PlayerView(ctx).apply {
                     useController = false
                     resizeMode = uiState.resizeMode.exoMode
+                    keepScreenOn = true
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
@@ -220,42 +252,84 @@ fun VideoPlayerScreen(
             update = { playerView ->
                 playerView.player = playerViewModel.exoPlayer
                 playerView.resizeMode = uiState.resizeMode.exoMode
+                playerView.keepScreenOn = true
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // 2. Gesture Detector (Single Tap to toggle controls, Double Tap to seek ±10s)
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = {
-                            playerViewModel.toggleControls()
-                        },
-                        onDoubleTap = { offset ->
-                            if (offset.x > totalWidth / 2) {
-                                playerViewModel.seekRelative(10, isForward = true)
-                            } else {
+        // 2. Gesture Detector Layer
+        // Divided cleanly into Left (Brightness) and Right (Volume) zones with vertical drag + tap & double tap
+        Row(modifier = Modifier.fillMaxSize()) {
+            // LEFT ZONE: Brightness + Seek -10s + Toggle Controls
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = {
+                                playerViewModel.toggleControls()
+                            },
+                            onDoubleTap = {
                                 playerViewModel.seekRelative(-10, isForward = false)
                             }
-                        }
-                    )
-                }
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDrag = { change, dragAmount ->
-                            val isRightSide = change.position.x > totalWidth / 2
-                            val deltaRatio = -dragAmount.y / totalHeight
-                            if (isRightSide) {
-                                playerViewModel.onVolumeSwipe(deltaRatio, context)
-                            } else {
+                        )
+                    }
+                    .pointerInput(totalHeight) {
+                        detectVerticalDragGestures(
+                            onDragStart = {
+                                playerViewModel.onBrightnessDragStart(activity?.window)
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                change.consume()
+                                val deltaRatio = -dragAmount / totalHeight
                                 playerViewModel.onBrightnessSwipe(deltaRatio, activity?.window)
+                            },
+                            onDragEnd = {
+                                playerViewModel.onDragEnd()
+                            },
+                            onDragCancel = {
+                                playerViewModel.onDragEnd()
                             }
-                        }
-                    )
-                }
-        )
+                        )
+                    }
+            )
+
+            // RIGHT ZONE: Volume + Seek +10s + Toggle Controls
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = {
+                                playerViewModel.toggleControls()
+                            },
+                            onDoubleTap = {
+                                playerViewModel.seekRelative(10, isForward = true)
+                            }
+                        )
+                    }
+                    .pointerInput(totalHeight) {
+                        detectVerticalDragGestures(
+                            onDragStart = {
+                                playerViewModel.onVolumeDragStart(context)
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                change.consume()
+                                val deltaRatio = -dragAmount / totalHeight
+                                playerViewModel.onVolumeSwipe(deltaRatio, context)
+                            },
+                            onDragEnd = {
+                                playerViewModel.onDragEnd()
+                            },
+                            onDragCancel = {
+                                playerViewModel.onDragEnd()
+                            }
+                        )
+                    }
+            )
+        }
 
         // 3. Double-tap Seek HUD (+10s / -10s)
         uiState.doubleTapSeek?.let { seekState ->
