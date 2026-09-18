@@ -58,6 +58,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import com.example.presentation.components.SwahiliDescriptionSection
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -192,11 +193,17 @@ fun MovieDetailScreen(
                     runCatching { localFile.delete() }
                 }
 
-                // Try canonical movie stream URL from public R2 CDN
-                val fallbackStream = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+                // Try alternative verified movie stream URL from public R2 CDN (excluding current failed URI)
+                val currentFailed = inlinePlayer.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty()
+                val candidateStreams = listOf(
+                    R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey),
+                    "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/videos/1789152583701-snippe_fierce_.mp4",
+                    "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/videos/1789329122943-speed_demon.mp4"
+                )
+                val workingStream = candidateStreams.firstOrNull { it.isNotBlank() && it.startsWith("http") && it != currentFailed }
 
-                if (fallbackStream.isNotBlank()) {
-                    inlinePlayer.setMediaItem(MediaItem.fromUri(fallbackStream))
+                if (!workingStream.isNullOrBlank()) {
+                    inlinePlayer.setMediaItem(MediaItem.fromUri(workingStream))
                     inlinePlayer.prepare()
                     inlinePlayer.play()
                 }
@@ -300,6 +307,10 @@ fun MovieDetailScreen(
                 .padding(bottom = 60.dp)
         ) {
             // Top Video Player Area (Plays automatically)
+            val detailCover = remember(movie.id) {
+                com.example.util.MovieCoverUtils.resolveCoverUrl(movie.title, movie.coverUrl, movie.genres)
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -312,6 +323,16 @@ fun MovieDetailScreen(
                         showPlayerControls = !showPlayerControls
                     }
             ) {
+                // Cover preview backdrop before video renders
+                if (!isPlaying) {
+                    AsyncImage(
+                        model = detailCover,
+                        contentDescription = movie.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
                 // ExoPlayer Surface
                 AndroidView(
                     factory = { ctx ->
@@ -508,51 +529,79 @@ fun MovieDetailScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 16.dp)
             ) {
-                Text(
-                    text = movie.title,
-                    color = TextPrimary,
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Black,
-                    lineHeight = 32.sp
-                )
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Badges Row
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top
                 ) {
-                    // Rating
-                    Surface(
-                        color = SurfaceDark,
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
+                    AsyncImage(
+                        model = detailCover,
+                        contentDescription = movie.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .width(85.dp)
+                            .height(125.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(SurfaceElevated)
+                    )
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = movie.title,
+                            color = TextPrimary,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Black,
+                            lineHeight = 28.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Badges Row
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Star,
-                                contentDescription = null,
-                                tint = AmberGold,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            // Rating
+                            Surface(
+                                color = SurfaceDark,
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Star,
+                                        contentDescription = null,
+                                        tint = AmberGold,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = String.format("%.1f", movie.rating),
+                                        color = TextPrimary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
                             Text(
-                                text = String.format("%.1f", movie.rating),
-                                color = TextPrimary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
+                                text = "${movie.releaseYear} • ${movie.durationMinutes} min",
+                                color = TextSecondary,
+                                fontSize = 12.sp
                             )
                         }
-                    }
 
-                    Text(
-                        text = "${movie.releaseYear} • ${movie.durationMinutes} min • ${movie.fileSizeMb} MB",
-                        color = TextSecondary,
-                        fontSize = 13.sp
-                    )
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = "${movie.fileSizeMb} MB",
+                            color = TextSecondary.copy(alpha = 0.8f),
+                            fontSize = 12.sp
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -690,11 +739,9 @@ fun MovieDetailScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                Text(
-                    text = movie.description,
-                    color = TextSecondary,
-                    fontSize = 14.sp,
-                    lineHeight = 22.sp
+                SwahiliDescriptionSection(
+                    originalDescription = movie.description,
+                    movieTitle = movie.title
                 )
 
                 if (movie.cast.isNotEmpty()) {

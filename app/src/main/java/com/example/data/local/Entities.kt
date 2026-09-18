@@ -25,22 +25,26 @@ data class MovieEntity(
     val isFeatured: Boolean,
     val uploadDate: Long
 ) {
-    fun toDomain(): Movie = Movie(
-        id = id,
-        title = title,
-        description = description,
-        genres = if (genres.isBlank()) emptyList() else genres.split(",").map { it.trim() },
-        coverUrl = coverUrl,
-        videoKey = videoKey,
-        videoStreamUrl = videoStreamUrl,
-        durationMinutes = durationMinutes,
-        fileSizeMb = fileSizeMb,
-        releaseYear = releaseYear,
-        rating = rating,
-        cast = if (cast.isBlank()) emptyList() else cast.split(",").map { it.trim() },
-        isFeatured = isFeatured,
-        uploadDate = uploadDate
-    )
+    fun toDomain(): Movie {
+        val parsedGenres = if (genres.isBlank()) emptyList() else genres.split(",").map { it.trim() }
+        val verifiedCover = com.example.util.MovieCoverUtils.resolveCoverUrl(title, coverUrl, parsedGenres)
+        return Movie(
+            id = id,
+            title = title,
+            description = description,
+            genres = parsedGenres,
+            coverUrl = verifiedCover,
+            videoKey = videoKey,
+            videoStreamUrl = videoStreamUrl,
+            durationMinutes = durationMinutes,
+            fileSizeMb = fileSizeMb,
+            releaseYear = releaseYear,
+            rating = rating,
+            cast = if (cast.isBlank()) emptyList() else cast.split(",").map { it.trim() },
+            isFeatured = isFeatured,
+            uploadDate = uploadDate
+        )
+    }
 
     companion object {
         fun fromDomain(movie: Movie): MovieEntity = MovieEntity(

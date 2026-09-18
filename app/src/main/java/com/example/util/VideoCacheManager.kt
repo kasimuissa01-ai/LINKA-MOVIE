@@ -90,9 +90,10 @@ object VideoCacheManager {
         val cache = getCache(context)
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(30000)
-            .setReadTimeoutMs(60000)
-            .setUserAgent("MovieRoom-Player/1.0")
+            .setKeepPostFor302Redirects(true)
+            .setConnectTimeoutMs(45000)
+            .setReadTimeoutMs(120000)
+            .setUserAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36 MovieRoom/1.0")
 
         val upstreamFactory = DefaultDataSource.Factory(context.applicationContext, httpDataSourceFactory)
 
@@ -111,9 +112,10 @@ object VideoCacheManager {
         val cacheDataSourceFactory = createCacheDataSourceFactory(context)
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(30000)
-            .setReadTimeoutMs(60000)
-            .setUserAgent("MovieRoom-Player/1.0")
+            .setKeepPostFor302Redirects(true)
+            .setConnectTimeoutMs(45000)
+            .setReadTimeoutMs(120000)
+            .setUserAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36 MovieRoom/1.0")
         val directFactory = DefaultDataSource.Factory(context.applicationContext, httpDataSourceFactory)
 
         return androidx.media3.datasource.DataSource.Factory {
@@ -244,7 +246,8 @@ object VideoCacheManager {
      */
     fun buildFastPlayer(context: Context): ExoPlayer {
         val smartDataSourceFactory = createSmartDataSourceFactory(context)
-        val mediaSourceFactory = DefaultMediaSourceFactory(context.applicationContext)
+        val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
+        val mediaSourceFactory = DefaultMediaSourceFactory(context.applicationContext, extractorsFactory)
             .setDataSourceFactory(smartDataSourceFactory)
 
         // Aggressively optimize LoadControl for instant first-frame playback and smooth multi-GB streaming

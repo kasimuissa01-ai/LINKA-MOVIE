@@ -820,7 +820,7 @@ fun VideoPlayerScreen(
 
                             Spacer(modifier = Modifier.width(10.dp))
 
-                            // Rotate Screen Toggle Button
+                            // Rotate Screen Toggle Button (Rotates 180 deg in Landscape, never flips to vertical 9:16)
                             Surface(
                                 color = Color.White.copy(alpha = 0.15f),
                                 shape = RoundedCornerShape(12.dp),
@@ -828,10 +828,10 @@ fun VideoPlayerScreen(
                                     .clickable {
                                         activity?.let { act ->
                                             val currentOrient = act.requestedOrientation
-                                            if (currentOrient == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
+                                            if (currentOrient == ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE) {
                                                 act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                                             } else {
-                                                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
                                             }
                                         }
                                         playerViewModel.restartControlsHideTimer()

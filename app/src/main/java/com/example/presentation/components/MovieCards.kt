@@ -77,8 +77,9 @@ fun MoviePosterCard(
                 .clip(RoundedCornerShape(12.dp))
                 .background(SurfaceElevated)
         ) {
+            val effectiveCover = com.example.util.MovieCoverUtils.resolveCoverUrl(movie.title, movie.coverUrl, movie.genres)
             AsyncImage(
-                model = movie.coverUrl,
+                model = effectiveCover,
                 contentDescription = movie.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

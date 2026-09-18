@@ -45,7 +45,7 @@ data class PlayerUiState(
     val bufferedPositionMs: Long = 0L,
     val controlsVisible: Boolean = true,
     val isLocked: Boolean = false,
-    val resizeMode: ScreenResizeMode = ScreenResizeMode.FIT,
+    val resizeMode: ScreenResizeMode = ScreenResizeMode.ZOOM,
     val resizeToast: String? = null,
     val playbackSpeed: Float = 1.0f,
     val doubleTapSeek: DoubleTapSeekState? = null,
@@ -61,7 +61,7 @@ data class PlayerUiState(
     val errorMessage: String? = null,
     val currentPlaybackUrl: String = "",
     val isResolvingStreamUrl: Boolean = true,
-    val loadingStage: String = "Connecting to Supabase repository..."
+    val loadingStage: String = "Loading movie..."
 )
 
 @OptIn(UnstableApi::class)
@@ -197,15 +197,16 @@ class PlayerViewModel(
                     return
                 }
 
-                // 2. If it was playing an online stream, attempt failover via repository (including Supabase edge URL):
+                // 2. If it was playing an online stream, attempt failover via repository (excluding failed currentUrl):
                 viewModelScope.launch {
-                    val fallbackUrl = repository.resolveOnlineStreamUri(movie)
+                    val fallbackUrl = repository.resolveOnlineStreamUri(movie, excludeUrl = currentUrl)
                     if (fallbackUrl.isNotBlank() && fallbackUrl != currentUrl) {
                         android.util.Log.w("PlayerViewModel", "Switching to verified stream source: $fallbackUrl")
                         _uiState.value = _uiState.value.copy(
                             currentPlaybackUrl = fallbackUrl,
                             errorMessage = null,
-                            isLoading = true
+                            isLoading = true,
+                            loadingStage = "Buffering cinema stream..."
                         )
                         player.setMediaItem(MediaItem.fromUri(fallbackUrl))
                         player.prepare()
@@ -214,7 +215,7 @@ class PlayerViewModel(
                         _uiState.value = _uiState.value.copy(
                             isPlaying = false,
                             isLoading = false,
-                            errorMessage = "Stream playback failed for '${movie.title}'. Please verify the video URL or network connection."
+                            errorMessage = "Stream playback encountered an issue. Tap Retry to reconnect."
                         )
                     }
                 }
@@ -297,13 +298,13 @@ class PlayerViewModel(
         _uiState.value = _uiState.value.copy(
             isLoading = true,
             isResolvingStreamUrl = true,
-            loadingStage = "Reconnecting to Supabase repository...",
+            loadingStage = "Reconnecting stream...",
             errorMessage = null
         )
         exoPlayer?.let { player ->
             viewModelScope.launch {
                 _uiState.value = _uiState.value.copy(
-                    loadingStage = "Fetching stream URL from Supabase repository..."
+                    loadingStage = "Buffering cinema stream..."
                 )
                 val playbackUrl = repository.resolvePlaybackUri(movie, context)
                 val isOffline = playbackUrl.startsWith("file://") || playbackUrl.startsWith("/")
@@ -312,7 +313,7 @@ class PlayerViewModel(
                     isOfflinePlayback = isOffline,
                     currentPlaybackUrl = playbackUrl,
                     isResolvingStreamUrl = false,
-                    loadingStage = if (isOffline) "Preparing offline playback..." else "Connecting to Cloudflare R2 stream...",
+                    loadingStage = if (isOffline) "Preparing offline playback..." else "Buffering cinema stream...",
                     errorMessage = null
                 )
                 player.setMediaItem(MediaItem.fromUri(playbackUrl))

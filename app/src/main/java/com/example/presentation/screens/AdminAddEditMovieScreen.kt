@@ -1,10 +1,17 @@
 package com.example.presentation.screens
 
+import android.app.Activity
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import android.net.Uri
-import android.provider.OpenableColumns
+import com.example.util.R2UrlUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -234,6 +241,22 @@ fun AdminAddEditMovieScreen(
     val supabaseStatus by adminViewModel.supabaseConnectionStatus.collectAsState()
     val isCheckingConn by adminViewModel.isCheckingConnection.collectAsState()
     val scrollState = rememberScrollState()
+
+    val activity = context as? Activity
+    androidx.compose.runtime.DisposableEffect(uploadProgressState.isUploading) {
+        if (uploadProgressState.isUploading) {
+            activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose {
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    var isVerifyingStream by remember { mutableStateOf(false) }
+    var streamVerificationResult by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
 
     fun applyTmdbMovie(tmdb: TmdbMovieResult) {
         focusManager.clearFocus()
@@ -518,6 +541,10 @@ fun AdminAddEditMovieScreen(
         Spacer(modifier = Modifier.height(18.dp))
 
         // Poster Preview Card
+        val effectivePreviewCover = remember(title, coverUrl, selectedGenres) {
+            com.example.util.MovieCoverUtils.resolveCoverUrl(title, coverUrl, selectedGenres)
+        }
+
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = SurfaceDark),
@@ -528,7 +555,7 @@ fun AdminAddEditMovieScreen(
                 modifier = Modifier.padding(14.dp)
             ) {
                 AsyncImage(
-                    model = coverUrl,
+                    model = effectivePreviewCover,
                     contentDescription = "Cover preview",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
@@ -829,18 +856,91 @@ fun AdminAddEditMovieScreen(
                         .testTag("input_video_stream_url")
                 )
 
-                if (streamUrl.contains("r2.dev") || streamUrl.contains("movies/")) {
+                if (streamUrl.isNotBlank()) {
                     Spacer(modifier = Modifier.height(6.dp))
-                    Surface(
-                        color = Color(0x224CAF50),
-                        shape = RoundedCornerShape(6.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
+                        Surface(
+                            color = Color(0x224CAF50),
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = "✓ Cloudflare R2 Stream URL • Ready to sync",
+                                color = Color(0xFF81C784),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                isVerifyingStream = true
+                                streamVerificationResult = null
+                                coroutineScope.launch(Dispatchers.IO) {
+                                    val testUrl = R2UrlUtils.canonicalizeStreamUrl(streamUrl, "")
+                                    val client = okhttp3.OkHttpClient.Builder()
+                                        .connectTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+                                        .readTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+                                        .build()
+                                    try {
+                                        val req = Request.Builder()
+                                            .url(testUrl)
+                                            .addHeader("Range", "bytes=0-1024")
+                                            .addHeader("User-Agent", "MovieRoom-Player/1.0")
+                                            .get()
+                                            .build()
+                                        client.newCall(req).execute().use { resp ->
+                                            streamVerificationResult = if (resp.isSuccessful || resp.code == 206) {
+                                                "Online: Cloudflare R2 file verified (HTTP ${resp.code})! Ready for instant playback."
+                                            } else if (resp.code == 404) {
+                                                "Incomplete/Missing: HTTP 404. Upload is either marked 'Ongoing' (unfinalized multipart) or path is incorrect."
+                                            } else {
+                                                "HTTP ${resp.code}: ${resp.message}"
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        streamVerificationResult = "Check error: ${e.message}"
+                                    } finally {
+                                        isVerifyingStream = false
+                                    }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = SurfaceElevated,
+                                contentColor = TextPrimary
+                            ),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp)
+                        ) {
+                            if (isVerifyingStream) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(12.dp),
+                                    strokeWidth = 1.5.dp,
+                                    color = ElectricBlue
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Checking...", fontSize = 10.sp)
+                            } else {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(12.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Verify R2 File", fontSize = 10.sp)
+                            }
+                        }
+                    }
+
+                    if (streamVerificationResult != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "✓ Cloudflare R2 Stream URL • Ready to sync to Supabase table",
-                            color = Color(0xFF81C784),
+                            text = streamVerificationResult ?: "",
+                            color = if (streamVerificationResult?.startsWith("Online") == true) Color(0xFF81C784) else AmberGold,
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            lineHeight = 15.sp
                         )
                     }
                 }
@@ -1171,6 +1271,21 @@ fun AdminAddEditMovieScreen(
                         color = TextSecondary,
                         fontSize = 12.sp
                     )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Surface(
+                        color = Color(0x22F59E0B),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = "⚠ Screen kept awake. Please stay on this screen until upload reaches 100% and displays 'Published Successfully'. Exiting mid-way leaves an 'Ongoing' unfinished upload in Cloudflare R2 that cannot be streamed.",
+                            color = AmberGold,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp,
+                            modifier = Modifier.padding(8.dp)
+                        )
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -1240,11 +1355,12 @@ fun AdminAddEditMovieScreen(
                                 val size = fileSizeMb.toLongOrNull() ?: 450L
                                 val year = releaseYear.toIntOrNull() ?: 2024
                                 val rate = rating.toDoubleOrNull() ?: 8.0
+                                val finalCover = com.example.util.MovieCoverUtils.resolveCoverUrl(title, coverUrl, selectedGenres)
                                 adminViewModel.publishMovieDirectly(
                                     title = title.ifBlank { "Untitled Movie" },
                                     description = description.ifBlank { "A cinematic release." },
                                     genres = selectedGenres,
-                                    coverUrl = coverUrl,
+                                    coverUrl = finalCover,
                                     fileSizeMb = size,
                                     streamUrl = streamUrl,
                                     releaseYear = year,
@@ -1263,12 +1379,13 @@ fun AdminAddEditMovieScreen(
                                 val size = fileSizeMb.toLongOrNull() ?: 450L
                                 val year = releaseYear.toIntOrNull() ?: 2024
                                 val rate = rating.toDoubleOrNull() ?: 8.0
+                                val finalCover = com.example.util.MovieCoverUtils.resolveCoverUrl(title, coverUrl, selectedGenres)
                                 adminViewModel.addMovieWithMultipartUpload(
                                     context = context,
                                     title = title.ifBlank { "Untitled Movie" },
                                     description = description.ifBlank { "A cinematic release." },
                                     genres = selectedGenres,
-                                    coverUrl = coverUrl,
+                                    coverUrl = finalCover,
                                     fileSizeMb = size,
                                     streamUrl = streamUrl,
                                     releaseYear = year,
@@ -1294,6 +1411,7 @@ fun AdminAddEditMovieScreen(
                 val size = fileSizeMb.toLongOrNull() ?: 450L
                 val year = releaseYear.toIntOrNull() ?: 2024
                 val rate = rating.toDoubleOrNull() ?: 8.0
+                val finalCover = com.example.util.MovieCoverUtils.resolveCoverUrl(title, coverUrl, selectedGenres)
 
                 if (existingMovie != null) {
                     val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
@@ -1310,7 +1428,7 @@ fun AdminAddEditMovieScreen(
                         title = title,
                         description = description,
                         genres = selectedGenres,
-                        coverUrl = coverUrl,
+                        coverUrl = finalCover,
                         videoStreamUrl = resolvedStream,
                         durationMinutes = 115,
                         fileSizeMb = size,
@@ -1326,7 +1444,7 @@ fun AdminAddEditMovieScreen(
                         title = title.ifBlank { "Untitled Movie" },
                         description = description.ifBlank { "A cinematic release." },
                         genres = selectedGenres,
-                        coverUrl = coverUrl,
+                        coverUrl = finalCover,
                         fileSizeMb = size,
                         streamUrl = streamUrl,
                         releaseYear = year,
@@ -1366,11 +1484,12 @@ fun AdminAddEditMovieScreen(
                     val size = fileSizeMb.toLongOrNull() ?: 450L
                     val year = releaseYear.toIntOrNull() ?: 2024
                     val rate = rating.toDoubleOrNull() ?: 8.0
+                    val finalCover = com.example.util.MovieCoverUtils.resolveCoverUrl(title, coverUrl, selectedGenres)
                     adminViewModel.publishMovieDirectly(
                         title = title.ifBlank { "Untitled Movie" },
                         description = description.ifBlank { "A cinematic release." },
                         genres = selectedGenres,
-                        coverUrl = coverUrl,
+                        coverUrl = finalCover,
                         fileSizeMb = size,
                         streamUrl = streamUrl,
                         releaseYear = year,

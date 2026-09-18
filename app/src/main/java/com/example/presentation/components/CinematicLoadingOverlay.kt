@@ -277,9 +277,10 @@ fun CinematicLoadingOverlay(
                 .testTag("cinematic_loading_overlay")
         ) {
             // 1. Ambient blurred movie backdrop
-            if (movie.coverUrl.isNotBlank()) {
+            val backdropCover = com.example.util.MovieCoverUtils.resolveCoverUrl(movie.title, movie.coverUrl, movie.genres)
+            if (backdropCover.isNotBlank()) {
                 AsyncImage(
-                    model = movie.coverUrl,
+                    model = backdropCover,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
@@ -390,7 +391,7 @@ fun CinematicLoadingOverlay(
 
                         // Smooth crossfade between stage messages
                         AnimatedContent(
-                            targetState = loadingStage.ifBlank { "Fetching stream URL from Supabase repository..." },
+                            targetState = loadingStage.ifBlank { "Loading movie..." },
                             transitionSpec = {
                                 fadeIn(animationSpec = tween(280)) togetherWith
                                         fadeOut(animationSpec = tween(200))
@@ -407,48 +408,7 @@ fun CinematicLoadingOverlay(
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Technical Stream Badges
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CinemaBadge(text = "SUPABASE REPO", accentColor = ElectricBlue)
-                    CinemaBadge(text = "CLOUDFLARE R2", accentColor = AmberGold)
-                    CinemaBadge(text = "4K ULTRA HD", accentColor = CinematicRed)
-                    CinemaBadge(text = "DOLBY ATMOS", accentColor = Color(0xFFB388FF))
-                }
             }
         }
-    }
-}
-
-@Composable
-private fun CinemaBadge(
-    text: String,
-    accentColor: Color
-) {
-    Box(
-        modifier = Modifier
-            .border(
-                width = 1.dp,
-                color = accentColor.copy(alpha = 0.35f),
-                shape = RoundedCornerShape(4.dp)
-            )
-            .background(
-                color = accentColor.copy(alpha = 0.10f),
-                shape = RoundedCornerShape(4.dp)
-            )
-            .padding(horizontal = 6.dp, vertical = 2.dp)
-    ) {
-        Text(
-            text = text,
-            color = accentColor.copy(alpha = 0.9f),
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.5.sp
-        )
     }
 }

@@ -285,8 +285,9 @@ fun HeroCarousel(
                     .fillMaxSize()
                     .clickable { onMovieClick(movie) }
             ) {
+                val heroCover = com.example.util.MovieCoverUtils.resolveCoverUrl(movie.title, movie.coverUrl, movie.genres)
                 AsyncImage(
-                    model = movie.coverUrl,
+                    model = heroCover,
                     contentDescription = movie.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
