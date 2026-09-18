@@ -192,16 +192,22 @@ fun VideoPlayerScreen(
 
     // Lifecycle Observer: Stop/Pause playback when user exits or backgrounds the app
     val lifecycleOwner = LocalLifecycleOwner.current
+    var wasPlayingBeforeStop by remember { mutableStateOf(false) }
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE,
                 Lifecycle.Event.ON_STOP -> {
+                    wasPlayingBeforeStop = playerViewModel.exoPlayer?.isPlaying == true || playerViewModel.exoPlayer?.playWhenReady == true
                     playerViewModel.pause()
                     activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 }
+                Lifecycle.Event.ON_START,
                 Lifecycle.Event.ON_RESUME -> {
                     activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    if (wasPlayingBeforeStop) {
+                        playerViewModel.play()
+                    }
                 }
                 else -> {}
             }

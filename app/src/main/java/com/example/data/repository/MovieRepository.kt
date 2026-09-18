@@ -605,11 +605,9 @@ class MovieRepository(
             return@withContext canonicalDirect
         }
 
-        // 1. Direct stream URL from database if valid and not a placeholder
+        // 1. Direct stream URL from database if valid
         if (canonicalDirect.isNotBlank() &&
-            (canonicalDirect.startsWith("http://") || canonicalDirect.startsWith("https://")) &&
-            !canonicalDirect.contains("bunny/trailer.mp4") &&
-            !canonicalDirect.contains("BigBuckBunny.mp4")
+            (canonicalDirect.startsWith("http://") || canonicalDirect.startsWith("https://"))
         ) {
             return@withContext canonicalDirect
         }

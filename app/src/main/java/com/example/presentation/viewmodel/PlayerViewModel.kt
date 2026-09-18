@@ -15,6 +15,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.example.data.repository.MovieRepository
 import com.example.domain.model.Movie
+import com.example.util.R2UrlUtils
 import com.example.util.VideoCacheManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -104,19 +105,33 @@ class PlayerViewModel(
             getMovieLastPosition(movie.id)
         }
 
-        _uiState.value = _uiState.value.copy(
-            isLoading = true,
-            isResolvingStreamUrl = true,
-            loadingStage = "Connecting to Supabase repository...",
-            errorMessage = null
-        )
-
+        // If player already exists for this movie, seek to target and ensure playback is active
         if (exoPlayer != null) {
-            if (targetStartPos > 0L && Math.abs((exoPlayer?.currentPosition ?: 0L) - targetStartPos) > 1500L) {
-                exoPlayer?.seekTo(targetStartPos)
+            exoPlayer?.let { player ->
+                if (targetStartPos > 0L && Math.abs(player.currentPosition - targetStartPos) > 1500L) {
+                    player.seekTo(targetStartPos)
+                }
+                player.playWhenReady = true
+                player.play()
+                _uiState.value = _uiState.value.copy(
+                    isLoading = player.playbackState == Player.STATE_BUFFERING,
+                    isResolvingStreamUrl = false,
+                    isPlaying = true,
+                    currentPositionMs = player.currentPosition.coerceAtLeast(0L),
+                    durationMs = player.duration.coerceAtLeast(0L),
+                    errorMessage = null
+                )
+                startProgressTracker()
             }
             return
         }
+
+        _uiState.value = _uiState.value.copy(
+            isLoading = true,
+            isResolvingStreamUrl = true,
+            loadingStage = "Preparing video stream...",
+            errorMessage = null
+        )
 
         val player = try {
             VideoCacheManager.buildFastPlayer(context)
@@ -139,7 +154,7 @@ class PlayerViewModel(
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                val isLoading = playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_IDLE
+                val isLoading = playbackState == Player.STATE_BUFFERING
                 val isReady = playbackState == Player.STATE_READY
                 _uiState.value = _uiState.value.copy(
                     isLoading = isLoading,
@@ -206,40 +221,75 @@ class PlayerViewModel(
             }
         })
 
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
-                isResolvingStreamUrl = true,
-                loadingStage = "Fetching stream URL from Supabase repository..."
-            )
-            val playbackUrl = repository.resolvePlaybackUri(movie, context)
-            if (playbackUrl.isBlank()) {
-                _uiState.value = _uiState.value.copy(
-                    isPlaying = false,
-                    isLoading = false,
-                    isResolvingStreamUrl = false,
-                    errorMessage = "No video stream is available for '${movie.title}'. Please upload a video or configure a stream URL."
-                )
-                return@launch
-            }
-            val isOffline = playbackUrl.startsWith("file://") || playbackUrl.startsWith("/")
+        // Check if verified offline file exists or direct stream is available for zero-delay start
+        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+        val localFile = java.io.File(destDir, "movie_${movie.id}.mp4")
+        val internalFile = java.io.File(context.filesDir, "movie_${movie.id}.mp4")
+
+        val directUrl = if (localFile.exists() && localFile.length() >= 1024 * 1024L) {
+            localFile.toURI().toString()
+        } else if (internalFile.exists() && internalFile.length() >= 1024 * 1024L) {
+            internalFile.toURI().toString()
+        } else {
+            R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+        }
+
+        if (directUrl.isNotBlank() && (directUrl.startsWith("http://") || directUrl.startsWith("https://") || directUrl.startsWith("file://") || directUrl.startsWith("content://"))) {
+            val isOffline = directUrl.startsWith("file://") || directUrl.startsWith("content://") || directUrl.startsWith("/")
             _uiState.value = _uiState.value.copy(
                 isOfflinePlayback = isOffline,
-                currentPlaybackUrl = playbackUrl,
+                currentPlaybackUrl = directUrl,
                 isResolvingStreamUrl = false,
-                loadingStage = if (isOffline) "Preparing offline playback..." else "Connecting to Cloudflare R2 stream...",
+                isLoading = true,
+                loadingStage = if (isOffline) "Preparing offline playback..." else "Buffering cinema stream...",
                 errorMessage = null
             )
-
-            val mediaItem = MediaItem.fromUri(playbackUrl)
-            player.setMediaItem(mediaItem)
+            player.setMediaItem(MediaItem.fromUri(directUrl))
             if (targetStartPos > 0L) {
                 player.seekTo(targetStartPos)
                 _uiState.value = _uiState.value.copy(currentPositionMs = targetStartPos)
             }
             player.prepare()
             player.playWhenReady = true
-
+            player.play()
             startProgressTracker()
+        } else {
+            viewModelScope.launch {
+                _uiState.value = _uiState.value.copy(
+                    isResolvingStreamUrl = true,
+                    loadingStage = "Resolving video stream..."
+                )
+                val playbackUrl = repository.resolvePlaybackUri(movie, context)
+                if (playbackUrl.isBlank()) {
+                    _uiState.value = _uiState.value.copy(
+                        isPlaying = false,
+                        isLoading = false,
+                        isResolvingStreamUrl = false,
+                        errorMessage = "No video stream is available for '${movie.title}'. Please upload a video or configure a stream URL."
+                    )
+                    return@launch
+                }
+                val isOffline = playbackUrl.startsWith("file://") || playbackUrl.startsWith("/")
+                _uiState.value = _uiState.value.copy(
+                    isOfflinePlayback = isOffline,
+                    currentPlaybackUrl = playbackUrl,
+                    isResolvingStreamUrl = false,
+                    loadingStage = if (isOffline) "Preparing offline playback..." else "Buffering cinema stream...",
+                    errorMessage = null
+                )
+
+                val mediaItem = MediaItem.fromUri(playbackUrl)
+                player.setMediaItem(mediaItem)
+                if (targetStartPos > 0L) {
+                    player.seekTo(targetStartPos)
+                    _uiState.value = _uiState.value.copy(currentPositionMs = targetStartPos)
+                }
+                player.prepare()
+                player.playWhenReady = true
+                player.play()
+
+                startProgressTracker()
+            }
         }
     }
 
@@ -568,6 +618,7 @@ class PlayerViewModel(
         doubleTapDismissJob?.cancel()
         exoPlayer?.release()
         exoPlayer = null
+        _uiState.value = PlayerUiState()
     }
 
     override fun onCleared() {

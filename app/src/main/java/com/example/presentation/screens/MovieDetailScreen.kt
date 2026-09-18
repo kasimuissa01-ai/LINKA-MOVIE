@@ -146,11 +146,9 @@ fun MovieDetailScreen(
     LaunchedEffect(configuration.orientation) {
         if (configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
             val currentPos = inlinePlayer.currentPosition.coerceAtLeast(0L)
-            if (inlinePlayer.isPlaying || currentPos > 0L) {
-                inlinePlayer.pause()
-                playerViewModel?.saveMoviePosition(movie.id, currentPos)
-                onPlayFullscreenClick(movie, currentPos)
-            }
+            inlinePlayer.pause()
+            playerViewModel?.saveMoviePosition(movie.id, currentPos)
+            onPlayFullscreenClick(movie, currentPos)
         }
     }
 
@@ -252,7 +250,6 @@ fun MovieDetailScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE,
                 Lifecycle.Event.ON_STOP -> {
                     inlinePlayer.pause()
                     isPlaying = false

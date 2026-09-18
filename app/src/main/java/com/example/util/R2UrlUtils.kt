@@ -51,9 +51,7 @@ object R2UrlUtils {
 
         // 4. Other valid public HTTP/HTTPS URLs (e.g., standard CDN / web streams)
         if (trimmedStream.isNotBlank() &&
-            (trimmedStream.startsWith("http://") || trimmedStream.startsWith("https://")) &&
-            !trimmedStream.contains("bunny/trailer.mp4") &&
-            !trimmedStream.contains("BigBuckBunny.mp4")
+            (trimmedStream.startsWith("http://") || trimmedStream.startsWith("https://"))
         ) {
             return trimmedStream
         }
