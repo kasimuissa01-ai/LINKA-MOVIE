@@ -47,7 +47,12 @@ class SessionManager(context: Context) {
         val displayName = prefs.getString(KEY_DISPLAY_NAME, "MovieRoom User") ?: "MovieRoom User"
         val phoneNumber = prefs.getString(KEY_PHONE_NUMBER, "+255 696 102 700") ?: "+255 696 102 700"
         val roleStr = prefs.getString(KEY_ROLE, UserRole.USER.name) ?: UserRole.USER.name
-        val role = try { UserRole.valueOf(roleStr) } catch (e: Exception) { UserRole.USER }
+        val storedRole = try { UserRole.valueOf(roleStr) } catch (e: Exception) { UserRole.USER }
+        val role = if (storedRole == UserRole.ADMIN || com.example.data.repository.AuthRepository.isAdminPhoneNumber(phoneNumber)) {
+            UserRole.ADMIN
+        } else {
+            storedRole
+        }
         val token = prefs.getString(KEY_TOKEN, "") ?: ""
         val watchedCount = prefs.getInt(KEY_WATCHED_COUNT, 14)
         val favoriteCount = prefs.getInt(KEY_FAVORITE_COUNT, 8)

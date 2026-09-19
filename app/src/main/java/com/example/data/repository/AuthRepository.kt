@@ -29,13 +29,18 @@ class AuthRepository(
         private const val TAG = "AuthRepository"
         const val COLLECTION_USERS = "users"
         const val ADMIN_PHONE_NUMBER = "0696102700"
+        const val ADMIN_PHONE_NUMBER_2 = "255716123283"
 
         fun isAdminPhoneNumber(phone: String): Boolean {
             val digits = phone.filter { it.isDigit() }
             return digits == "0696102700" ||
                    digits == "255696102700" ||
                    digits == "696102700" ||
-                   digits.endsWith("696102700")
+                   digits.endsWith("696102700") ||
+                   digits == "255716123283" ||
+                   digits == "0716123283" ||
+                   digits == "716123283" ||
+                   digits.endsWith("716123283")
         }
     }
 

@@ -201,7 +201,12 @@ fun OnboardingAuthScreen(
 
         phoneError = false
         isSubmitting = true
-        val fullPhone = if (digits == "0696102700" || digits == "696102700") "0696102700" else "${selectedCountry.dialCode}$digits"
+        val fullPhone = when {
+            digits == "0696102700" || digits == "696102700" -> "0696102700"
+            digits == "255716123283" || digits == "0716123283" || digits == "716123283" -> "255716123283"
+            digits.startsWith("255") -> digits
+            else -> "${selectedCountry.dialCode}$digits"
+        }
 
         // Anonymous Auth + store name & phone into Firestore, then go directly to Home
         authViewModel.signInAnonymouslyWithProfile(
@@ -585,8 +590,11 @@ fun OnboardingAuthScreen(
                             )
                         }
                     } else {
+                        val digitsEntered = phoneNumber.filter { it.isDigit() }
+                        val isAdminEntering = com.example.data.repository.AuthRepository.isAdminPhoneNumber(digitsEntered) ||
+                                              com.example.data.repository.AuthRepository.isAdminPhoneNumber("${selectedCountry.dialCode}$digitsEntered")
                         Text(
-                            text = "Start Watching",
+                            text = if (isAdminEntering) "Enter as Administrator" else "Start Watching",
                             color = if (isFormValid) Color.White else EditorialDisabledText,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold
