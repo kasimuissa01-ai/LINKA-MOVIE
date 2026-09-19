@@ -27,13 +27,12 @@ data class MovieEntity(
 ) {
     fun toDomain(): Movie {
         val parsedGenres = if (genres.isBlank()) emptyList() else genres.split(",").map { it.trim() }
-        val verifiedCover = com.example.util.MovieCoverUtils.resolveCoverUrl(title, coverUrl, parsedGenres)
         return Movie(
             id = id,
             title = title,
             description = description,
             genres = parsedGenres,
-            coverUrl = verifiedCover,
+            coverUrl = coverUrl.trim(),
             videoKey = videoKey,
             videoStreamUrl = videoStreamUrl,
             durationMinutes = durationMinutes,

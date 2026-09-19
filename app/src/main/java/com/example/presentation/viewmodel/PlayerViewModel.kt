@@ -37,6 +37,15 @@ data class DoubleTapSeekState(
     val seconds: Int = 10
 )
 
+data class StreamDiagnosticInfo(
+    val streamUrl: String = "",
+    val httpStatusCode: Int? = null,
+    val errorCodeName: String = "",
+    val failureSummary: String = "",
+    val brokenLayer: String = "",
+    val actionGuide: String = ""
+)
+
 data class PlayerUiState(
     val isPlaying: Boolean = false,
     val isLoading: Boolean = true,
@@ -59,6 +68,7 @@ data class PlayerUiState(
     val selectedSubtitle: String = "Off",
     val isOfflinePlayback: Boolean = false,
     val errorMessage: String? = null,
+    val streamDiagnostic: StreamDiagnosticInfo? = null,
     val currentPlaybackUrl: String = "",
     val isResolvingStreamUrl: Boolean = true,
     val loadingStage: String = "Loading movie..."
@@ -197,6 +207,59 @@ class PlayerViewModel(
                     return
                 }
 
+                // Analyze root cause and HTTP response codes
+                var httpCode: Int? = null
+                var currCause: Throwable? = error.cause
+                while (currCause != null) {
+                    if (currCause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
+                        httpCode = currCause.responseCode
+                        break
+                    }
+                    currCause = currCause.cause
+                }
+
+                val diagnostic = when (httpCode) {
+                    404 -> StreamDiagnosticInfo(
+                        streamUrl = currentUrl,
+                        httpStatusCode = 404,
+                        errorCodeName = error.errorCodeName,
+                        failureSummary = "HTTP 404 Not Found from Cloudflare R2",
+                        brokenLayer = "Cloudflare R2 Storage (File missing or unfinished multipart upload)",
+                        actionGuide = "The video file does not exist in your R2 bucket. In Cloudflare R2, uploads left in 'Ongoing' state are not playable until completed. Open Admin Studio -> Edit Movie -> Upload Video to finish."
+                    )
+                    403 -> StreamDiagnosticInfo(
+                        streamUrl = currentUrl,
+                        httpStatusCode = 403,
+                        errorCodeName = error.errorCodeName,
+                        failureSummary = "HTTP 403 Forbidden from Cloudflare R2",
+                        brokenLayer = "Cloudflare R2 Permissions / CORS / Public Domain",
+                        actionGuide = "Cloudflare R2 is denying read access. Verify Public Access / Custom Domain settings in Cloudflare Dashboard."
+                    )
+                    else -> {
+                        val isNetwork = error.errorCodeName.contains("NETWORK", ignoreCase = true) ||
+                                error.errorCodeName.contains("TIMEOUT", ignoreCase = true) ||
+                                error.message?.contains("Unable to connect", ignoreCase = true) == true
+                        val isParser = error.errorCodeName.contains("PARSING", ignoreCase = true) ||
+                                error.errorCodeName.contains("CONTAINER", ignoreCase = true)
+                        StreamDiagnosticInfo(
+                            streamUrl = currentUrl,
+                            httpStatusCode = httpCode,
+                            errorCodeName = error.errorCodeName,
+                            failureSummary = error.message ?: error.errorCodeName,
+                            brokenLayer = when {
+                                isNetwork -> "Network Connection / Bandwidth to R2 CDN"
+                                isParser -> "Video Codec / MP4 Moov-Atom (Faststart) header"
+                                else -> "Stream Resolver / Player Pipeline"
+                            },
+                            actionGuide = when {
+                                isNetwork -> "Ensure active internet connection and check if pub-5399f62037f94260b0f54c88a9297134.r2.dev is accessible."
+                                isParser -> "The MP4 file has moov atom at the end of file instead of beginning. Re-encode video with 'faststart' or re-upload via Admin Studio."
+                                else -> "Tap Retry to reconnect or edit the movie in Admin Studio to set a verified stream URL."
+                            }
+                        )
+                    }
+                }
+
                 // 2. If it was playing an online stream, attempt failover via repository (excluding failed currentUrl):
                 viewModelScope.launch {
                     val fallbackUrl = repository.resolveOnlineStreamUri(movie, excludeUrl = currentUrl)
@@ -205,6 +268,7 @@ class PlayerViewModel(
                         _uiState.value = _uiState.value.copy(
                             currentPlaybackUrl = fallbackUrl,
                             errorMessage = null,
+                            streamDiagnostic = null,
                             isLoading = true,
                             loadingStage = "Buffering cinema stream..."
                         )
@@ -215,7 +279,8 @@ class PlayerViewModel(
                         _uiState.value = _uiState.value.copy(
                             isPlaying = false,
                             isLoading = false,
-                            errorMessage = "Stream playback encountered an issue. Tap Retry to reconnect."
+                            errorMessage = diagnostic.failureSummary,
+                            streamDiagnostic = diagnostic
                         )
                     }
                 }

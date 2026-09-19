@@ -61,6 +61,9 @@ import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -85,6 +88,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -142,8 +146,7 @@ fun AdminAddEditMovieScreen(
     }
     var coverUrl by remember {
         mutableStateOf(
-            existingMovie?.coverUrl
-                ?: "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=800&auto=format&fit=crop&q=80"
+            existingMovie?.coverUrl ?: ""
         )
     }
     var streamUrl by remember {
@@ -163,6 +166,9 @@ fun AdminAddEditMovieScreen(
     // Video Gallery Picker State
     var selectedVideoUri by remember { mutableStateOf<Uri?>(null) }
     var selectedVideoFileName by remember { mutableStateOf<String?>(null) }
+    var faststartStatus by remember { mutableStateOf<com.example.util.Mp4FaststartUtils.FaststartStatus?>(null) }
+    var faststartDetails by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     val videoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -201,6 +207,14 @@ fun AdminAddEditMovieScreen(
                 fileSizeMb = calculatedSizeMb.toString()
             }
             streamUrl = uri.toString()
+
+            // Automatically check MP4 Faststart (Web Optimization)
+            faststartStatus = com.example.util.Mp4FaststartUtils.FaststartStatus.CHECKING
+            scope.launch {
+                val inspection = com.example.util.Mp4FaststartUtils.inspectUri(context, uri)
+                faststartStatus = inspection.status
+                faststartDetails = inspection.details
+            }
         }
     }
 
@@ -764,6 +778,58 @@ fun AdminAddEditMovieScreen(
                             Text("Change", fontSize = 12.sp)
                         }
                     }
+
+                    // Automated Faststart / Web-Optimization Status Badge
+                    if (faststartStatus != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        val isOptimized = faststartStatus == com.example.util.Mp4FaststartUtils.FaststartStatus.OPTIMIZED
+                        val isChecking = faststartStatus == com.example.util.Mp4FaststartUtils.FaststartStatus.CHECKING
+                        
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    when {
+                                        isChecking -> Color(0x223B82F6)
+                                        isOptimized -> Color(0x2210B981)
+                                        else -> Color(0x22F59E0B)
+                                    }
+                                )
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = when {
+                                    isChecking -> Icons.Default.CloudSync
+                                    isOptimized -> Icons.Default.Bolt
+                                    else -> Icons.Default.Info
+                                },
+                                contentDescription = null,
+                                tint = when {
+                                    isChecking -> Color(0xFF60A5FA)
+                                    isOptimized -> Color(0xFF34D399)
+                                    else -> Color(0xFFFBBF24)
+                                },
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = when {
+                                    isChecking -> "Checking streaming container structure..."
+                                    isOptimized -> "⚡ Faststart: Web-Optimized (Plays instantly on mobile)"
+                                    else -> "Automatic Range-Streaming enabled (Safe for direct playback)"
+                                },
+                                color = when {
+                                    isChecking -> Color(0xFF93C5FD)
+                                    isOptimized -> Color(0xFF6EE7B7)
+                                    else -> Color(0xFFFDE68A)
+                                },
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
                 } else {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -828,7 +894,7 @@ fun AdminAddEditMovieScreen(
                         TextButton(
                             onClick = {
                                 val sanitized = title.lowercase().trim().replace(Regex("[^a-z0-9]+"), "_").trim('_')
-                                streamUrl = "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/movies/${sanitized}.mp4"
+                                streamUrl = "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/videos/${sanitized}.mp4"
                             },
                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
                         ) {
@@ -1355,8 +1421,9 @@ fun AdminAddEditMovieScreen(
                                 val size = fileSizeMb.toLongOrNull() ?: 450L
                                 val year = releaseYear.toIntOrNull() ?: 2024
                                 val rate = rating.toDoubleOrNull() ?: 8.0
-                                val finalCover = com.example.util.MovieCoverUtils.resolveCoverUrl(title, coverUrl, selectedGenres)
+                                val finalCover = coverUrl.trim()
                                 adminViewModel.publishMovieDirectly(
+                                    context = context,
                                     title = title.ifBlank { "Untitled Movie" },
                                     description = description.ifBlank { "A cinematic release." },
                                     genres = selectedGenres,
@@ -1379,7 +1446,7 @@ fun AdminAddEditMovieScreen(
                                 val size = fileSizeMb.toLongOrNull() ?: 450L
                                 val year = releaseYear.toIntOrNull() ?: 2024
                                 val rate = rating.toDoubleOrNull() ?: 8.0
-                                val finalCover = com.example.util.MovieCoverUtils.resolveCoverUrl(title, coverUrl, selectedGenres)
+                                val finalCover = coverUrl.trim()
                                 adminViewModel.addMovieWithMultipartUpload(
                                     context = context,
                                     title = title.ifBlank { "Untitled Movie" },
@@ -1411,33 +1478,62 @@ fun AdminAddEditMovieScreen(
                 val size = fileSizeMb.toLongOrNull() ?: 450L
                 val year = releaseYear.toIntOrNull() ?: 2024
                 val rate = rating.toDoubleOrNull() ?: 8.0
-                val finalCover = com.example.util.MovieCoverUtils.resolveCoverUrl(title, coverUrl, selectedGenres)
+                val finalCover = coverUrl.trim()
 
                 if (existingMovie != null) {
                     val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
-                    val resolvedStream = when {
-                        streamUrl.isNotBlank() && (streamUrl.startsWith("http://") || streamUrl.startsWith("https://")) -> streamUrl
-                        streamUrl.isNotBlank() && !streamUrl.startsWith("content://") && !streamUrl.startsWith("file://") -> {
-                            val key = if (streamUrl.startsWith("movies/")) streamUrl else "movies/$streamUrl"
-                            "https://$publicR2Domain/${key.removePrefix("/")}"
+                    val isNewLocalVideo = streamUrl.isNotBlank() && (streamUrl.startsWith("content://") || streamUrl.startsWith("file://"))
+                    
+                    if (isNewLocalVideo) {
+                        // User chose a new video file from gallery for an existing movie - run multipart upload to R2
+                        adminViewModel.addMovieWithMultipartUpload(
+                            context = context,
+                            title = title.ifBlank { existingMovie.title },
+                            description = description.ifBlank { existingMovie.description },
+                            genres = selectedGenres,
+                            coverUrl = finalCover,
+                            fileSizeMb = size,
+                            streamUrl = streamUrl,
+                            releaseYear = year,
+                            rating = rate,
+                            isFeatured = isFeaturedOnCarousel
+                        )
+                    } else {
+                        // Updating metadata or direct stream URL
+                        val (resolvedStream, resolvedKey) = when {
+                            streamUrl.isNotBlank() && (streamUrl.startsWith("http://") || streamUrl.startsWith("https://")) -> {
+                                val extractedKey = com.example.util.R2UrlUtils.extractCleanVideoKey(existingMovie.videoKey, streamUrl)
+                                Pair(streamUrl, extractedKey)
+                            }
+                            streamUrl.isNotBlank() -> {
+                                val key = if (streamUrl.startsWith("movies/") || streamUrl.startsWith("videos/")) streamUrl else "videos/$streamUrl"
+                                Pair("https://$publicR2Domain/${key.removePrefix("/")}", key)
+                            }
+                            existingMovie.videoStreamUrl.isNotBlank() -> {
+                                Pair(existingMovie.videoStreamUrl, existingMovie.videoKey)
+                            }
+                            existingMovie.videoKey.isNotBlank() -> {
+                                val url = "https://$publicR2Domain/${existingMovie.videoKey.removePrefix("/")}"
+                                Pair(url, existingMovie.videoKey)
+                            }
+                            else -> Pair(streamUrl, "")
                         }
-                        existingMovie.videoKey.isNotBlank() -> "https://$publicR2Domain/${existingMovie.videoKey.removePrefix("/")}"
-                        else -> streamUrl
+                        val updated = existingMovie.copy(
+                            title = title,
+                            description = description,
+                            genres = selectedGenres,
+                            coverUrl = finalCover,
+                            videoKey = resolvedKey,
+                            videoStreamUrl = resolvedStream,
+                            durationMinutes = 115,
+                            fileSizeMb = size,
+                            releaseYear = year,
+                            rating = rate,
+                            isFeatured = isFeaturedOnCarousel
+                        )
+                        adminViewModel.updateMovie(updated, context = context)
+                        onBackClick()
                     }
-                    val updated = existingMovie.copy(
-                        title = title,
-                        description = description,
-                        genres = selectedGenres,
-                        coverUrl = finalCover,
-                        videoStreamUrl = resolvedStream,
-                        durationMinutes = 115,
-                        fileSizeMb = size,
-                        releaseYear = year,
-                        rating = rate,
-                        isFeatured = isFeaturedOnCarousel
-                    )
-                    adminViewModel.updateMovie(updated)
-                    onBackClick()
                 } else {
                     adminViewModel.addMovieWithMultipartUpload(
                         context = context,
@@ -1484,8 +1580,9 @@ fun AdminAddEditMovieScreen(
                     val size = fileSizeMb.toLongOrNull() ?: 450L
                     val year = releaseYear.toIntOrNull() ?: 2024
                     val rate = rating.toDoubleOrNull() ?: 8.0
-                    val finalCover = com.example.util.MovieCoverUtils.resolveCoverUrl(title, coverUrl, selectedGenres)
+                    val finalCover = coverUrl.trim()
                     adminViewModel.publishMovieDirectly(
+                        context = context,
                         title = title.ifBlank { "Untitled Movie" },
                         description = description.ifBlank { "A cinematic release." },
                         genres = selectedGenres,

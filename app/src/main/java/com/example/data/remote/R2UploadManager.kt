@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
+import com.example.util.R2UrlUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -261,12 +262,20 @@ class R2UploadManager(
             override fun contentLength(): Long = partLength
 
             override fun writeTo(sink: BufferedSink) {
-                context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                val resolverStream = runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+                val fileStream = if (resolverStream == null && (uri.scheme == "file" || uri.path != null)) {
+                    val path = uri.path ?: uri.toString().removePrefix("file:")
+                    val file = File(path)
+                    if (file.exists()) file.inputStream() else null
+                } else null
+                val inputStream = resolverStream ?: fileStream ?: throw IOException("Could not open input stream for URI: $uri")
+
+                inputStream.use { stream ->
                     var skipped = 0L
                     while (skipped < startByte) {
-                        val n = inputStream.skip(startByte - skipped)
+                        val n = stream.skip(startByte - skipped)
                         if (n <= 0) {
-                            if (inputStream.read() == -1) break
+                            if (stream.read() == -1) break
                             skipped += 1
                         } else {
                             skipped += n
@@ -277,12 +286,12 @@ class R2UploadManager(
                     var remaining = partLength
                     while (remaining > 0) {
                         val toRead = minOf(buffer.size.toLong(), remaining).toInt()
-                        val bytesRead = inputStream.read(buffer, 0, toRead)
+                        val bytesRead = stream.read(buffer, 0, toRead)
                         if (bytesRead == -1) break
                         sink.write(buffer, 0, bytesRead)
                         remaining -= bytesRead
                     }
-                } ?: throw IOException("Could not open input stream for URI: $uri")
+                }
             }
         }
 
@@ -524,6 +533,78 @@ class R2UploadManager(
         onProgress?.invoke(100, "Upload completed successfully!")
         Log.i(TAG, "Multipart upload finalized! Key: ${completeResult.key}, URL: ${completeResult.url}")
         completeResult
+    }
+
+    /**
+     * Uploads an image (e.g. movie cover poster) directly to Cloudflare R2 via Render presigned URL
+     * and returns the public CDN URL.
+     */
+    suspend fun uploadImage(
+        context: Context,
+        uri: Uri,
+        customFilename: String? = null
+    ): String = withContext(Dispatchers.IO) {
+        val fileInfo = resolveFileInfo(
+            context = context,
+            uri = uri,
+            fallbackName = customFilename ?: "cover_${System.currentTimeMillis()}.jpg"
+        )
+        val cleanName = (customFilename ?: fileInfo.filename).replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val filename = "covers/${System.currentTimeMillis()}_$cleanName"
+        val contentType = when {
+            cleanName.endsWith(".png", true) -> "image/png"
+            cleanName.endsWith(".webp", true) -> "image/webp"
+            else -> "image/jpeg"
+        }
+
+        Log.i(TAG, "Initiating direct R2 image upload: $filename ($contentType, ${fileInfo.fileSize} bytes)")
+
+        val createResponse = try {
+            createMultipartUpload(
+                filename = filename,
+                contentType = contentType,
+                fileSize = fileInfo.fileSize
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Render /create failed for image: ${e.message}", e)
+            throw IOException("Image upload initialization failed: ${e.message}", e)
+        }
+
+        val uploadId = createResponse.uploadId
+        val key = createResponse.key
+        val part = createResponse.parts.firstOrNull()
+            ?: throw IOException("Render did not return a presigned URL for image upload")
+
+        val etag = try {
+            uploadPartDirectToR2(
+                context = context,
+                uri = uri,
+                partUrl = part.url,
+                partNumber = part.partNumber,
+                startByte = 0L,
+                partLength = fileInfo.fileSize
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Uploading image bytes directly to R2 failed: ${e.message}", e)
+            abortMultipartUpload(key, uploadId)
+            throw IOException("Uploading image to Cloudflare R2 failed: ${e.message}", e)
+        }
+
+        val completeResult = try {
+            completeMultipartUpload(
+                key = key,
+                uploadId = uploadId,
+                etags = listOf(PartETag(part.partNumber, etag))
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Completing image upload on Render failed: ${e.message}", e)
+            throw IOException("Finalizing image upload failed: ${e.message}", e)
+        }
+
+        val cleanKey = R2UrlUtils.extractCleanVideoKey(completeResult.key, completeResult.url)
+        val publicUrl = "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/$cleanKey"
+        Log.i(TAG, "Image uploaded successfully to R2 CDN: $publicUrl")
+        publicUrl
     }
 
     /**

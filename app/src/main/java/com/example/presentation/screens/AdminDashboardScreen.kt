@@ -1,6 +1,7 @@
 package com.example.presentation.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -79,9 +81,23 @@ fun AdminDashboardScreen(
 ) {
     val movies by adminViewModel.movies.collectAsState()
     val uploadState by adminViewModel.uploadState.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
     var movieToDelete by remember { mutableStateOf<Movie?>(null) }
     var syncBannerMessage by remember { mutableStateOf<String?>(null) }
+    var movieForCoverChange by remember { mutableStateOf<Movie?>(null) }
+
+    val coverChangeLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null && movieForCoverChange != null) {
+            val target = movieForCoverChange!!
+            adminViewModel.updateMovieCoverDirect(context, target, uri) { success, msg ->
+                syncBannerMessage = if (success) "Real cover successfully uploaded to Cloudflare R2 and updated in Supabase for '${target.title}'!"
+                else "Failed to update cover: $msg"
+            }
+        }
+    }
 
     val filteredMovies = movies.filter {
         searchQuery.isBlank() ||
@@ -281,6 +297,14 @@ fun AdminDashboardScreen(
                                     .size(width = 60.dp, height = 80.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(SurfaceElevated)
+                                    .clickable {
+                                        movieForCoverChange = movie
+                                        coverChangeLauncher.launch(
+                                            androidx.activity.result.PickVisualMediaRequest(
+                                                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly
+                                            )
+                                        )
+                                    }
                             ) {
                                 AsyncImage(
                                     model = movie.coverUrl,
@@ -340,6 +364,19 @@ fun AdminDashboardScreen(
                             }
 
                             Row {
+                                IconButton(
+                                    onClick = {
+                                        movieForCoverChange = movie
+                                        coverChangeLauncher.launch(
+                                            androidx.activity.result.PickVisualMediaRequest(
+                                                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly
+                                            )
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("admin_change_cover_${movie.id}")
+                                ) {
+                                    Icon(Icons.Default.Image, contentDescription = "Change Cover", tint = com.example.ui.theme.ElectricBlue)
+                                }
                                 IconButton(
                                     onClick = { onEditMovieClick(movie) },
                                     modifier = Modifier.testTag("admin_edit_${movie.id}")

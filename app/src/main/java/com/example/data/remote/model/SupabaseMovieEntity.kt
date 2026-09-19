@@ -89,13 +89,12 @@ data class SupabaseMovieEntity(
     fun toDomain(): Movie {
         val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(videoStreamUrl, videoKey)
         val canonicalKey = R2UrlUtils.extractCleanVideoKey(videoKey, videoStreamUrl)
-        val verifiedCover = com.example.util.MovieCoverUtils.resolveCoverUrl(title, coverUrl, genres)
         return Movie(
             id = id,
             title = title,
             description = description,
             genres = genres,
-            coverUrl = verifiedCover,
+            coverUrl = coverUrl.trim(),
             videoKey = canonicalKey,
             videoStreamUrl = canonicalStream,
             durationMinutes = durationMinutes,

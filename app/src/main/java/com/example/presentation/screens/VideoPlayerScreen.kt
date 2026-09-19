@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -46,13 +47,18 @@ import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
@@ -76,6 +82,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -92,6 +99,7 @@ import com.example.presentation.components.CinematicLoadingOverlay
 import com.example.presentation.viewmodel.PlayerViewModel
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
+import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.SurfaceElevated
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
@@ -498,66 +506,121 @@ fun VideoPlayerScreen(
             }
         )
 
-        // 6. Error notice banner
+        // 6. Error notice banner with full diagnostics breakdown
         uiState.errorMessage?.let { errorText ->
             Surface(
-                color = Color(0xCCB00020),
-                shape = RoundedCornerShape(12.dp),
+                color = Color(0xEE1A1A1A),
+                shape = RoundedCornerShape(16.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, CinematicRed.copy(alpha = 0.5f)),
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .padding(32.dp)
+                    .padding(24.dp)
+                    .widthIn(max = 480.dp)
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(20.dp)
                 ) {
-                    Text(
-                        text = "Playback Error",
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 16.sp
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = errorText,
-                        color = Color.White.copy(alpha = 0.9f),
-                        fontSize = 13.sp
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = CinematicRed,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Playback Pipeline Diagnostics",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    uiState.streamDiagnostic?.let { diag ->
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.4f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "Status: ${diag.failureSummary}",
+                                    color = AmberGold,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Broken Layer: ${diag.brokenLayer}",
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    fontSize = 12.sp
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Stream URL: ${diag.streamUrl.take(60)}${if (diag.streamUrl.length > 60) "..." else ""}",
+                                    color = TextSecondary,
+                                    fontSize = 11.sp,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "How to fix: ${diag.actionGuide}",
+                                    color = ElectricBlue,
+                                    fontSize = 12.sp,
+                                    lineHeight = 16.sp
+                                )
+                            }
+                        }
+                    } ?: run {
+                        Text(
+                            text = errorText,
+                            color = Color.White.copy(alpha = 0.9f),
+                            fontSize = 13.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Surface(
-                            color = Color.White,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.clickable {
+                        Button(
+                            onClick = {
                                 playerViewModel.retryPlayback(context, movie)
-                            }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CinematicRed),
+                            shape = RoundedCornerShape(8.dp)
                         ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
                                 text = "Retry",
-                                color = Color(0xFFB00020),
+                                color = Color.White,
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                fontWeight = FontWeight.Bold
                             )
                         }
 
-                        Surface(
-                            color = Color.White.copy(alpha = 0.2f),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.clickable {
+                        OutlinedButton(
+                            onClick = {
                                 restoreSystemUiAndOrientation()
                                 onBackClick()
-                            }
+                            },
+                            shape = RoundedCornerShape(8.dp)
                         ) {
                             Text(
                                 text = "Back to Details",
                                 color = Color.White,
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }

@@ -19,12 +19,9 @@ object MovieCoverUtils {
     const val POSTER_CINEMA_DEFAULT = "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=800&auto=format&fit=crop&q=80"
 
     /**
-     * Resolves a guaranteed valid, visible image URL for any movie.
-     *
-     * 1. If [rawUrl] is a remote HTTP/HTTPS image, it is returned directly.
-     * 2. If [rawUrl] is a local file URI (file:/ or /), verifies if the file exists on this device's storage.
-     *    If missing (e.g. created on an admin's phone), falls back to a curated poster.
-     * 3. If [rawUrl] is blank, provides a high-resolution poster tailored to the title or genre.
+     * Resolves the real cover URL for a movie.
+     * Always preserves the database or uploaded URL directly.
+     * Never overrides user titles with hardcoded photo fallbacks.
      */
     fun resolveCoverUrl(
         title: String,
@@ -37,35 +34,10 @@ object MovieCoverUtils {
             return cleanUrl
         }
 
-        if (cleanUrl.startsWith("content://")) {
+        if (cleanUrl.startsWith("content://") || cleanUrl.startsWith("file://") || cleanUrl.startsWith("file:/") || cleanUrl.startsWith("/")) {
             return cleanUrl
         }
 
-        if (cleanUrl.startsWith("file://") || cleanUrl.startsWith("file:/") || cleanUrl.startsWith("/")) {
-            val exists = runCatching {
-                val path = if (cleanUrl.startsWith("file:")) {
-                    URI(cleanUrl).path ?: cleanUrl.removePrefix("file:")
-                } else {
-                    cleanUrl
-                }
-                File(path).exists()
-            }.getOrDefault(false)
-
-            if (exists) {
-                return cleanUrl
-            }
-        }
-
-        // Curated title matches
-        val lowerTitle = title.lowercase()
-        return when {
-            lowerTitle.contains("sniper") || lowerTitle.contains("fierce") -> POSTER_SNIPER
-            lowerTitle.contains("speed demon") || lowerTitle.contains("demon") -> POSTER_SPEED_DEMON
-            lowerTitle.contains("furious") -> POSTER_THE_FURIOUS
-            genres.any { it.equals("Horror", ignoreCase = true) || it.equals("Thriller", ignoreCase = true) } -> POSTER_HORROR
-            genres.any { it.equals("Sci-Fi", ignoreCase = true) || it.equals("Adventure", ignoreCase = true) } -> POSTER_SCI_FI
-            genres.any { it.equals("Action", ignoreCase = true) } -> POSTER_ACTION
-            else -> POSTER_CINEMA_DEFAULT
-        }
+        return ""
     }
 }

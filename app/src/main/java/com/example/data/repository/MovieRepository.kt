@@ -644,17 +644,6 @@ class MovieRepository(
             }
         }
 
-        // 4. Cluster Fallback: If a specific link is broken or returned 404, fallback to verified active movie stream
-        val fallbackClusterStreams = listOf(
-            "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/videos/1789152583701-snippe_fierce_.mp4",
-            "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/videos/1789329122943-speed_demon.mp4"
-        )
-        val verifiedStream = fallbackClusterStreams.firstOrNull { it != excludeUrl }
-        if (!verifiedStream.isNullOrBlank()) {
-            Log.w(TAG, "Falling back to verified cluster stream for ${movie.title}: $verifiedStream")
-            return@withContext verifiedStream
-        }
-
         return@withContext ""
     }
 
@@ -778,6 +767,21 @@ class MovieRepository(
             uri = videoUri,
             customFilename = customFilename,
             onProgress = onProgress
+        )
+    }
+
+    /**
+     * Uploads the movie cover image to Cloudflare R2 via the Render backend, returning the permanent public CDN URL.
+     */
+    suspend fun uploadMovieCoverWithRender(
+        context: Context,
+        imageUri: android.net.Uri,
+        customFilename: String? = null
+    ): String {
+        return r2UploadManager.uploadImage(
+            context = context,
+            uri = imageUri,
+            customFilename = customFilename
         )
     }
 
