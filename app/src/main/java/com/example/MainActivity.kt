@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -133,6 +134,13 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (::playerViewModel.isInitialized) {
+            playerViewModel.onConfigurationChanged(newConfig)
         }
     }
 }

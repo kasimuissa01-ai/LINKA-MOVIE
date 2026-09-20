@@ -25,6 +25,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 @OptIn(UnstableApi::class)
+enum class OrientationMode {
+    SENSOR,           // Follow sensor (portrait or landscape)
+    USER_LANDSCAPE,   // Locked to landscape by user toggle
+    USER_PORTRAIT     // Locked to portrait by user toggle
+}
+
+@OptIn(UnstableApi::class)
 enum class ScreenResizeMode(val label: String, val exoMode: Int) {
     FIT("Fit", AspectRatioFrameLayout.RESIZE_MODE_FIT),
     FILL("Fill", AspectRatioFrameLayout.RESIZE_MODE_FILL),
@@ -71,7 +78,9 @@ data class PlayerUiState(
     val streamDiagnostic: StreamDiagnosticInfo? = null,
     val currentPlaybackUrl: String = "",
     val isResolvingStreamUrl: Boolean = true,
-    val loadingStage: String = "Loading movie..."
+    val loadingStage: String = "Connecting to Supabase repository...",
+    val isFullscreen: Boolean = false,
+    val orientationMode: OrientationMode = OrientationMode.SENSOR
 )
 
 @OptIn(UnstableApi::class)
@@ -477,16 +486,24 @@ class PlayerViewModel(
 
     fun seekRelative(seconds: Int, isForward: Boolean) {
         exoPlayer?.let { player ->
-            val target = (player.currentPosition + (seconds * 1000L)).coerceIn(0L, player.duration.coerceAtLeast(0L))
+            val maxDur = player.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+            val target = (player.currentPosition + (seconds * 1000L)).coerceIn(0L, maxDur)
             player.seekTo(target)
 
+            val currentSeconds = if (_uiState.value.doubleTapSeek?.isForward == isForward) {
+                ((_uiState.value.doubleTapSeek?.seconds ?: 0) + Math.abs(seconds)).coerceAtMost(90)
+            } else {
+                Math.abs(seconds)
+            }
+
             _uiState.value = _uiState.value.copy(
-                doubleTapSeek = DoubleTapSeekState(isForward = isForward, visible = true, seconds = seconds)
+                doubleTapSeek = DoubleTapSeekState(isForward = isForward, visible = true, seconds = currentSeconds),
+                currentPositionMs = target
             )
 
             doubleTapDismissJob?.cancel()
             doubleTapDismissJob = viewModelScope.launch {
-                delay(700)
+                delay(800)
                 _uiState.value = _uiState.value.copy(doubleTapSeek = null)
             }
         }
@@ -514,13 +531,18 @@ class PlayerViewModel(
         }
 
         // Apply smooth sensitivity multiplier
-        accumulatedVolume = (accumulatedVolume + (deltaRatio * 1.25f)).coerceIn(0f, 1f)
+        accumulatedVolume = (accumulatedVolume + (deltaRatio * 1.35f)).coerceIn(0f, 1f)
         val targetIndex = Math.round(accumulatedVolume * maxVolume).toInt().coerceIn(0, maxVolume.toInt())
 
         try {
             audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetIndex, 0)
         } catch (e: Exception) {
             android.util.Log.w("PlayerViewModel", "Error setting stream volume: ${e.message}")
+        }
+        try {
+            exoPlayer?.volume = accumulatedVolume
+        } catch (e: Exception) {
+            // Ignore if volume setting not supported
         }
 
         _uiState.value = _uiState.value.copy(
@@ -667,6 +689,39 @@ class PlayerViewModel(
             showControls()
         } else {
             startControlsHideTimer()
+        }
+    }
+
+    // Orientation State Machine & Fullscreen
+    fun toggleFullscreen() {
+        val currentFullscreen = _uiState.value.isFullscreen
+        val nextFullscreen = !currentFullscreen
+        val nextOrientation = if (nextFullscreen) OrientationMode.USER_LANDSCAPE else OrientationMode.USER_PORTRAIT
+        _uiState.value = _uiState.value.copy(
+            isFullscreen = nextFullscreen,
+            orientationMode = nextOrientation
+        )
+    }
+
+    fun setFullscreen(fullscreen: Boolean) {
+        _uiState.value = _uiState.value.copy(
+            isFullscreen = fullscreen,
+            orientationMode = if (fullscreen) OrientationMode.USER_LANDSCAPE else OrientationMode.SENSOR
+        )
+    }
+
+    fun setOrientationMode(mode: OrientationMode) {
+        _uiState.value = _uiState.value.copy(
+            orientationMode = mode,
+            isFullscreen = (mode == OrientationMode.USER_LANDSCAPE)
+        )
+    }
+
+    fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        val isLandscape = newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        // If orientation was on sensor mode, follow sensor
+        if (_uiState.value.orientationMode == OrientationMode.SENSOR) {
+            _uiState.value = _uiState.value.copy(isFullscreen = isLandscape)
         }
     }
 

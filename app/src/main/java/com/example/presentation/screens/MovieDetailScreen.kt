@@ -10,12 +10,19 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -76,6 +83,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -125,6 +133,7 @@ fun MovieDetailScreen(
 
     // Dedicated Inline ExoPlayer for instantaneous automatic playback
     var isPlaying by remember { mutableStateOf(true) }
+    var isBuffering by remember { mutableStateOf(true) }
     var isMuted by remember { mutableStateOf(false) }
     var currentPositionMs by remember { mutableLongStateOf(0L) }
     var durationMs by remember { mutableLongStateOf(0L) }
@@ -175,6 +184,7 @@ fun MovieDetailScreen(
     DisposableEffect(movie.id) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
+                isBuffering = (state == Player.STATE_BUFFERING)
                 if (state == Player.STATE_READY) {
                     durationMs = inlinePlayer.duration.coerceAtLeast(0L)
                     streamError = null
@@ -314,7 +324,7 @@ fun MovieDetailScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(280.dp)
+                    .aspectRatio(16f / 9f)
                     .background(Color.Black)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
@@ -323,14 +333,65 @@ fun MovieDetailScreen(
                         showPlayerControls = !showPlayerControls
                     }
             ) {
-                // Cover preview backdrop before video renders
-                if (!isPlaying) {
+                // Shimmer skeleton when content is fetching / buffering
+                val isShowingLoadingLayer = !isPlaying || isBuffering || streamError != null
+                if (isShowingLoadingLayer && streamError == null) {
+                    val shimmerTransition = rememberInfiniteTransition(label = "player_shimmer")
+                    val shimmerTranslate by shimmerTransition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 1000f,
+                        animationSpec = infiniteRepeatable(
+                            animation = tween(1200, easing = LinearEasing),
+                            repeatMode = RepeatMode.Restart
+                        ),
+                        label = "shimmer_translate"
+                    )
+
+                    val shimmerBrush = Brush.linearGradient(
+                        colors = listOf(
+                            Color(0xFF15151E),
+                            Color(0xFF262638),
+                            Color(0xFF15151E)
+                        ),
+                        start = androidx.compose.ui.geometry.Offset(shimmerTranslate - 300f, 0f),
+                        end = androidx.compose.ui.geometry.Offset(shimmerTranslate, 280f)
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(shimmerBrush)
+                    )
+
+                    // Cover preview backdrop beneath shimmering layer
                     AsyncImage(
                         model = detailCover,
                         contentDescription = movie.title,
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.4f))
                     )
+
+                    // Netflix / Cinematic spinner overlay during loading / buffering
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.65f),
+                            shape = CircleShape,
+                            modifier = Modifier.size(68.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                CircularProgressIndicator(
+                                    color = CinematicRed,
+                                    strokeWidth = 3.5.dp,
+                                    modifier = Modifier.size(40.dp)
+                                )
+                            }
+                        }
+                    }
                 }
 
                 // ExoPlayer Surface
@@ -455,7 +516,7 @@ fun MovieDetailScreen(
                             }
                         }
 
-                        // Center Play / Pause toggle
+                        // Center Play / Pause toggle with pulse feedback
                         IconButton(
                             onClick = {
                                 if (inlinePlayer.isPlaying) {
@@ -468,7 +529,7 @@ fun MovieDetailScreen(
                                 .align(Alignment.Center)
                                 .size(56.dp)
                                 .clip(CircleShape)
-                                .background(CinematicRed.copy(alpha = 0.85f))
+                                .background(CinematicRed.copy(alpha = 0.9f))
                         ) {
                             Icon(
                                 imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -478,16 +539,78 @@ fun MovieDetailScreen(
                             )
                         }
 
-                        // Bottom mini scrubber
+                        // Bottom row: Title, Subtitle, Expand button and thin Netflix scrubber
                         Column(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color.Transparent, Color(0xD9000000))
+                                    )
+                                )
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
                         ) {
                             val duration = durationMs.coerceAtLeast(1L)
                             val current = currentPositionMs.coerceIn(0L, duration)
 
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                    Text(
+                                        text = movie.title,
+                                        color = Color.White,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    val subtitleText = listOfNotNull(
+                                        movie.releaseYear.takeIf { it > 0 }?.toString(),
+                                        movie.durationMinutes.takeIf { it > 0 }?.let { "${it}m" },
+                                        movie.genres.firstOrNull()
+                                    ).joinToString(" • ")
+                                    if (subtitleText.isNotBlank()) {
+                                        Text(
+                                            text = subtitleText,
+                                            color = Color.White.copy(alpha = 0.7f),
+                                            fontSize = 11.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "${formatDetailTime(current)} / ${formatDetailTime(duration)}",
+                                        color = Color.White.copy(alpha = 0.85f),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    IconButton(
+                                        onClick = {
+                                            val currentPos = inlinePlayer.currentPosition.coerceAtLeast(0L)
+                                            inlinePlayer.pause()
+                                            playerViewModel?.saveMoviePosition(movie.id, currentPos)
+                                            onPlayFullscreenClick(movie, currentPos)
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Fullscreen,
+                                            contentDescription = "Expand Fullscreen",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Thin accent scrubber bar
                             Slider(
                                 value = (current.toFloat() / duration).coerceIn(0f, 1f),
                                 onValueChange = { fraction ->
@@ -500,24 +623,8 @@ fun MovieDetailScreen(
                                 ),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(20.dp)
+                                    .height(18.dp)
                             )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = formatDetailTime(current),
-                                    color = Color.White,
-                                    fontSize = 11.sp
-                                )
-                                Text(
-                                    text = formatDetailTime(duration),
-                                    color = Color.White,
-                                    fontSize = 11.sp
-                                )
-                            }
                         }
                     }
                 }
