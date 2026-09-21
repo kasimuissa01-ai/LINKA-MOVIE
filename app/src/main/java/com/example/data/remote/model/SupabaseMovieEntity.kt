@@ -11,14 +11,10 @@ import org.json.JSONObject
  * Kotlin entity model mapping directly to the Supabase PostgreSQL `movies` table.
  *
  * Database Table: `public.movies`
- * Provides direct mapping for:
- * - [id]: Primary key
- * - [title]: Movie title
- * - [description]: Plot synopsis
- * - [videoStreamUrl] / [r2StreamingUrl]: Public verified Cloudflare R2 streaming URL
- * - [coverUrl] / [thumbnailUrl]: High-resolution movie poster / thumbnail URL
- * - [videoKey]: Cloudflare R2 object key (e.g. "movies/title.mp4")
- * - [genres], [castMembers], [durationMinutes], [fileSizeMb], [releaseYear], [rating]
+ * Storage Rules:
+ * - Supabase stores: ONLY the R2 object keys (video_key & cover_key) and upload_status
+ * - NEVER stores full URLs in database columns
+ * - The full URL is constructed at runtime: "{R2_PUBLIC_BASE_URL}/{key}"
  */
 @JsonClass(generateAdapter = true)
 data class SupabaseMovieEntity(
@@ -31,14 +27,20 @@ data class SupabaseMovieEntity(
     @Json(name = "description")
     val description: String = "",
 
+    @Json(name = "cover_key")
+    val coverKey: String = "",
+
     @Json(name = "cover_url")
     val coverUrl: String = "",
+
+    @Json(name = "video_key")
+    val videoKey: String = "",
 
     @Json(name = "video_stream_url")
     val videoStreamUrl: String = "",
 
-    @Json(name = "video_key")
-    val videoKey: String = "",
+    @Json(name = "upload_status")
+    val uploadStatus: String = "completed",
 
     @Json(name = "genres")
     val genres: List<String> = emptyList(),
@@ -70,39 +72,39 @@ data class SupabaseMovieEntity(
     @Json(name = "updated_at")
     val updatedAt: String? = null
 ) {
-    /**
-     * Explicit alias for the movie thumbnail / poster image URL.
-     */
     val thumbnailUrl: String
-        get() = coverUrl
+        get() = if (coverKey.isNotBlank()) R2UrlUtils.buildUrl(coverKey) else coverUrl
 
-    /**
-     * Explicit alias for the verified Cloudflare R2 streaming URL.
-     */
     val r2StreamingUrl: String
-        get() = videoStreamUrl
+        get() = if (videoKey.isNotBlank()) R2UrlUtils.buildUrl(videoKey) else videoStreamUrl
 
     /**
-     * Converts this Supabase table entity to the app's domain [Movie] model,
-     * ensuring video stream URLs always point to public Cloudflare R2 CDN rather than S3 API.
+     * Converts this Supabase table entity to domain [Movie] model.
+     * URLs are constructed at runtime via R2UrlUtils.buildUrl.
      */
     fun toDomain(): Movie {
-        val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(videoStreamUrl, videoKey)
-        val canonicalKey = R2UrlUtils.extractCleanVideoKey(videoKey, videoStreamUrl)
+        val canonicalVideoKey = R2UrlUtils.extractCleanVideoKey(videoKey, videoStreamUrl)
+        val canonicalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (coverKey.isNotBlank()) coverKey else coverUrl)
+        val resolvedStream = if (canonicalVideoKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalVideoKey) else videoStreamUrl
+        val resolvedCover = if (canonicalCoverKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalCoverKey) else coverUrl
+
         return Movie(
             id = id,
             title = title,
             description = description,
             genres = genres,
-            coverUrl = coverUrl.trim(),
-            videoKey = canonicalKey,
-            videoStreamUrl = canonicalStream,
+            coverKey = canonicalCoverKey,
+            coverUrl = resolvedCover,
+            videoKey = canonicalVideoKey,
+            videoStreamUrl = resolvedStream,
             durationMinutes = durationMinutes,
             fileSizeMb = fileSizeMb,
             releaseYear = releaseYear,
             rating = rating,
             cast = castMembers,
-            isFeatured = isFeatured
+            isFeatured = isFeatured,
+            uploadStatus = uploadStatus,
+            uploadDate = System.currentTimeMillis()
         )
     }
 
@@ -110,16 +112,20 @@ data class SupabaseMovieEntity(
      * Serializes this entity into a [JSONObject] matching Supabase REST API schema.
      */
     fun toJsonObject(): JSONObject {
-        val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(videoStreamUrl, videoKey)
-        val canonicalKey = R2UrlUtils.extractCleanVideoKey(videoKey, videoStreamUrl)
+        val canonicalVideoKey = R2UrlUtils.extractCleanVideoKey(videoKey, videoStreamUrl)
+        val canonicalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (coverKey.isNotBlank()) coverKey else coverUrl)
+        val finalCoverUrl = if (canonicalCoverKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalCoverKey) else coverUrl
+        val finalStreamUrl = if (canonicalVideoKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalVideoKey) else videoStreamUrl
+
         return JSONObject().apply {
             put("id", id)
             put("title", title)
             put("description", description)
             put("genres", JSONArray(genres))
-            put("cover_url", coverUrl)
-            put("video_key", canonicalKey)
-            put("video_stream_url", canonicalStream)
+            put("cover_url", finalCoverUrl)
+            put("video_stream_url", finalStreamUrl)
+            put("video_key", canonicalVideoKey)
+            put("upload_status", uploadStatus.ifBlank { "completed" })
             put("duration_minutes", durationMinutes)
             put("file_size_mb", fileSizeMb)
             put("release_year", releaseYear)
@@ -131,23 +137,19 @@ data class SupabaseMovieEntity(
     }
 
     companion object {
-        /**
-         * Creates a [SupabaseMovieEntity] from a domain [Movie] model,
-         * automatically resolving the Cloudflare R2 stream URL to public CDN.
-         */
         fun fromDomain(movie: Movie): SupabaseMovieEntity {
-            val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl).ifBlank {
-                "movies/${movie.id}.mp4"
-            }
-            val resolvedStreamUrl = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, canonicalKey)
+            val canonicalVideoKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
+            val canonicalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
 
             return SupabaseMovieEntity(
                 id = movie.id,
                 title = movie.title,
                 description = movie.description,
+                coverKey = canonicalCoverKey,
                 coverUrl = movie.coverUrl,
-                videoStreamUrl = resolvedStreamUrl,
-                videoKey = canonicalKey,
+                videoKey = canonicalVideoKey,
+                videoStreamUrl = movie.videoStreamUrl,
+                uploadStatus = movie.uploadStatus.ifBlank { "completed" },
                 genres = movie.genres,
                 durationMinutes = movie.durationMinutes,
                 fileSizeMb = movie.fileSizeMb,
@@ -158,9 +160,6 @@ data class SupabaseMovieEntity(
             )
         }
 
-        /**
-         * Parses a JSON object directly received from Supabase REST response.
-         */
         fun fromJsonObject(obj: JSONObject): SupabaseMovieEntity {
             val genresList = mutableListOf<String>()
             val genresJson = obj.optJSONArray("genres")
@@ -178,13 +177,25 @@ data class SupabaseMovieEntity(
                 }
             }
 
+            val rawVideoKey = obj.optString("video_key", "")
+            val rawVideoStreamUrl = obj.optString("video_stream_url", "")
+            val cleanVideoKey = R2UrlUtils.extractCleanVideoKey(rawVideoKey, rawVideoStreamUrl)
+
+            val rawCoverKey = obj.optString("cover_key", "")
+            val rawCoverUrl = obj.optString("cover_url", "")
+            val cleanCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (rawCoverKey.isNotBlank()) rawCoverKey else rawCoverUrl)
+
+            val uploadStatus = obj.optString("upload_status", "completed").ifBlank { "completed" }
+
             return SupabaseMovieEntity(
                 id = obj.optString("id"),
                 title = obj.optString("title"),
                 description = obj.optString("description", ""),
-                coverUrl = obj.optString("cover_url", ""),
-                videoStreamUrl = obj.optString("video_stream_url", ""),
-                videoKey = obj.optString("video_key", ""),
+                coverKey = cleanCoverKey,
+                coverUrl = rawCoverUrl,
+                videoKey = cleanVideoKey,
+                videoStreamUrl = rawVideoStreamUrl,
+                uploadStatus = uploadStatus,
                 genres = genresList,
                 durationMinutes = obj.optInt("duration_minutes", 120),
                 fileSizeMb = obj.optLong("file_size_mb", 500L),

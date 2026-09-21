@@ -478,9 +478,18 @@ class MovieRepository(
         movieDao.searchMovies(query).map { list -> list.map { it.toDomain() } }
 
     suspend fun insertMovie(movie: Movie) = withContext(Dispatchers.IO) {
-        val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
         val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
-        val canonicalMovie = movie.copy(videoStreamUrl = canonicalStream, videoKey = canonicalKey)
+        val canonicalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
+        val canonicalStream = if (canonicalKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalKey) else movie.videoStreamUrl
+        val canonicalCover = if (canonicalCoverKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalCoverKey) else movie.coverUrl
+
+        val canonicalMovie = movie.copy(
+            videoKey = canonicalKey,
+            coverKey = canonicalCoverKey,
+            videoStreamUrl = canonicalStream,
+            coverUrl = canonicalCover,
+            uploadStatus = movie.uploadStatus.ifBlank { "completed" }
+        )
 
         movieDao.insertMovie(MovieEntity.fromDomain(canonicalMovie))
         firestoreService.saveMovie(canonicalMovie)
@@ -492,9 +501,18 @@ class MovieRepository(
     }
 
     suspend fun updateMovie(movie: Movie) = withContext(Dispatchers.IO) {
-        val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
         val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
-        val canonicalMovie = movie.copy(videoStreamUrl = canonicalStream, videoKey = canonicalKey)
+        val canonicalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
+        val canonicalStream = if (canonicalKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalKey) else movie.videoStreamUrl
+        val canonicalCover = if (canonicalCoverKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalCoverKey) else movie.coverUrl
+
+        val canonicalMovie = movie.copy(
+            videoKey = canonicalKey,
+            coverKey = canonicalCoverKey,
+            videoStreamUrl = canonicalStream,
+            coverUrl = canonicalCover,
+            uploadStatus = movie.uploadStatus.ifBlank { "completed" }
+        )
 
         movieDao.updateMovie(MovieEntity.fromDomain(canonicalMovie))
         firestoreService.saveMovie(canonicalMovie)
@@ -521,9 +539,16 @@ class MovieRepository(
             val movies = supabaseDbClient.getMovies()
             if (movies.isNotEmpty()) {
                 movies.forEach { movie ->
-                    val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
                     val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
-                    val canonicalMovie = movie.copy(videoStreamUrl = canonicalStream, videoKey = canonicalKey)
+                    val canonicalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
+                    val canonicalStream = if (canonicalKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalKey) else movie.videoStreamUrl
+                    val canonicalCover = if (canonicalCoverKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalCoverKey) else movie.coverUrl
+                    val canonicalMovie = movie.copy(
+                        videoKey = canonicalKey,
+                        coverKey = canonicalCoverKey,
+                        videoStreamUrl = canonicalStream,
+                        coverUrl = canonicalCover
+                    )
                     movieDao.insertMovie(MovieEntity.fromDomain(canonicalMovie))
                 }
             }
@@ -536,7 +561,7 @@ class MovieRepository(
 
     /**
      * Updates all movies in local DB and Supabase PostgreSQL table to ensure
-     * their `video_stream_url` and `video_key` are synced to the verified Cloudflare R2 URLs.
+     * only pure keys are stored in Supabase, and dynamic URLs are resolved cleanly.
      */
     suspend fun repairAndSyncR2UrlsToSupabase(): Int = withContext(Dispatchers.IO) {
         var count = 0
@@ -546,20 +571,23 @@ class MovieRepository(
             val combined = (localList + remoteList).distinctBy { it.id }
 
             for (movie in combined) {
-                val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
                 val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl).ifBlank {
                     val sanitized = movie.title.lowercase().trim().replace(Regex("[^a-z0-9]+"), "_").trim('_')
-                    "movies/$sanitized.mp4"
+                    "videos/$sanitized.mp4"
                 }
+                val canonicalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
                 val updated = movie.copy(
                     videoKey = canonicalKey,
-                    videoStreamUrl = if (canonicalStream.isNotBlank()) canonicalStream else "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/$canonicalKey"
+                    coverKey = canonicalCoverKey,
+                    videoStreamUrl = R2UrlUtils.buildUrl(canonicalKey),
+                    coverUrl = if (canonicalCoverKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalCoverKey) else movie.coverUrl,
+                    uploadStatus = "completed"
                 )
                 movieDao.insertMovie(MovieEntity.fromDomain(updated))
                 supabaseDbClient.upsertMovie(updated)
                 count++
             }
-            Log.d(TAG, "Repaired and synced $count movies with Cloudflare R2 URLs in Supabase table")
+            Log.d(TAG, "Repaired and synced $count movies with R2 keys in Supabase table")
         } catch (e: Exception) {
             Log.e(TAG, "Error in repairAndSyncR2UrlsToSupabase: ${e.message}", e)
         }
@@ -622,48 +650,49 @@ class MovieRepository(
      * Supports failing over past [excludeUrl] if the previous URL encountered a 404 or playback failure.
      */
     suspend fun resolveOnlineStreamUri(movie: Movie, excludeUrl: String = ""): String = withContext(Dispatchers.IO) {
-        val canonicalDirect = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+        val cleanKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
 
         // 0. Direct local file or gallery content URI
+        val canonicalDirect = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
         if (canonicalDirect.isNotBlank() && canonicalDirect != excludeUrl) {
             if (canonicalDirect.startsWith("content://") || canonicalDirect.startsWith("file://") || canonicalDirect.startsWith("/")) {
                 return@withContext canonicalDirect
             }
         }
 
-        // 1. Direct stream URL from database if valid and not the failed URL
+        // 1. Cloudflare R2 Public CDN URL constructed from key at runtime
+        if (cleanKey.isNotBlank()) {
+            val r2PublicUrl = R2UrlUtils.buildUrl(cleanKey)
+            if (r2PublicUrl.isNotBlank() && r2PublicUrl != excludeUrl) {
+                Log.d(TAG, "Resolved public R2 CDN stream URL from key for ${movie.title}: $r2PublicUrl")
+                return@withContext r2PublicUrl
+            }
+        }
+
+        // 2. Direct stream URL from database if valid and not the failed URL
         if (canonicalDirect.isNotBlank() && canonicalDirect != excludeUrl &&
             (canonicalDirect.startsWith("http://") || canonicalDirect.startsWith("https://"))
         ) {
             return@withContext canonicalDirect
         }
 
-        // 2. Query Supabase table for verified edge URL
+        // 3. Query Supabase table for verified edge URL
         if (movie.id.isNotBlank()) {
             try {
                 val remoteMovies = supabaseDbClient.getMovies()
                 val remoteMovie = remoteMovies.firstOrNull { it.id == movie.id }
                 if (remoteMovie != null) {
-                    val remoteUrl = R2UrlUtils.canonicalizeStreamUrl(remoteMovie.videoStreamUrl, remoteMovie.videoKey)
-                    if (remoteUrl.isNotBlank() && remoteUrl != excludeUrl &&
-                        (remoteUrl.startsWith("http://") || remoteUrl.startsWith("https://"))
-                    ) {
-                        Log.d(TAG, "Caught verified streaming URL from Supabase for ${movie.title}: $remoteUrl")
-                        return@withContext remoteUrl
+                    val remoteKey = R2UrlUtils.extractCleanVideoKey(remoteMovie.videoKey, remoteMovie.videoStreamUrl)
+                    if (remoteKey.isNotBlank()) {
+                        val remoteUrl = R2UrlUtils.buildUrl(remoteKey)
+                        if (remoteUrl.isNotBlank() && remoteUrl != excludeUrl) {
+                            Log.d(TAG, "Resolved verified streaming URL from Supabase key for ${movie.title}: $remoteUrl")
+                            return@withContext remoteUrl
+                        }
                     }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Error catching URL from Supabase: ${e.message}")
-            }
-        }
-
-        // 3. Public Cloudflare R2 CDN URL if videoKey is present
-        val cleanKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
-        if (cleanKey.isNotBlank()) {
-            val r2PublicUrl = "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/$cleanKey"
-            if (r2PublicUrl != excludeUrl) {
-                Log.d(TAG, "Resolved public R2 CDN stream URL for ${movie.title}: $r2PublicUrl")
-                return@withContext r2PublicUrl
             }
         }
 

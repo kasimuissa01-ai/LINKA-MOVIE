@@ -7,6 +7,7 @@ import com.example.domain.model.DownloadStatus
 import com.example.domain.model.Movie
 import com.example.domain.model.UploadPart
 import com.example.domain.model.UploadSession
+import com.example.util.R2UrlUtils
 
 @Entity(tableName = "movies")
 data class MovieEntity(
@@ -14,54 +15,69 @@ data class MovieEntity(
     val title: String,
     val description: String,
     val genres: String, // comma separated or JSON
-    val coverUrl: String,
-    val videoKey: String,
-    val videoStreamUrl: String,
-    val durationMinutes: Int,
-    val fileSizeMb: Long,
-    val releaseYear: Int,
-    val rating: Double,
-    val cast: String,
-    val isFeatured: Boolean,
-    val uploadDate: Long
+    val coverKey: String = "",
+    val coverUrl: String = "",
+    val videoKey: String = "",
+    val videoStreamUrl: String = "",
+    val durationMinutes: Int = 120,
+    val fileSizeMb: Long = 500L,
+    val releaseYear: Int = 2026,
+    val rating: Double = 8.0,
+    val cast: String = "",
+    val isFeatured: Boolean = false,
+    val uploadStatus: String = "completed",
+    val uploadDate: Long = System.currentTimeMillis()
 ) {
     fun toDomain(): Movie {
         val parsedGenres = if (genres.isBlank()) emptyList() else genres.split(",").map { it.trim() }
+        val cleanVideoKey = R2UrlUtils.extractCleanVideoKey(videoKey, videoStreamUrl)
+        val cleanCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (coverKey.isNotBlank()) coverKey else coverUrl)
+        val resolvedStreamUrl = if (cleanVideoKey.isNotBlank()) R2UrlUtils.buildUrl(cleanVideoKey) else videoStreamUrl
+        val resolvedCoverUrl = if (cleanCoverKey.isNotBlank()) R2UrlUtils.buildUrl(cleanCoverKey) else coverUrl
+
         return Movie(
             id = id,
             title = title,
             description = description,
             genres = parsedGenres,
-            coverUrl = coverUrl.trim(),
-            videoKey = videoKey,
-            videoStreamUrl = videoStreamUrl,
+            coverKey = cleanCoverKey,
+            coverUrl = resolvedCoverUrl,
+            videoKey = cleanVideoKey,
+            videoStreamUrl = resolvedStreamUrl,
             durationMinutes = durationMinutes,
             fileSizeMb = fileSizeMb,
             releaseYear = releaseYear,
             rating = rating,
             cast = if (cast.isBlank()) emptyList() else cast.split(",").map { it.trim() },
             isFeatured = isFeatured,
+            uploadStatus = uploadStatus,
             uploadDate = uploadDate
         )
     }
 
     companion object {
-        fun fromDomain(movie: Movie): MovieEntity = MovieEntity(
-            id = movie.id,
-            title = movie.title,
-            description = movie.description,
-            genres = movie.genres.joinToString(","),
-            coverUrl = movie.coverUrl,
-            videoKey = movie.videoKey,
-            videoStreamUrl = movie.videoStreamUrl,
-            durationMinutes = movie.durationMinutes,
-            fileSizeMb = movie.fileSizeMb,
-            releaseYear = movie.releaseYear,
-            rating = movie.rating,
-            cast = movie.cast.joinToString(","),
-            isFeatured = movie.isFeatured,
-            uploadDate = movie.uploadDate
-        )
+        fun fromDomain(movie: Movie): MovieEntity {
+            val cleanVideoKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
+            val cleanCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
+            return MovieEntity(
+                id = movie.id,
+                title = movie.title,
+                description = movie.description,
+                genres = movie.genres.joinToString(","),
+                coverKey = cleanCoverKey,
+                coverUrl = if (movie.coverUrl.isNotBlank()) movie.coverUrl else R2UrlUtils.buildUrl(cleanCoverKey),
+                videoKey = cleanVideoKey,
+                videoStreamUrl = if (movie.videoStreamUrl.isNotBlank()) movie.videoStreamUrl else R2UrlUtils.buildUrl(cleanVideoKey),
+                durationMinutes = movie.durationMinutes,
+                fileSizeMb = movie.fileSizeMb,
+                releaseYear = movie.releaseYear,
+                rating = movie.rating,
+                cast = movie.cast.joinToString(","),
+                isFeatured = movie.isFeatured,
+                uploadStatus = movie.uploadStatus,
+                uploadDate = movie.uploadDate
+            )
+        }
     }
 }
 

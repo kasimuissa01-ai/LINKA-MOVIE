@@ -126,7 +126,7 @@ class AdminViewModel(
     ) {
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
         val sanitizedTitle = title.lowercase().replace(Regex("[^a-z0-9]"), "_").replace(Regex("_+"), "_")
-        val videoKey = "movies/${sanitizedTitle}.mp4"
+        val fallbackVideoKey = "videos/${System.currentTimeMillis()}-${sanitizedTitle}.mp4"
         val cleanStream = streamUrl.trim().takeIf {
             !it.contains("bunny/trailer.mp4") && !it.contains("BigBuckBunny.mp4")
         } ?: ""
@@ -136,43 +136,50 @@ class AdminViewModel(
             title = title,
             description = description,
             genres = genres,
-            coverUrl = if (coverUrl.isNotBlank()) coverUrl
+            coverKey = R2UrlUtils.extractKeyFromAnyUrl(coverUrl),
+            coverUrl = if (coverUrl.isNotBlank()) R2UrlUtils.buildUrl(coverUrl)
             else "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=800&auto=format&fit=crop&q=80",
-            videoKey = videoKey,
-            videoStreamUrl = cleanStream,
+            videoKey = fallbackVideoKey,
+            videoStreamUrl = if (cleanStream.isNotBlank()) R2UrlUtils.buildUrl(cleanStream) else "",
             durationMinutes = 118,
             fileSizeMb = fileSizeMb,
             releaseYear = releaseYear,
             rating = rating,
             cast = listOf("Movie Cast"),
-            isFeatured = isFeatured
+            isFeatured = isFeatured,
+            uploadStatus = "completed"
         )
 
         activeUploadJob?.cancel()
         activeUploadJob = viewModelScope.launch {
             // Upload cover image to Cloudflare R2 if it is a local image URI
-            var effectiveCover = coverUrl
+            var effectiveCoverKey = R2UrlUtils.extractKeyFromAnyUrl(coverUrl)
+            var effectiveCoverUrl = coverUrl
             val isLocalCover = coverUrl.startsWith("content://") || coverUrl.startsWith("file://") || coverUrl.startsWith("/")
             if (isLocalCover) {
                 try {
                     _uploadState.value = UploadProgressState(
                         isUploading = true,
                         overallProgress = 0.02f,
-                        statusMessage = "Uploading real cover poster to Cloudflare R2..."
+                        statusMessage = "Uploading cover poster to Cloudflare R2..."
                     )
-                    val r2CoverUrl = repository.uploadMovieCoverWithRender(
+                    val r2CoverKey = repository.uploadMovieCoverWithRender(
                         context = context,
                         imageUri = android.net.Uri.parse(coverUrl),
                         customFilename = "${sanitizedTitle}_poster.jpg"
                     )
-                    effectiveCover = r2CoverUrl
-                    Log.i("AdminViewModel", "Real cover successfully uploaded to R2: $r2CoverUrl")
+                    effectiveCoverKey = r2CoverKey
+                    effectiveCoverUrl = R2UrlUtils.buildUrl(r2CoverKey)
+                    Log.i("AdminViewModel", "Cover successfully uploaded to R2. Key: $r2CoverKey")
                 } catch (e: Exception) {
                     Log.w("AdminViewModel", "Cover upload to R2 encountered issue: ${e.message}. Preserving original path.")
                 }
             }
 
-            val movieWithCover = newMovie.copy(coverUrl = effectiveCover)
+            val movieWithCover = newMovie.copy(
+                coverKey = effectiveCoverKey,
+                coverUrl = effectiveCoverUrl
+            )
             val isLocalVideoUri = streamUrl.startsWith("content://") || streamUrl.startsWith("file://")
 
             if (isLocalVideoUri) {
@@ -199,13 +206,14 @@ class AdminViewModel(
                         )
                     }
 
-                    // Save the resulting video key and verified Cloudflare R2 URL in the movie database & Supabase table
+                    // Save the resulting pure video key in Supabase table (full URL generated at runtime)
                     val cleanKey = R2UrlUtils.extractCleanVideoKey(uploadResult.key, uploadResult.url)
-                    val publicR2Url = "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/$cleanKey"
+                    val publicR2Url = R2UrlUtils.buildUrl(cleanKey)
 
                     val movieToSave = movieWithCover.copy(
                         videoKey = cleanKey,
-                        videoStreamUrl = publicR2Url
+                        videoStreamUrl = publicR2Url,
+                        uploadStatus = "completed"
                     )
                     repository.insertMovie(movieToSave)
 
@@ -213,7 +221,7 @@ class AdminViewModel(
                         isUploading = false,
                         isCompleted = true,
                         overallProgress = 1.0f,
-                        statusMessage = "Movie '${movieToSave.title}' uploaded directly to Cloudflare R2 and synced to Supabase table!"
+                        statusMessage = "Movie '${movieToSave.title}' uploaded directly to Cloudflare R2 and saved to Supabase!"
                     )
                 } catch (e: Exception) {
                     // Clearly display upload failure to user - do not mark as completed
@@ -228,12 +236,13 @@ class AdminViewModel(
             } else {
                 // Direct stream URL / R2 link / catalog entry
                 try {
-                    val canonicalStream = R2UrlUtils.canonicalizeStreamUrl(cleanStream, movieWithCover.videoKey)
                     val canonicalKey = R2UrlUtils.extractCleanVideoKey(movieWithCover.videoKey, cleanStream)
+                    val canonicalStream = if (canonicalKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalKey) else cleanStream
 
                     val movieToSave = movieWithCover.copy(
                         videoKey = canonicalKey,
-                        videoStreamUrl = canonicalStream
+                        videoStreamUrl = canonicalStream,
+                        uploadStatus = "completed"
                     )
                     repository.insertMovie(movieToSave)
                     _uploadState.value = UploadProgressState(
@@ -268,42 +277,33 @@ class AdminViewModel(
         isFeatured: Boolean = false
     ) {
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
-        val videoKey = "movies/${title.lowercase().replace(" ", "_")}.mp4"
+        val sanitizedTitle = title.lowercase().replace(" ", "_")
+        val rawVideoKey = "videos/${System.currentTimeMillis()}-${sanitizedTitle}.mp4"
         val cleanStream = streamUrl.trim().takeIf {
             !it.contains("bunny/trailer.mp4") && !it.contains("BigBuckBunny.mp4")
         } ?: ""
 
-        val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
-        val effectiveStream = when {
-            cleanStream.isNotBlank() && (cleanStream.startsWith("http://") || cleanStream.startsWith("https://")) -> {
-                cleanStream
-            }
-            cleanStream.isNotBlank() && !cleanStream.startsWith("content://") && !cleanStream.startsWith("file://") -> {
-                val key = if (cleanStream.startsWith("movies/")) cleanStream else "movies/$cleanStream"
-                "https://$publicR2Domain/${key.removePrefix("/")}"
-            }
-            videoKey.isNotBlank() -> {
-                "https://$publicR2Domain/${videoKey.removePrefix("/")}"
-            }
-            else -> ""
-        }
+        val canonicalVideoKey = R2UrlUtils.extractCleanVideoKey(rawVideoKey, cleanStream)
+        val effectiveStream = if (canonicalVideoKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalVideoKey) else cleanStream
 
         viewModelScope.launch {
-            var finalCover = coverUrl
+            var finalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(coverUrl)
+            var finalCoverUrl = coverUrl
             val isLocalCover = coverUrl.startsWith("content://") || coverUrl.startsWith("file://") || coverUrl.startsWith("/")
             if (isLocalCover && context != null) {
                 try {
                     _uploadState.value = UploadProgressState(
                         isUploading = true,
-                        statusMessage = "Uploading real cover poster to Cloudflare R2..."
+                        statusMessage = "Uploading cover poster to Cloudflare R2..."
                     )
-                    val r2CoverUrl = repository.uploadMovieCoverWithRender(
+                    val r2CoverKey = repository.uploadMovieCoverWithRender(
                         context = context,
                         imageUri = android.net.Uri.parse(coverUrl),
-                        customFilename = "${title.lowercase().replace(" ", "_")}_poster.jpg"
+                        customFilename = "${sanitizedTitle}_poster.jpg"
                     )
-                    finalCover = r2CoverUrl
-                    Log.i("AdminViewModel", "Cover image uploaded directly to R2: $r2CoverUrl")
+                    finalCoverKey = r2CoverKey
+                    finalCoverUrl = R2UrlUtils.buildUrl(r2CoverKey)
+                    Log.i("AdminViewModel", "Cover image uploaded directly to R2. Key: $r2CoverKey")
                 } catch (e: Exception) {
                     Log.w("AdminViewModel", "Direct cover upload warning: ${e.message}")
                 }
@@ -314,15 +314,17 @@ class AdminViewModel(
                 title = title,
                 description = description,
                 genres = genres,
-                coverUrl = finalCover,
-                videoKey = videoKey,
+                coverKey = finalCoverKey,
+                coverUrl = finalCoverUrl,
+                videoKey = canonicalVideoKey,
                 videoStreamUrl = effectiveStream,
                 durationMinutes = 118,
                 fileSizeMb = fileSizeMb,
                 releaseYear = releaseYear,
                 rating = rating,
                 cast = listOf("Movie Cast"),
-                isFeatured = isFeatured
+                isFeatured = isFeatured,
+                uploadStatus = "completed"
             )
 
             try {
@@ -355,40 +357,36 @@ class AdminViewModel(
         movie: Movie,
         context: android.content.Context? = null
     ) {
-        val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
-        val effectiveStream = when {
-            movie.videoStreamUrl.isNotBlank() && (movie.videoStreamUrl.startsWith("http://") || movie.videoStreamUrl.startsWith("https://")) -> {
-                movie.videoStreamUrl
-            }
-            movie.videoKey.isNotBlank() -> {
-                "https://$publicR2Domain/${movie.videoKey.removePrefix("/")}"
-            }
-            else -> movie.videoStreamUrl
-        }
+        val canonicalVideoKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
+        val effectiveStream = if (canonicalVideoKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalVideoKey) else movie.videoStreamUrl
 
         viewModelScope.launch {
-            var finalCover = movie.coverUrl
-            val isLocalCover = finalCover.startsWith("content://") || finalCover.startsWith("file://") || finalCover.startsWith("/")
+            var finalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
+            var finalCoverUrl = movie.coverUrl
+            val isLocalCover = finalCoverUrl.startsWith("content://") || finalCoverUrl.startsWith("file://") || finalCoverUrl.startsWith("/")
             if (isLocalCover && context != null) {
                 try {
                     _uploadState.value = UploadProgressState(
                         isUploading = true,
-                        statusMessage = "Uploading real cover poster to Cloudflare R2..."
+                        statusMessage = "Uploading cover poster to Cloudflare R2..."
                     )
-                    val r2CoverUrl = repository.uploadMovieCoverWithRender(
+                    val r2CoverKey = repository.uploadMovieCoverWithRender(
                         context = context,
-                        imageUri = android.net.Uri.parse(finalCover),
+                        imageUri = android.net.Uri.parse(finalCoverUrl),
                         customFilename = "${movie.title.lowercase().replace(" ", "_")}_poster.jpg"
                     )
-                    finalCover = r2CoverUrl
-                    Log.i("AdminViewModel", "Updated cover uploaded directly to R2: $r2CoverUrl")
+                    finalCoverKey = r2CoverKey
+                    finalCoverUrl = R2UrlUtils.buildUrl(r2CoverKey)
+                    Log.i("AdminViewModel", "Updated cover uploaded directly to R2. Key: $r2CoverKey")
                 } catch (e: Exception) {
                     Log.w("AdminViewModel", "Cover upload during movie update warning: ${e.message}")
                 }
             }
 
             val updatedMovie = movie.copy(
-                coverUrl = finalCover,
+                coverKey = finalCoverKey,
+                coverUrl = finalCoverUrl,
+                videoKey = canonicalVideoKey,
                 videoStreamUrl = effectiveStream
             )
             repository.updateMovie(updatedMovie)

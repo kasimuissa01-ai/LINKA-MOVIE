@@ -116,6 +116,7 @@ class PlayerViewModel(
     }
 
     fun initializePlayer(context: Context, movie: Movie, initialPositionMs: Long = 0L) {
+        val isSameMovie = (currentMovieId == movie.id)
         currentMovieId = movie.id
         val targetStartPos = if (initialPositionMs > 0L) {
             saveMoviePosition(movie.id, initialPositionMs)
@@ -124,8 +125,8 @@ class PlayerViewModel(
             getMovieLastPosition(movie.id)
         }
 
-        // If player already exists for this movie, seek to target and ensure playback is active
-        if (exoPlayer != null) {
+        // If player already exists for THIS SAME movie, seek to target and ensure playback is active
+        if (exoPlayer != null && isSameMovie) {
             exoPlayer?.let { player ->
                 if (targetStartPos > 0L && Math.abs(player.currentPosition - targetStartPos) > 1500L) {
                     player.seekTo(targetStartPos)
@@ -143,6 +144,14 @@ class PlayerViewModel(
                 startProgressTracker()
             }
             return
+        }
+
+        // If switching from another movie, release the previous player cleanly
+        if (exoPlayer != null) {
+            exoPlayer?.stop()
+            exoPlayer?.clearMediaItems()
+            exoPlayer?.release()
+            exoPlayer = null
         }
 
         _uiState.value = _uiState.value.copy(
@@ -261,7 +270,7 @@ class PlayerViewModel(
                                 else -> "Stream Resolver / Player Pipeline"
                             },
                             actionGuide = when {
-                                isNetwork -> "Ensure active internet connection and check if pub-5399f62037f94260b0f54c88a9297134.r2.dev is accessible."
+                                isNetwork -> "Ensure active internet connection and check if ${R2UrlUtils.PUBLIC_R2_DOMAIN} is accessible."
                                 isParser -> "The MP4 file has moov atom at the end of file instead of beginning. Re-encode video with 'faststart' or re-upload via Admin Studio."
                                 else -> "Tap Retry to reconnect or edit the movie in Admin Studio to set a verified stream URL."
                             }

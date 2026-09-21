@@ -425,7 +425,9 @@ class R2UploadManager(
             uri = uri,
             fallbackName = customFilename ?: "video_${System.currentTimeMillis()}.mp4"
         )
-        val filename = customFilename ?: fileInfo.filename
+        val rawName = customFilename ?: fileInfo.filename
+        val cleanName = rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_").trim('_')
+        val filename = if (cleanName.startsWith("videos/")) cleanName else "videos/${System.currentTimeMillis()}-$cleanName"
         val fileSize = fileInfo.fileSize
         val contentType = fileInfo.contentType
 
@@ -530,14 +532,21 @@ class R2UploadManager(
             throw IOException("Render /complete failed: ${e.message}", e)
         }
 
+        val cleanKey = R2UrlUtils.extractCleanVideoKey(completeResult.key, completeResult.url).ifBlank { filename }
+        val canonicalResult = CompleteUploadResult(
+            success = completeResult.success,
+            key = cleanKey,
+            url = R2UrlUtils.buildUrl(cleanKey)
+        )
+
         onProgress?.invoke(100, "Upload completed successfully!")
-        Log.i(TAG, "Multipart upload finalized! Key: ${completeResult.key}, URL: ${completeResult.url}")
-        completeResult
+        Log.i(TAG, "Multipart upload finalized! Key: ${canonicalResult.key}, URL: ${canonicalResult.url}")
+        canonicalResult
     }
 
     /**
      * Uploads an image (e.g. movie cover poster) directly to Cloudflare R2 via Render presigned URL
-     * and returns the public CDN URL.
+     * and returns the pure cover_key (e.g. "covers/1695123456789-poster.jpg").
      */
     suspend fun uploadImage(
         context: Context,
@@ -549,11 +558,11 @@ class R2UploadManager(
             uri = uri,
             fallbackName = customFilename ?: "cover_${System.currentTimeMillis()}.jpg"
         )
-        val cleanName = (customFilename ?: fileInfo.filename).replace(Regex("[^a-zA-Z0-9._-]"), "_")
-        val filename = "covers/${System.currentTimeMillis()}_$cleanName"
+        val rawName = (customFilename ?: fileInfo.filename).replace(Regex("[^a-zA-Z0-9._-]"), "_").trim('_')
+        val filename = if (rawName.startsWith("covers/")) rawName else "covers/${System.currentTimeMillis()}-$rawName"
         val contentType = when {
-            cleanName.endsWith(".png", true) -> "image/png"
-            cleanName.endsWith(".webp", true) -> "image/webp"
+            rawName.endsWith(".png", true) -> "image/png"
+            rawName.endsWith(".webp", true) -> "image/webp"
             else -> "image/jpeg"
         }
 
@@ -601,10 +610,9 @@ class R2UploadManager(
             throw IOException("Finalizing image upload failed: ${e.message}", e)
         }
 
-        val cleanKey = R2UrlUtils.extractCleanVideoKey(completeResult.key, completeResult.url)
-        val publicUrl = "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/$cleanKey"
-        Log.i(TAG, "Image uploaded successfully to R2 CDN: $publicUrl")
-        publicUrl
+        val cleanKey = R2UrlUtils.extractKeyFromAnyUrl(completeResult.key.ifBlank { filename })
+        Log.i(TAG, "Image uploaded successfully to R2. Key: $cleanKey")
+        cleanKey
     }
 
     /**

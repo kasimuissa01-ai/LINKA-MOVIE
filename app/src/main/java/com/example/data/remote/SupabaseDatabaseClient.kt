@@ -38,10 +38,12 @@ class SupabaseDatabaseClient(
     }
 
     /**
-     * Fetches all published movies from the Supabase `movies` table as domain [Movie] models.
+     * Fetches all published completed movies from the Supabase `movies` table as domain [Movie] models.
+     * Filters for upload_status = 'completed' (or legacy null status) to prevent partial/failed uploads.
      */
     suspend fun getMovies(): List<Movie> = withContext(Dispatchers.IO) {
-        val endpoint = "$supabaseUrl/rest/v1/movies?select=*&order=created_at.desc"
+        // Query only completed uploads
+        val endpoint = "$supabaseUrl/rest/v1/movies?select=*&or=(upload_status.eq.completed,upload_status.is.null)&order=created_at.desc"
         val request = Request.Builder()
             .url(endpoint)
             .header("apikey", anonKey)
@@ -67,7 +69,7 @@ class SupabaseDatabaseClient(
                     resultList.add(entity.toDomain())
                 }
 
-                Log.d(TAG, "Successfully fetched ${resultList.size} movies from Supabase database")
+                Log.d(TAG, "Successfully fetched ${resultList.size} verified movies from Supabase database")
                 return@withContext resultList
             }
         } catch (e: Exception) {
@@ -80,7 +82,7 @@ class SupabaseDatabaseClient(
      * Fetches all published movies directly as [SupabaseMovieEntity] instances.
      */
     suspend fun getSupabaseMovieEntities(): List<SupabaseMovieEntity> = withContext(Dispatchers.IO) {
-        val endpoint = "$supabaseUrl/rest/v1/movies?select=*&order=created_at.desc"
+        val endpoint = "$supabaseUrl/rest/v1/movies?select=*&or=(upload_status.eq.completed,upload_status.is.null)&order=created_at.desc"
         val request = Request.Builder()
             .url(endpoint)
             .header("apikey", anonKey)
@@ -116,34 +118,55 @@ class SupabaseDatabaseClient(
     /**
      * Upserts a movie record into the Supabase `movies` table using [SupabaseMovieEntity].
      * Uses `Prefer: resolution=merge-duplicates` to update if already existing.
+     * Automatically adapts if the remote Supabase schema is missing optional columns.
      */
     suspend fun upsertMovieEntity(entity: SupabaseMovieEntity): Boolean = withContext(Dispatchers.IO) {
         val endpoint = "$supabaseUrl/rest/v1/movies"
-        val requestBody = entity.toJsonObject().toString().toRequestBody(JSON_MEDIA_TYPE)
-        val request = Request.Builder()
-            .url(endpoint)
-            .header("apikey", anonKey)
-            .header("Authorization", "Bearer $anonKey")
-            .header("Content-Type", "application/json")
-            .header("Prefer", "resolution=merge-duplicates,return=representation")
-            .post(requestBody)
-            .build()
+        val payload = entity.toJsonObject()
 
-        try {
-            okHttpClient.newCall(request).execute().use { response ->
-                val success = response.isSuccessful
-                if (success) {
-                    Log.i(TAG, "Successfully upserted movie '${entity.title}' to Supabase table (URL: ${entity.videoStreamUrl})")
-                } else {
-                    val errBody = response.body?.string()
+        // Allow up to 3 retries in case specific columns don't exist in remote PostgreSQL schema
+        for (attempt in 0..3) {
+            val requestBody = payload.toString().toRequestBody(JSON_MEDIA_TYPE)
+            val request = Request.Builder()
+                .url(endpoint)
+                .header("apikey", anonKey)
+                .header("Authorization", "Bearer $anonKey")
+                .header("Content-Type", "application/json")
+                .header("Prefer", "resolution=merge-duplicates,return=representation")
+                .post(requestBody)
+                .build()
+
+            try {
+                okHttpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        Log.i(TAG, "Successfully upserted movie '${entity.title}' to Supabase table")
+                        return@withContext true
+                    }
+
+                    val errBody = response.body?.string() ?: ""
+                    Log.w(TAG, "Upsert attempt $attempt for '${entity.title}' returned HTTP ${response.code}: $errBody")
+
+                    // Check for PostgREST PGRST204: Could not find the 'column_name' column
+                    if (response.code == 400 && (errBody.contains("PGRST204") || errBody.contains("Could not find the"))) {
+                        val missingColRegex = Regex("Could not find the '([^']+)' column")
+                        val match = missingColRegex.find(errBody)
+                        val missingCol = match?.groupValues?.get(1)
+                        if (missingCol != null && payload.has(missingCol)) {
+                            Log.w(TAG, "Removing unsupported column '$missingCol' from payload and retrying upsert for '${entity.title}'")
+                            payload.remove(missingCol)
+                            return@use // continue to next attempt loop iteration
+                        }
+                    }
+
                     Log.e(TAG, "Failed to upsert movie '${entity.title}' to Supabase: HTTP ${response.code} - $errBody")
+                    return@withContext false
                 }
-                return@withContext success
+            } catch (e: Exception) {
+                Log.e(TAG, "Exception upserting movie '${entity.title}' to Supabase: ${e.message}", e)
+                return@withContext false
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Exception upserting movie '${entity.title}' to Supabase: ${e.message}", e)
-            return@withContext false
         }
+        return@withContext false
     }
 
     /**

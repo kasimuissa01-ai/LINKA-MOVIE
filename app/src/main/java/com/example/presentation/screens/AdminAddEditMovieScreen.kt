@@ -894,7 +894,7 @@ fun AdminAddEditMovieScreen(
                         TextButton(
                             onClick = {
                                 val sanitized = title.lowercase().trim().replace(Regex("[^a-z0-9]+"), "_").trim('_')
-                                streamUrl = "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/videos/${sanitized}.mp4"
+                                streamUrl = R2UrlUtils.buildUrl("videos/${sanitized}.mp4")
                             },
                             contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
                         ) {
@@ -906,7 +906,7 @@ fun AdminAddEditMovieScreen(
                 OutlinedTextField(
                     value = streamUrl,
                     onValueChange = { streamUrl = it },
-                    placeholder = { Text("https://pub-5399...r2.dev/movies/... or R2 key", color = TextTertiary, fontSize = 13.sp) },
+                    placeholder = { Text("${R2UrlUtils.R2_PUBLIC_BASE_URL}/videos/... or R2 key", color = TextTertiary, fontSize = 13.sp) },
                     leadingIcon = { Icon(Icons.Default.Videocam, contentDescription = null, tint = ElectricBlue) },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = ElectricBlue,
@@ -1481,7 +1481,6 @@ fun AdminAddEditMovieScreen(
                 val finalCover = coverUrl.trim()
 
                 if (existingMovie != null) {
-                    val publicR2Domain = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
                     val isNewLocalVideo = streamUrl.isNotBlank() && (streamUrl.startsWith("content://") || streamUrl.startsWith("file://"))
                     
                     if (isNewLocalVideo) {
@@ -1502,19 +1501,18 @@ fun AdminAddEditMovieScreen(
                         // Updating metadata or direct stream URL
                         val (resolvedStream, resolvedKey) = when {
                             streamUrl.isNotBlank() && (streamUrl.startsWith("http://") || streamUrl.startsWith("https://")) -> {
-                                val extractedKey = com.example.util.R2UrlUtils.extractCleanVideoKey(existingMovie.videoKey, streamUrl)
+                                val extractedKey = R2UrlUtils.extractCleanVideoKey(existingMovie.videoKey, streamUrl)
                                 Pair(streamUrl, extractedKey)
                             }
                             streamUrl.isNotBlank() -> {
                                 val key = if (streamUrl.startsWith("movies/") || streamUrl.startsWith("videos/")) streamUrl else "videos/$streamUrl"
-                                Pair("https://$publicR2Domain/${key.removePrefix("/")}", key)
+                                Pair(R2UrlUtils.buildUrl(key), key)
                             }
                             existingMovie.videoStreamUrl.isNotBlank() -> {
                                 Pair(existingMovie.videoStreamUrl, existingMovie.videoKey)
                             }
                             existingMovie.videoKey.isNotBlank() -> {
-                                val url = "https://$publicR2Domain/${existingMovie.videoKey.removePrefix("/")}"
-                                Pair(url, existingMovie.videoKey)
+                                Pair(R2UrlUtils.buildUrl(existingMovie.videoKey), existingMovie.videoKey)
                             }
                             else -> Pair(streamUrl, "")
                         }

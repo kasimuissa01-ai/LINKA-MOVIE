@@ -696,13 +696,20 @@ class OfflineDownloadManager(
     }
 
     /**
-     * Builds candidate URLs prioritizing the movie's own stream URL and Cloudflare R2 video keys.
+     * Builds candidate URLs prioritizing the movie's own R2 key and runtime constructed URL.
      * Guarantees that unauthenticated S3 API endpoints are converted to the public R2 CDN domain.
      */
     private suspend fun buildCandidateUrls(movie: Movie): List<String> = withContext(Dispatchers.IO) {
         val list = mutableListOf<String>()
 
-        // 1. Canonicalized direct videoStreamUrl
+        // 1. Cloudflare R2 Public CDN URL if videoKey is present
+        val cleanKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
+        if (cleanKey.isNotBlank()) {
+            val r2CdnUrl = R2UrlUtils.buildUrl(cleanKey)
+            list.add(r2CdnUrl)
+        }
+
+        // 2. Canonicalized direct videoStreamUrl
         val canonicalDirect = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
         if (canonicalDirect.isNotBlank() &&
             (canonicalDirect.startsWith("http://") || canonicalDirect.startsWith("https://")) &&
@@ -712,23 +719,18 @@ class OfflineDownloadManager(
             list.add(canonicalDirect)
         }
 
-        // 2. Cloudflare R2 Public CDN URL if videoKey is present
-        val cleanKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
-        if (cleanKey.isNotBlank()) {
-            val r2CdnUrl = "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/$cleanKey"
-            list.add(r2CdnUrl)
-        }
-
-        // 3. Query Supabase movies table for verified edge URL
+        // 3. Query Supabase movies table for verified key & constructed URL
         if (list.isEmpty() && movie.id.isNotBlank()) {
             try {
                 val supabaseClient = com.example.data.remote.SupabaseDatabaseClient()
                 val remoteMovies = supabaseClient.getMovies()
                 val match = remoteMovies.firstOrNull { it.id == movie.id }
                 if (match != null) {
-                    val canonicalRemote = R2UrlUtils.canonicalizeStreamUrl(match.videoStreamUrl, match.videoKey)
-                    if (canonicalRemote.isNotBlank() && canonicalRemote.startsWith("http")) {
-                        list.add(canonicalRemote)
+                    val key = R2UrlUtils.extractCleanVideoKey(match.videoKey, match.videoStreamUrl)
+                    if (key.isNotBlank()) {
+                        list.add(R2UrlUtils.buildUrl(key))
+                    } else if (match.videoStreamUrl.isNotBlank() && match.videoStreamUrl.startsWith("http")) {
+                        list.add(R2UrlUtils.buildUrl(match.videoStreamUrl))
                     }
                 }
             } catch (e: Exception) {
