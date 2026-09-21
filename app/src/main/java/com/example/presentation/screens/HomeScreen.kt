@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -269,203 +270,245 @@ fun HeroCarousel(
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
-            .height(440.dp)
             .testTag("hero_carousel")
     ) {
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxSize()
-        ) { page ->
-            val movie = featuredMovies[page]
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable { onMovieClick(movie) }
-            ) {
-                val heroCover = com.example.util.MovieCoverUtils.resolveCoverUrl(movie.title, movie.coverUrl, movie.genres)
-                AsyncImage(
-                    model = heroCover,
-                    contentDescription = movie.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
+        val screenWidth = maxWidth
+        val isSmall = screenWidth < 390.dp
+        val isVerySmall = screenWidth < 350.dp
 
-                // Cinematic dark gradient scrim
+        // Adaptive hero height based on screen width:
+        // Compact devices (e.g., iPhone 7, small Android) preserve cinematic framing
+        // so the movie artwork looks clean, cute, and never clipped.
+        val heroHeight = when {
+            screenWidth < 350.dp -> 330.dp
+            screenWidth < 390.dp -> 370.dp
+            screenWidth < 600.dp -> 430.dp
+            else -> 460.dp
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(heroHeight)
+        ) {
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize()
+            ) { page ->
+                val movie = featuredMovies[page]
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.Black.copy(alpha = 0.60f),
-                                    Color.Transparent,
-                                    Color(0x6609090C),
-                                    Color(0xDD09090C),
-                                    ObsidianBlack
-                                ),
-                                startY = 0f
-                            )
-                        )
-                )
-
-                // Top Floating Brand Bar
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .statusBarsPadding()
-                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                        .clickable { onMovieClick(movie) }
                 ) {
+                    val heroCover = com.example.util.MovieCoverUtils.resolveCoverUrl(movie.title, movie.coverUrl, movie.genres)
                     AsyncImage(
-                        model = com.example.MainActivity.APP_LOGO_URL,
-                        contentDescription = "MovieRoom Logo",
+                        model = heroCover,
+                        contentDescription = movie.title,
                         contentScale = ContentScale.Crop,
+                        alignment = Alignment.Center,
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    // Cinematic subtle dark gradient scrim
+                    // Tuned so the artwork in the upper/middle area remains clear, cute, and unclipped
+                    Box(
                         modifier = Modifier
-                            .size(34.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = "MovieRoom",
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // Bottom Content
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(horizontal = 20.dp, vertical = 24.dp)
-                ) {
-                    // Rating & Genre badges
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            color = CinematicRed,
-                            shape = RoundedCornerShape(4.dp)
-                        ) {
-                            Text(
-                                text = "FEATURED",
-                                color = Color.White,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0.0f to Color.Black.copy(alpha = if (isSmall) 0.45f else 0.55f),
+                                    0.22f to Color.Transparent,
+                                    0.55f to Color.Transparent,
+                                    0.80f to Color(0x9909090C),
+                                    0.94f to Color(0xEE09090C),
+                                    1.0f to ObsidianBlack
+                                )
                             )
-                        }
+                    )
 
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        Icon(
-                            imageVector = Icons.Default.Star,
-                            contentDescription = "Rating",
-                            tint = AmberGold,
-                            modifier = Modifier.size(14.dp)
+                    // Top Floating Brand Bar
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .statusBarsPadding()
+                            .padding(
+                                horizontal = if (isSmall) 16.dp else 20.dp,
+                                vertical = if (isSmall) 8.dp else 12.dp
+                            )
+                    ) {
+                        AsyncImage(
+                            model = com.example.MainActivity.APP_LOGO_URL,
+                            contentDescription = "MovieRoom Logo",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(if (isSmall) 28.dp else 34.dp)
+                                .clip(RoundedCornerShape(8.dp))
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
+                        Spacer(modifier = Modifier.width(if (isSmall) 8.dp else 10.dp))
                         Text(
-                            text = "${movie.rating} • ${movie.releaseYear} • ${movie.durationMinutes}m",
-                            color = TextSecondary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
+                            text = "MovieRoom",
+                            color = Color.White,
+                            fontSize = if (isSmall) 16.sp else 18.sp,
+                            fontWeight = FontWeight.Bold
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = movie.title,
-                        color = TextPrimary,
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Black,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    Text(
-                        text = movie.description,
-                        color = TextSecondary,
-                        fontSize = 13.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        lineHeight = 18.sp
-                    )
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Play and Download CTA Buttons
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Button(
-                            onClick = { onPlayClick(movie) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = CinematicRed,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(24.dp),
-                            modifier = Modifier.testTag("hero_play_button_${movie.id}")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Play",
-                                modifier = Modifier.size(20.dp)
+                    // Bottom Content
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(
+                                horizontal = if (isSmall) 16.dp else 20.dp,
+                                vertical = if (isSmall) 16.dp else 24.dp
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                    ) {
+                        // Rating & Genre badges
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                color = CinematicRed,
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = "FEATURED",
+                                    color = Color.White,
+                                    fontSize = if (isSmall) 9.sp else 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(
+                                        horizontal = if (isSmall) 5.dp else 6.dp,
+                                        vertical = if (isSmall) 2.dp else 3.dp
+                                    )
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(if (isSmall) 6.dp else 8.dp))
+
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = "Rating",
+                                tint = AmberGold,
+                                modifier = Modifier.size(if (isSmall) 12.dp else 14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(3.dp))
                             Text(
-                                text = "Play",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
+                                text = "${movie.rating} • ${movie.releaseYear} • ${movie.durationMinutes}m",
+                                color = TextSecondary,
+                                fontSize = if (isSmall) 11.sp else 12.sp,
+                                fontWeight = FontWeight.Medium
                             )
                         }
 
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.height(if (isSmall) 4.dp else 8.dp))
 
-                        OutlinedButton(
-                            onClick = { onDownloadClick(movie) },
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = TextPrimary
-                            ),
-                            shape = RoundedCornerShape(24.dp),
-                            modifier = Modifier.testTag("hero_download_button_${movie.id}")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Download,
-                                contentDescription = "Download",
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "Download",
-                                fontWeight = FontWeight.Medium,
-                                fontSize = 14.sp
-                            )
+                        Text(
+                            text = movie.title,
+                            color = TextPrimary,
+                            fontSize = if (isVerySmall) 20.sp else if (isSmall) 22.sp else 28.sp,
+                            fontWeight = FontWeight.Black,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+
+                        Spacer(modifier = Modifier.height(if (isSmall) 3.dp else 6.dp))
+
+                        Text(
+                            text = movie.description,
+                            color = TextSecondary,
+                            fontSize = if (isSmall) 12.sp else 13.sp,
+                            maxLines = if (isSmall) 1 else 2,
+                            overflow = TextOverflow.Ellipsis,
+                            lineHeight = if (isSmall) 16.sp else 18.sp
+                        )
+
+                        Spacer(modifier = Modifier.height(if (isSmall) 10.dp else 16.dp))
+
+                        // Play and Download CTA Buttons
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Button(
+                                onClick = { onPlayClick(movie) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = CinematicRed,
+                                    contentColor = Color.White
+                                ),
+                                contentPadding = PaddingValues(
+                                    horizontal = if (isSmall) 16.dp else 20.dp,
+                                    vertical = if (isSmall) 8.dp else 10.dp
+                                ),
+                                shape = RoundedCornerShape(24.dp),
+                                modifier = Modifier.testTag("hero_play_button_${movie.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = "Play",
+                                    modifier = Modifier.size(if (isSmall) 18.dp else 20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(if (isSmall) 4.dp else 6.dp))
+                                Text(
+                                    text = "Play",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = if (isSmall) 13.sp else 14.sp
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.width(if (isSmall) 8.dp else 12.dp))
+
+                            OutlinedButton(
+                                onClick = { onDownloadClick(movie) },
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = TextPrimary
+                                ),
+                                contentPadding = PaddingValues(
+                                    horizontal = if (isSmall) 14.dp else 18.dp,
+                                    vertical = if (isSmall) 8.dp else 10.dp
+                                ),
+                                shape = RoundedCornerShape(24.dp),
+                                modifier = Modifier.testTag("hero_download_button_${movie.id}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Download",
+                                    modifier = Modifier.size(if (isSmall) 16.dp else 18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(if (isSmall) 4.dp else 6.dp))
+                                Text(
+                                    text = "Download",
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = if (isSmall) 13.sp else 14.sp
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Pager indicators
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 20.dp, bottom = 28.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            repeat(featuredMovies.size) { index ->
-                val isSelected = pagerState.currentPage == index
-                val width by animateDpAsState(if (isSelected) 18.dp else 6.dp, label = "dot_width")
-                Box(
-                    modifier = Modifier
-                        .height(6.dp)
-                        .width(width)
-                        .clip(CircleShape)
-                        .background(if (isSelected) CinematicRed else Color(0x66FFFFFF))
-                )
+            // Pager indicators
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(
+                        end = if (isSmall) 16.dp else 20.dp,
+                        bottom = if (isSmall) 18.dp else 28.dp
+                    ),
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                repeat(featuredMovies.size) { index ->
+                    val isSelected = pagerState.currentPage == index
+                    val width by animateDpAsState(
+                        if (isSelected) (if (isSmall) 14.dp else 18.dp) else (if (isSmall) 5.dp else 6.dp),
+                        label = "dot_width"
+                    )
+                    Box(
+                        modifier = Modifier
+                            .height(if (isSmall) 5.dp else 6.dp)
+                            .width(width)
+                            .clip(CircleShape)
+                            .background(if (isSelected) CinematicRed else Color(0x66FFFFFF))
+                    )
+                }
             }
         }
     }

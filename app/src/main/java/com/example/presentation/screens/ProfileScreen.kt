@@ -107,7 +107,10 @@ fun ProfileScreen(
     var adminPassInput by remember { mutableStateOf("") }
     var passError by remember { mutableStateOf(false) }
 
-    val isAdmin = session.role == UserRole.ADMIN || AuthRepository.isAdminPhoneNumber(session.phoneNumber)
+    val isAdmin = session.role == UserRole.ADMIN && (
+        (session.phoneNumber.isNotBlank() && AuthRepository.isAdminPhoneNumber(session.phoneNumber)) ||
+        session.email.contains("admin")
+    )
     val scrollState = rememberScrollState()
 
     Column(
@@ -189,7 +192,7 @@ fun ProfileScreen(
 
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = session.displayName.ifBlank { "Alex Vance" },
+                            text = session.displayName.ifBlank { "Guest User" },
                             color = TextPrimary,
                             fontSize = 19.sp,
                             fontWeight = FontWeight.Bold
@@ -204,7 +207,7 @@ fun ProfileScreen(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = session.phoneNumber.ifBlank { "+255 696 102 700" },
+                                text = session.phoneNumber.ifBlank { "No phone linked (Guest)" },
                                 color = TextSecondary,
                                 fontSize = 13.sp
                             )
@@ -226,7 +229,11 @@ fun ProfileScreen(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (isAdmin) "Administrator Access" else "Active Streaming Member",
+                                    text = when {
+                                        isAdmin -> "Administrator Access"
+                                        session.phoneNumber.isNotBlank() -> "Active Streaming Member"
+                                        else -> "Guest Explorer"
+                                    },
                                     color = if (isAdmin) CinematicRed else ElectricBlue,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold

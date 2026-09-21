@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -319,7 +320,10 @@ fun OnboardingAuthScreen(
                             .clip(CircleShape)
                             .background(Color.White.copy(alpha = 0.20f))
                             .border(1.dp, Color.White.copy(alpha = 0.35f), CircleShape)
-                            .clickable { onNavigateToHome() }
+                            .clickable {
+                                authViewModel.loginAsGuest()
+                                onNavigateToHome()
+                            }
                             .testTag("btn_skip"),
                         contentAlignment = Alignment.Center
                     ) {
@@ -334,7 +338,11 @@ fun OnboardingAuthScreen(
             }
 
             // Middle breathing spacer so poster artwork shines in upper half
-            Spacer(modifier = Modifier.height(140.dp))
+            Spacer(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .heightIn(min = 32.dp, max = 110.dp)
+            )
 
             // Lower Section: Headline, Inputs & CTA
             Column(

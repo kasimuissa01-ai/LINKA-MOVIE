@@ -51,12 +51,12 @@ class AuthRepository(
         // Restore initial session if Firebase has a currently logged-in user
         auth?.currentUser?.let { user ->
             val phone = user.phoneNumber ?: ""
-            val role = if (isAdminPhoneNumber(phone)) UserRole.ADMIN else UserRole.USER
+            val role = if (phone.isNotBlank() && isAdminPhoneNumber(phone)) UserRole.ADMIN else UserRole.USER
             _currentUserSession.value = UserSession(
                 uid = user.uid,
                 email = user.email ?: (if (phone.isNotBlank()) phone else "${user.uid}@movieroom.stream"),
-                displayName = user.displayName ?: "Alex Vance",
-                phoneNumber = phone.ifBlank { "+255 696 102 700" },
+                displayName = user.displayName ?: (if (phone.isNotBlank()) "Member" else "Guest User"),
+                phoneNumber = phone,
                 role = role,
                 token = "cached_token_${user.uid}"
             )
@@ -75,9 +75,9 @@ class AuthRepository(
         displayName: String,
         phoneNumber: String
     ): Result<UserSession> = withContext(Dispatchers.IO) {
-        val trimmedName = displayName.trim().ifBlank { "Alex Vance" }
+        val trimmedName = displayName.trim().ifBlank { "Guest User" }
         val trimmedPhone = phoneNumber.trim()
-        val assignedRole = if (isAdminPhoneNumber(trimmedPhone)) UserRole.ADMIN else UserRole.USER
+        val assignedRole = if (trimmedPhone.isNotBlank() && isAdminPhoneNumber(trimmedPhone)) UserRole.ADMIN else UserRole.USER
 
         try {
             val firebaseAuth = auth

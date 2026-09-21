@@ -81,15 +81,34 @@ class MovieRepository(
     // Current user session & role management
     private val _userSession = MutableStateFlow(
         sessionManager?.getSession() ?: UserSession(
-            uid = "usr_stream_991",
-            email = "alex.streamer@movieroom.io",
+            uid = "usr_guest_" + UUID.randomUUID().toString().take(6),
+            email = "guest@movieroom.stream",
+            displayName = "Guest User",
+            phoneNumber = "",
             role = UserRole.USER,
-            token = "jwt_token_movieroom_user_secure"
+            token = "guest_user_token",
+            watchedCount = 0,
+            favoriteCount = 0
         )
     )
     val userSession: StateFlow<UserSession> = _userSession.asStateFlow()
 
     fun isUserLoggedIn(): Boolean = sessionManager?.isLoggedIn == true
+
+    fun loginAsGuest() {
+        val guest = UserSession(
+            uid = "usr_guest_" + UUID.randomUUID().toString().take(6),
+            email = "guest@movieroom.stream",
+            displayName = "Guest User",
+            phoneNumber = "",
+            role = UserRole.USER,
+            token = "guest_user_token",
+            watchedCount = 0,
+            favoriteCount = 0
+        )
+        _userSession.value = guest
+        sessionManager?.saveSession(guest)
+    }
 
     fun switchRole(role: UserRole) {
         val current = _userSession.value
@@ -156,13 +175,13 @@ class MovieRepository(
         verificationId: String,
         otpCode: String
     ): Result<String> = withContext(Dispatchers.IO) {
-        val assignedRole = if (AuthRepository.isAdminPhoneNumber(phoneNumber)) UserRole.ADMIN else UserRole.USER
+        val assignedRole = if (phoneNumber.isNotBlank() && AuthRepository.isAdminPhoneNumber(phoneNumber)) UserRole.ADMIN else UserRole.USER
         if (authService == null) {
             val uid = "user_${System.currentTimeMillis()}"
             val session = UserSession(
                 uid = uid,
                 email = "$phoneNumber@movieroom.stream",
-                displayName = userName.ifBlank { "Alex Vance" },
+                displayName = userName.ifBlank { "Movie Fan" },
                 phoneNumber = phoneNumber,
                 role = assignedRole,
                 token = "dev_phone_token"
@@ -179,7 +198,7 @@ class MovieRepository(
                 val session = UserSession(
                     uid = uid,
                     email = fbUser?.phoneNumber ?: "$phoneNumber@movieroom.stream",
-                    displayName = userName.ifBlank { "Alex Vance" },
+                    displayName = userName.ifBlank { "Movie Fan" },
                     phoneNumber = phoneNumber,
                     role = assignedRole,
                     token = token
@@ -200,7 +219,7 @@ class MovieRepository(
                 val session = UserSession(
                     uid = uid,
                     email = "$phoneNumber@movieroom.stream",
-                    displayName = userName.ifBlank { "Alex Vance" },
+                    displayName = userName.ifBlank { "Movie Fan" },
                     phoneNumber = phoneNumber,
                     role = assignedRole,
                     token = "dev_phone_token"
@@ -284,9 +303,13 @@ class MovieRepository(
         sessionManager?.clearSession()
         _userSession.value = UserSession(
             uid = "usr_guest_" + UUID.randomUUID().toString().take(6),
-            email = "guest@movieroom.io",
+            email = "guest@movieroom.stream",
+            displayName = "Guest User",
+            phoneNumber = "",
             role = UserRole.USER,
-            token = "dev_user_token"
+            token = "guest_user_token",
+            watchedCount = 0,
+            favoriteCount = 0
         )
     }
 

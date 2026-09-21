@@ -126,6 +126,11 @@ class AuthViewModel(
         }
     }
 
+    fun loginAsGuest() {
+        repository.loginAsGuest()
+        _authStatusMessage.value = "Exploring as Guest"
+    }
+
     fun signOut() {
         repository.signOut()
         _authStatusMessage.value = "Signed out successfully"

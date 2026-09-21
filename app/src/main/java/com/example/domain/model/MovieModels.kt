@@ -66,11 +66,11 @@ enum class UserRole {
 
 data class UserSession(
     val uid: String,
-    val email: String,
-    val displayName: String = "Alex Vance",
-    val phoneNumber: String = "+255 696 102 700",
+    val email: String = "",
+    val displayName: String = "Guest User",
+    val phoneNumber: String = "",
     val role: UserRole = UserRole.USER,
     val token: String = "",
-    val watchedCount: Int = 14,
-    val favoriteCount: Int = 8
+    val watchedCount: Int = 0,
+    val favoriteCount: Int = 0
 )

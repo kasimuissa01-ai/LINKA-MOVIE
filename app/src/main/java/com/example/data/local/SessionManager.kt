@@ -43,19 +43,21 @@ class SessionManager(context: Context) {
     fun getSession(): UserSession? {
         if (!isLoggedIn) return null
         val uid = prefs.getString(KEY_UID, null) ?: return null
-        val email = prefs.getString(KEY_EMAIL, "$uid@movieroom.stream") ?: "$uid@movieroom.stream"
-        val displayName = prefs.getString(KEY_DISPLAY_NAME, "MovieRoom User") ?: "MovieRoom User"
-        val phoneNumber = prefs.getString(KEY_PHONE_NUMBER, "+255 696 102 700") ?: "+255 696 102 700"
+        val email = prefs.getString(KEY_EMAIL, "") ?: ""
+        val displayName = prefs.getString(KEY_DISPLAY_NAME, "Guest User") ?: "Guest User"
+        val phoneNumber = prefs.getString(KEY_PHONE_NUMBER, "") ?: ""
         val roleStr = prefs.getString(KEY_ROLE, UserRole.USER.name) ?: UserRole.USER.name
         val storedRole = try { UserRole.valueOf(roleStr) } catch (e: Exception) { UserRole.USER }
-        val role = if (storedRole == UserRole.ADMIN || com.example.data.repository.AuthRepository.isAdminPhoneNumber(phoneNumber)) {
+        val role = if (phoneNumber.isNotBlank() && com.example.data.repository.AuthRepository.isAdminPhoneNumber(phoneNumber)) {
+            UserRole.ADMIN
+        } else if (storedRole == UserRole.ADMIN && email.contains("admin")) {
             UserRole.ADMIN
         } else {
-            storedRole
+            UserRole.USER
         }
         val token = prefs.getString(KEY_TOKEN, "") ?: ""
-        val watchedCount = prefs.getInt(KEY_WATCHED_COUNT, 14)
-        val favoriteCount = prefs.getInt(KEY_FAVORITE_COUNT, 8)
+        val watchedCount = prefs.getInt(KEY_WATCHED_COUNT, 0)
+        val favoriteCount = prefs.getInt(KEY_FAVORITE_COUNT, 0)
 
         return UserSession(
             uid = uid,
