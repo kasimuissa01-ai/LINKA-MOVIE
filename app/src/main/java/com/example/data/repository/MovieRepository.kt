@@ -315,150 +315,51 @@ class MovieRepository(
 
     init {
         repositoryScope.launch {
-            seedInitialCatalogIfEmpty()
+            syncCatalogFromSupabase()
         }
     }
 
-    private suspend fun seedInitialCatalogIfEmpty() {
-        // 1. Try syncing from remote Supabase table first
+    suspend fun syncCatalogFromSupabase(): List<Movie> = withContext(Dispatchers.IO) {
         try {
+            // 1. Purge legacy mock/demo movie IDs from Room database
+            val legacyMockIds = listOf("m_cyber_01", "m_space_02", "m_shadow_03", "m_chrono_04", "m_abyss_05")
+            movieDao.deleteMoviesByIds(legacyMockIds)
+
+            // 2. Fetch real verified movies directly from Supabase PostgreSQL table
             val remoteSupabaseMovies = supabaseDbClient.getMovies()
             if (remoteSupabaseMovies.isNotEmpty()) {
+                val remoteIds = remoteSupabaseMovies.map { it.id }.toSet()
+                
+                // Clear any local movies that no longer exist in Supabase
+                val currentLocalList = movieDao.getAllMoviesList()
+                val staleIds = currentLocalList.filter { it.id !in remoteIds }.map { it.id }
+                if (staleIds.isNotEmpty()) {
+                    movieDao.deleteMoviesByIds(staleIds)
+                }
+
+                // Insert / update verified movies with resolved CDN URLs
                 remoteSupabaseMovies.forEach { movie ->
-                    movieDao.insertMovie(MovieEntity.fromDomain(movie))
+                    val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
+                    val canonicalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
+                    val canonicalStream = if (canonicalKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalKey) else movie.videoStreamUrl
+                    val canonicalCover = if (canonicalCoverKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalCoverKey) else movie.coverUrl
+
+                    val verifiedMovie = movie.copy(
+                        videoKey = canonicalKey,
+                        coverKey = canonicalCoverKey,
+                        videoStreamUrl = canonicalStream,
+                        coverUrl = canonicalCover,
+                        uploadStatus = "completed"
+                    )
+                    movieDao.insertMovie(MovieEntity.fromDomain(verifiedMovie))
                 }
-                Log.d(TAG, "Synced catalog from Supabase with ${remoteSupabaseMovies.size} verified movies")
-                return
+                Log.d(TAG, "Successfully synced ${remoteSupabaseMovies.size} real movies from Supabase")
+                return@withContext remoteSupabaseMovies
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Supabase catalog fetch note: ${e.message}")
+            Log.e(TAG, "Error syncing catalog from Supabase: ${e.message}", e)
         }
-
-        // 2. Fallback: Try syncing from remote Firestore
-        try {
-            val remoteMovies = firestoreService.fetchMovies()
-            if (remoteMovies.isNotEmpty()) {
-                remoteMovies.forEach { movie ->
-                    movieDao.insertMovie(MovieEntity.fromDomain(movie))
-                    // Push to Supabase so edge cache is primed
-                    repositoryScope.launch { supabaseDbClient.upsertMovie(movie) }
-                }
-                return
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Firestore sync note: ${e.message}")
-        }
-
-        if (movieDao.getMovieCount() == 0) {
-            val initialMovies = listOf(
-                Movie(
-                    id = "m_cyber_01",
-                    title = "Neon Horizon: 2099",
-                    description = "In a rain-drenched dystopian metropolis powered by rogue AI, a lone courier discovers a cipher that could bring down the central grid.",
-                    genres = listOf("Sci-Fi", "Cyberpunk", "Thriller"),
-                    coverUrl = "https://images.unsplash.com/photo-1578632767115-351597cf2477?w=800&auto=format&fit=crop&q=80",
-                    videoKey = "movies/neon_horizon_2099.mp4",
-                    videoStreamUrl = "https://media.w3.org/2010/05/sintel/trailer.mp4",
-                    durationMinutes = 128,
-                    fileSizeMb = 1420,
-                    releaseYear = 2026,
-                    rating = 4.9,
-                    cast = listOf("Elena Rostova", "Kaelen Voss", "Marcus Sterling"),
-                    isFeatured = true
-                ),
-                Movie(
-                    id = "m_space_02",
-                    title = "Solaris Echo",
-                    description = "An exploration vessel stranded near an event horizon encounters impossible anomalies that reflect the crew's deepest regrets.",
-                    genres = listOf("Sci-Fi", "Mystery", "Drama"),
-                    coverUrl = "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800&auto=format&fit=crop&q=80",
-                    videoKey = "movies/solaris_echo.mp4",
-                    videoStreamUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
-                    durationMinutes = 144,
-                    fileSizeMb = 2100,
-                    releaseYear = 2025,
-                    rating = 4.8,
-                    cast = listOf("Siddharth Roy", "Amara Chen", "Tariq Morales"),
-                    isFeatured = true
-                ),
-                Movie(
-                    id = "m_shadow_03",
-                    title = "The Obsidian Protocol",
-                    description = "When a top-secret black-ops satellite drops out of orbit, an elite tactical team races against time through frozen Scandinavian mountains.",
-                    genres = listOf("Action", "Thriller"),
-                    coverUrl = "https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=800&auto=format&fit=crop&q=80",
-                    videoKey = "movies/obsidian_protocol.mp4",
-                    videoStreamUrl = "https://media.w3.org/2010/05/video/movie_300.mp4",
-                    durationMinutes = 112,
-                    fileSizeMb = 1150,
-                    releaseYear = 2025,
-                    rating = 4.6,
-                    cast = listOf("Victor Draven", "Natasha Grey"),
-                    isFeatured = false
-                ),
-                Movie(
-                    id = "m_chrono_04",
-                    title = "Chronos Divide",
-                    description = "A quantum physicist accidentally fractures the timeline, waking up each day in an alternate timeline where history unfolded differently.",
-                    genres = listOf("Sci-Fi", "Mind-Bending"),
-                    coverUrl = "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800&auto=format&fit=crop&q=80",
-                    videoKey = "movies/chronos_divide.mp4",
-                    videoStreamUrl = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
-                    durationMinutes = 135,
-                    fileSizeMb = 1680,
-                    releaseYear = 2024,
-                    rating = 4.7,
-                    cast = listOf("David Miller", "Seraphina Lin"),
-                    isFeatured = true
-                ),
-                Movie(
-                    id = "m_abyss_05",
-                    title = "Midnight Mariana",
-                    description = "Seven miles below sea level in the deepest trench on Earth, deep-sea drillers awake something ancient and predatory.",
-                    genres = listOf("Horror", "Thriller", "Sci-Fi"),
-                    coverUrl = "https://images.unsplash.com/photo-1551244072-5d12893278ab?w=800&auto=format&fit=crop&q=80",
-                    videoKey = "movies/midnight_mariana.mp4",
-                    videoStreamUrl = "https://media.w3.org/2010/05/sintel/trailer.mp4",
-                    durationMinutes = 98,
-                    fileSizeMb = 980,
-                    releaseYear = 2026,
-                    rating = 4.5,
-                    cast = listOf("Jason Hawke", "Chloe Mercer"),
-                    isFeatured = false
-                )
-            )
-
-            initialMovies.forEach { movie ->
-                movieDao.insertMovie(MovieEntity.fromDomain(movie))
-                firestoreService.saveMovie(movie)
-                repositoryScope.launch {
-                    supabaseDbClient.upsertMovie(movie)
-                }
-            }
-        } else {
-            // Auto-heal / clean up any existing movies in Room that have obsolete cartoon URLs
-            try {
-                val existingList = movieDao.getAllMoviesList()
-                for (movieEntity in existingList) {
-                    val currentStream = movieEntity.videoStreamUrl
-                    if (currentStream.contains("bunny/trailer.mp4") ||
-                        currentStream.contains("BigBuckBunny.mp4")) {
-                        val fixedUrl = when (movieEntity.id) {
-                            "m_space_02" -> "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4"
-                            "m_cyber_01" -> "https://media.w3.org/2010/05/sintel/trailer.mp4"
-                            "m_shadow_03" -> "https://media.w3.org/2010/05/video/movie_300.mp4"
-                            "m_chrono_04" -> "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
-                            "m_abyss_05" -> "https://media.w3.org/2010/05/sintel/trailer.mp4"
-                            else -> "" // Don't replace custom user movies with a cartoon!
-                        }
-                        movieDao.updateMovie(movieEntity.copy(videoStreamUrl = fixedUrl))
-                        Log.d(TAG, "Replaced legacy cartoon URL on ${movieEntity.title} with clean source: $fixedUrl")
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Movie URL migration note: ${e.message}")
-            }
-        }
+        emptyList()
     }
 
     // Movies
@@ -531,31 +432,6 @@ class MovieRepository(
             supabaseDbClient.deleteMovie(movieId)
         } catch (e: Exception) {
             Log.w(TAG, "Supabase delete warning: ${e.message}")
-        }
-    }
-
-    suspend fun syncCatalogFromSupabase(): List<Movie> = withContext(Dispatchers.IO) {
-        try {
-            val movies = supabaseDbClient.getMovies()
-            if (movies.isNotEmpty()) {
-                movies.forEach { movie ->
-                    val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
-                    val canonicalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
-                    val canonicalStream = if (canonicalKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalKey) else movie.videoStreamUrl
-                    val canonicalCover = if (canonicalCoverKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalCoverKey) else movie.coverUrl
-                    val canonicalMovie = movie.copy(
-                        videoKey = canonicalKey,
-                        coverKey = canonicalCoverKey,
-                        videoStreamUrl = canonicalStream,
-                        coverUrl = canonicalCover
-                    )
-                    movieDao.insertMovie(MovieEntity.fromDomain(canonicalMovie))
-                }
-            }
-            movies
-        } catch (e: Exception) {
-            Log.w(TAG, "syncCatalogFromSupabase error: ${e.message}")
-            emptyList()
         }
     }
 

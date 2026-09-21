@@ -39,6 +39,16 @@ class MovieViewModel(
     private val _selectedYear = MutableStateFlow<Int?>(null)
     val selectedYear = _selectedYear.asStateFlow()
 
+    init {
+        refreshCatalog()
+    }
+
+    fun refreshCatalog() {
+        viewModelScope.launch {
+            repository.syncCatalogFromSupabase()
+        }
+    }
+
     val uiState: StateFlow<MovieUiState> = combine(
         repository.getAllMovies(),
         repository.getFeaturedMovies(),

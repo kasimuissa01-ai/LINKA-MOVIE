@@ -99,6 +99,7 @@ fun HomeScreen(
     ) { _ -> }
 
     LaunchedEffect(Unit) {
+        movieViewModel.refreshCatalog()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -204,46 +205,63 @@ fun HomeScreen(
 
         item { Spacer(modifier = Modifier.height(24.dp)) }
 
-        // Popular Movies Row
-        item {
-            MovieRowSection(
-                title = "Popular on MovieRoom",
-                movies = state.popularMovies,
-                onMovieClick = onMovieClick
-            )
+        // All Uploaded Movies
+        if (state.allMovies.isNotEmpty()) {
+            item {
+                MovieRowSection(
+                    title = "All Movies",
+                    movies = state.allMovies,
+                    onMovieClick = onMovieClick
+                )
+            }
+            item { Spacer(modifier = Modifier.height(24.dp)) }
         }
 
-        item { Spacer(modifier = Modifier.height(24.dp)) }
+        // Popular Movies Row
+        if (state.popularMovies.isNotEmpty()) {
+            item {
+                MovieRowSection(
+                    title = "Popular on MovieRoom",
+                    movies = state.popularMovies,
+                    onMovieClick = onMovieClick
+                )
+            }
+            item { Spacer(modifier = Modifier.height(24.dp)) }
+        }
 
         // Sci-Fi & Cyberpunk Row
-        item {
-            MovieRowSection(
-                title = "Sci-Fi & Cyberpunk",
-                movies = state.sciFiMovies,
-                onMovieClick = onMovieClick
-            )
+        if (state.sciFiMovies.isNotEmpty()) {
+            item {
+                MovieRowSection(
+                    title = "Sci-Fi & Cyberpunk",
+                    movies = state.sciFiMovies,
+                    onMovieClick = onMovieClick
+                )
+            }
+            item { Spacer(modifier = Modifier.height(24.dp)) }
         }
-
-        item { Spacer(modifier = Modifier.height(24.dp)) }
 
         // Action & Thrillers
-        item {
-            MovieRowSection(
-                title = "Action & Thrillers",
-                movies = state.actionMovies,
-                onMovieClick = onMovieClick
-            )
+        if (state.actionMovies.isNotEmpty()) {
+            item {
+                MovieRowSection(
+                    title = "Action & Thrillers",
+                    movies = state.actionMovies,
+                    onMovieClick = onMovieClick
+                )
+            }
+            item { Spacer(modifier = Modifier.height(24.dp)) }
         }
 
-        item { Spacer(modifier = Modifier.height(24.dp)) }
-
         // Cinematic Epics & Drama
-        item {
-            MovieRowSection(
-                title = "Cinematic Epics",
-                movies = state.dramaMovies,
-                onMovieClick = onMovieClick
-            )
+        if (state.dramaMovies.isNotEmpty()) {
+            item {
+                MovieRowSection(
+                    title = "Cinematic Epics",
+                    movies = state.dramaMovies,
+                    onMovieClick = onMovieClick
+                )
+            }
         }
     }
 }
@@ -521,6 +539,8 @@ fun MovieRowSection(
     onMovieClick: (Movie) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    if (movies.isEmpty()) return
+
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
