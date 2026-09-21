@@ -12,13 +12,13 @@ import android.util.Log
  */
 object R2UrlUtils {
     private const val TAG = "R2UrlUtils"
-    const val R2_PUBLIC_BASE_URL = "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev"
-    const val PUBLIC_R2_DOMAIN = "pub-5399f62037f94260b0f54c88a9297134.r2.dev"
+    const val R2_PUBLIC_BASE_URL = "https://movie-cdn.grapherkidd0.workers.dev"
+    const val PUBLIC_R2_DOMAIN = "movie-cdn.grapherkidd0.workers.dev"
     const val BUCKET_NAME = "stories"
 
     /**
      * Constructs the full public CDN URL dynamically at runtime from an R2 object key.
-     * Example: "videos/1695123456789-movie.mp4" -> "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/videos/1695123456789-movie.mp4"
+     * Example: "videos/1695123456789-movie.mp4" -> "https://movie-cdn.grapherkidd0.workers.dev/videos/1695123456789-movie.mp4"
      */
     fun buildUrl(key: String?): String {
         val trimmed = key?.trim().orEmpty()
@@ -31,9 +31,14 @@ object R2UrlUtils {
 
         // 2. Already full HTTP/HTTPS URL
         if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-            // If it is a raw unauthenticated S3 API URL (*.r2.cloudflarestorage.com), convert to public CDN URL
+            // If it is a raw unauthenticated S3 API URL (*.r2.cloudflarestorage.com), convert to worker CDN URL
             if (trimmed.contains(".r2.cloudflarestorage.com")) {
                 val cleanKey = extractKeyFromS3Url(trimmed)
+                return if (cleanKey.isNotBlank()) "$R2_PUBLIC_BASE_URL/$cleanKey" else trimmed
+            }
+            // If it is an old r2.dev URL, convert to worker CDN URL for better performance and range support
+            if (trimmed.contains(".r2.dev/")) {
+                val cleanKey = trimmed.substringAfter(".r2.dev/").trimStart('/')
                 return if (cleanKey.isNotBlank()) "$R2_PUBLIC_BASE_URL/$cleanKey" else trimmed
             }
             return trimmed
@@ -69,6 +74,11 @@ object R2UrlUtils {
 
         if (trimmedStream.contains(".r2.dev/")) {
             val keyFromUrl = trimmedStream.substringAfter(".r2.dev/").trimStart('/')
+            return buildUrl(keyFromUrl)
+        }
+
+        if (trimmedStream.contains("movie-cdn.grapherkidd0.workers.dev/")) {
+            val keyFromUrl = trimmedStream.substringAfter("movie-cdn.grapherkidd0.workers.dev/").trimStart('/')
             return buildUrl(keyFromUrl)
         }
 
