@@ -214,7 +214,9 @@ fun AppNavigation(
                             navController.navigate(Screen.MovieDetail.createRoute(movie.id))
                         },
                         onPlayClick = { movie ->
-                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id))
+                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id)) {
+                                launchSingleTop = true
+                            }
                         }
                     )
                 }
@@ -235,7 +237,9 @@ fun AppNavigation(
                         downloadViewModel = downloadViewModel,
                         movieViewModel = movieViewModel,
                         onPlayMovie = { movie ->
-                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id))
+                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id)) {
+                                launchSingleTop = true
+                            }
                         },
                         onBrowseCatalog = {
                             navController.navigate(Screen.Home.route)
@@ -272,7 +276,9 @@ fun AppNavigation(
                         playerViewModel = playerViewModel,
                         onBackClick = { navController.popBackStack() },
                         onPlayFullscreenClick = { selectedMovie, startPos ->
-                            navController.navigate(Screen.VideoPlayer.createRoute(selectedMovie.id, startPos))
+                            navController.navigate(Screen.VideoPlayer.createRoute(selectedMovie.id, startPos)) {
+                                launchSingleTop = true
+                            }
                         },
                         onSelectRecommendedMovie = { recommendedMovie ->
                             navController.navigate(Screen.MovieDetail.createRoute(recommendedMovie.id)) {

@@ -47,6 +47,7 @@ class SupabaseClientUnitTest {
             id = "m_test_99",
             title = "Inception Protocol",
             description = "A mind-bending heist thriller.",
+            coverKey = "posters/inception.jpg",
             coverUrl = "https://example.com/posters/inception.jpg",
             videoStreamUrl = "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/movies/inception.mp4",
             videoKey = "movies/inception.mp4",
@@ -61,17 +62,17 @@ class SupabaseClientUnitTest {
         assertEquals("m_test_99", entity.id)
         assertEquals("Inception Protocol", entity.title)
         assertEquals("A mind-bending heist thriller.", entity.description)
-        assertEquals("https://example.com/posters/inception.jpg", entity.thumbnailUrl)
+        assertEquals("https://movie-cdn.grapherkidd0.workers.dev/posters/inception.jpg", entity.thumbnailUrl)
         assertEquals("https://example.com/posters/inception.jpg", entity.coverUrl)
-        assertEquals("https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/movies/inception.mp4", entity.r2StreamingUrl)
+        assertEquals("https://movie-cdn.grapherkidd0.workers.dev/movies/inception.mp4", entity.r2StreamingUrl)
         assertEquals("https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/movies/inception.mp4", entity.videoStreamUrl)
 
         // Verify domain conversion
         val domainMovie = entity.toDomain()
         assertEquals(entity.id, domainMovie.id)
         assertEquals(entity.title, domainMovie.title)
-        assertEquals(entity.coverUrl, domainMovie.coverUrl)
-        assertEquals(entity.videoStreamUrl, domainMovie.videoStreamUrl)
+        assertEquals("https://movie-cdn.grapherkidd0.workers.dev/posters/inception.jpg", domainMovie.coverUrl)
+        assertEquals("https://movie-cdn.grapherkidd0.workers.dev/movies/inception.mp4", domainMovie.videoStreamUrl)
 
         // Verify JSON roundtrip
         val json = entity.toJsonObject()
@@ -87,7 +88,7 @@ class SupabaseClientUnitTest {
         val initialState = com.example.presentation.viewmodel.PlayerUiState()
         assertTrue(initialState.isLoading)
         assertTrue(initialState.isResolvingStreamUrl)
-        assertEquals("Connecting to Supabase repository...", initialState.loadingStage)
+        assertEquals("Buffering cinema stream...", initialState.loadingStage)
 
         val fetchingState = initialState.copy(
             loadingStage = "Fetching stream URL from Supabase repository..."

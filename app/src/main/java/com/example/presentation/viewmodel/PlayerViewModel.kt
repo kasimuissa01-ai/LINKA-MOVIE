@@ -78,9 +78,9 @@ data class PlayerUiState(
     val streamDiagnostic: StreamDiagnosticInfo? = null,
     val currentPlaybackUrl: String = "",
     val isResolvingStreamUrl: Boolean = true,
-    val loadingStage: String = "Connecting to Supabase repository...",
-    val isFullscreen: Boolean = false,
-    val orientationMode: OrientationMode = OrientationMode.SENSOR
+    val loadingStage: String = "Buffering cinema stream...",
+    val isFullscreen: Boolean = true,
+    val orientationMode: OrientationMode = OrientationMode.USER_LANDSCAPE
 )
 
 @OptIn(UnstableApi::class)
@@ -128,14 +128,18 @@ class PlayerViewModel(
         // If player already exists for THIS SAME movie, seek to target and ensure playback is active
         if (exoPlayer != null && isSameMovie) {
             exoPlayer?.let { player ->
+                if (player.playbackState == Player.STATE_IDLE) {
+                    player.prepare()
+                }
                 if (targetStartPos > 0L && Math.abs(player.currentPosition - targetStartPos) > 1500L) {
                     player.seekTo(targetStartPos)
                 }
                 player.playWhenReady = true
                 player.play()
                 _uiState.value = _uiState.value.copy(
-                    isLoading = player.playbackState == Player.STATE_BUFFERING,
+                    isLoading = player.playbackState == Player.STATE_BUFFERING || player.playbackState == Player.STATE_IDLE,
                     isResolvingStreamUrl = false,
+                    loadingStage = "Buffering cinema stream...",
                     isPlaying = true,
                     currentPositionMs = player.currentPosition.coerceAtLeast(0L),
                     durationMs = player.duration.coerceAtLeast(0L),
@@ -748,7 +752,11 @@ class PlayerViewModel(
         doubleTapDismissJob?.cancel()
         exoPlayer?.release()
         exoPlayer = null
-        _uiState.value = PlayerUiState()
+        currentMovieId = null
+        _uiState.value = PlayerUiState(
+            orientationMode = OrientationMode.USER_LANDSCAPE,
+            loadingStage = "Buffering cinema stream..."
+        )
     }
 
     override fun onCleared() {

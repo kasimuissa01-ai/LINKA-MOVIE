@@ -177,7 +177,7 @@ fun VideoPlayerScreen(
                     act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
                 }
                 com.example.presentation.viewmodel.OrientationMode.USER_LANDSCAPE -> {
-                    act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
                 }
                 com.example.presentation.viewmodel.OrientationMode.USER_PORTRAIT -> {
                     act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -188,6 +188,7 @@ fun VideoPlayerScreen(
 
     // Deterministic Landscape + Immersive Fullscreen lifecycle
     DisposableEffect(movie.id) {
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         playerViewModel.initializePlayer(context, movie, initialPositionMs)
         playerViewModel.setOrientationMode(com.example.presentation.viewmodel.OrientationMode.USER_LANDSCAPE)
 
@@ -601,9 +602,9 @@ fun VideoPlayerScreen(
             }
         }
 
-        // 5. Cinematic Loading State Overlay (Displays while fetching from Supabase repo or buffering)
+        // 5. Cinematic Loading State Overlay (Displays ONLY while initially resolving stream URL)
         CinematicLoadingOverlay(
-            visible = uiState.isLoading && uiState.errorMessage == null,
+            visible = uiState.isResolvingStreamUrl && uiState.errorMessage == null,
             movie = movie,
             loadingStage = uiState.loadingStage,
             isResolvingStreamUrl = uiState.isResolvingStreamUrl,
@@ -612,6 +613,28 @@ fun VideoPlayerScreen(
                 onBackClick()
             }
         )
+
+        // 5b. Sleek unobtrusive center buffering spinner when stream is already resolved
+        if (uiState.isLoading && !uiState.isResolvingStreamUrl && uiState.errorMessage == null) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.65f),
+                    shape = CircleShape,
+                    modifier = Modifier.size(68.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        CircularProgressIndicator(
+                            color = CinematicRed,
+                            strokeWidth = 3.5.dp,
+                            modifier = Modifier.size(38.dp)
+                        )
+                    }
+                }
+            }
+        }
 
         // 6. Error notice banner with full diagnostics breakdown
         uiState.errorMessage?.let { errorText ->
@@ -999,7 +1022,7 @@ fun VideoPlayerScreen(
                                         activity?.let { act ->
                                             val currentOrient = act.requestedOrientation
                                             if (currentOrient == ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE) {
-                                                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                                act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
                                                 playerViewModel.setOrientationMode(com.example.presentation.viewmodel.OrientationMode.USER_LANDSCAPE)
                                             } else {
                                                 act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
