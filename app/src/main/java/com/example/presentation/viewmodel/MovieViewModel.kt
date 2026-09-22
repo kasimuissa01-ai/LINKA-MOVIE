@@ -19,6 +19,7 @@ data class MovieUiState(
     val sciFiMovies: List<Movie> = emptyList(),
     val actionMovies: List<Movie> = emptyList(),
     val dramaMovies: List<Movie> = emptyList(),
+    val horrorMovies: List<Movie> = emptyList(),
     val selectedGenre: String? = null,
     val selectedYear: Int? = null,
     val searchQuery: String = "",
@@ -39,17 +40,25 @@ class MovieViewModel(
     private val _selectedYear = MutableStateFlow<Int?>(null)
     val selectedYear = _selectedYear.asStateFlow()
 
+    private val _isRefreshing = MutableStateFlow(true)
+    val isRefreshing = _isRefreshing.asStateFlow()
+
     init {
         refreshCatalog()
     }
 
     fun refreshCatalog() {
         viewModelScope.launch {
-            repository.syncCatalogFromSupabase()
+            _isRefreshing.value = true
+            try {
+                repository.syncCatalogFromSupabase()
+            } finally {
+                _isRefreshing.value = false
+            }
         }
     }
 
-    val uiState: StateFlow<MovieUiState> = combine(
+    private val _catalogFlow = combine(
         repository.getAllMovies(),
         repository.getFeaturedMovies(),
         _searchQuery,
@@ -73,12 +82,20 @@ class MovieViewModel(
             sciFiMovies = allMovies.filter { it.genres.any { g -> g.contains("Sci-Fi", ignoreCase = true) } },
             actionMovies = allMovies.filter { it.genres.any { g -> g.contains("Action", ignoreCase = true) } },
             dramaMovies = allMovies.filter { it.genres.any { g -> g.contains("Adventure", ignoreCase = true) || g.contains("Drama", ignoreCase = true) || g.contains("Nature", ignoreCase = true) } },
+            horrorMovies = allMovies.filter { it.genres.any { g -> g.contains("Horror", ignoreCase = true) || g.contains("Thriller", ignoreCase = true) } },
             selectedGenre = genre,
             selectedYear = year,
             searchQuery = query,
             searchResults = filteredForSearch,
             isLoading = false
         )
+    }
+
+    val uiState: StateFlow<MovieUiState> = combine(
+        _catalogFlow,
+        _isRefreshing
+    ) { state, refreshing ->
+        state.copy(isLoading = refreshing && state.allMovies.isEmpty())
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),

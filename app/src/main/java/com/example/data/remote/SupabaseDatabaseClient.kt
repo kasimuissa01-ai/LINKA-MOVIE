@@ -42,8 +42,7 @@ class SupabaseDatabaseClient(
      * Filters for upload_status = 'completed' (or legacy null status) to prevent partial/failed uploads.
      */
     suspend fun getMovies(): List<Movie> = withContext(Dispatchers.IO) {
-        // Query only completed uploads
-        val endpoint = "$supabaseUrl/rest/v1/movies?select=*&or=(upload_status.eq.completed,upload_status.is.null)&order=created_at.desc"
+        val endpoint = "$supabaseUrl/rest/v1/movies?select=*&order=created_at.desc"
         val request = Request.Builder()
             .url(endpoint)
             .header("apikey", anonKey)
@@ -82,7 +81,7 @@ class SupabaseDatabaseClient(
      * Fetches all published movies directly as [SupabaseMovieEntity] instances.
      */
     suspend fun getSupabaseMovieEntities(): List<SupabaseMovieEntity> = withContext(Dispatchers.IO) {
-        val endpoint = "$supabaseUrl/rest/v1/movies?select=*&or=(upload_status.eq.completed,upload_status.is.null)&order=created_at.desc"
+        val endpoint = "$supabaseUrl/rest/v1/movies?select=*&order=created_at.desc"
         val request = Request.Builder()
             .url(endpoint)
             .header("apikey", anonKey)

@@ -27,7 +27,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -35,6 +37,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -54,6 +57,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -115,10 +119,66 @@ fun HomeScreen(
 
     if (state.isLoading) {
         Box(
-            modifier = modifier.fillMaxSize(),
+            modifier = modifier
+                .fillMaxSize()
+                .background(ObsidianBlack),
             contentAlignment = Alignment.Center
         ) {
-            CircularProgressIndicator(color = CinematicRed)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = CinematicRed)
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Loading movies...",
+                    color = TextSecondary,
+                    fontSize = 14.sp
+                )
+            }
+        }
+        return
+    }
+
+    if (state.allMovies.isEmpty()) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(ObsidianBlack)
+                .padding(32.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Movie,
+                    contentDescription = null,
+                    tint = TextSecondary,
+                    modifier = Modifier.size(64.dp)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "No Movies in Catalog",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Tap refresh to sync your movies from the cloud library",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+                Button(
+                    onClick = { movieViewModel.refreshCatalog() },
+                    colors = ButtonDefaults.buttonColors(containerColor = CinematicRed)
+                ) {
+                    Icon(imageVector = Icons.Default.Refresh, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Refresh Catalog")
+                }
+            }
         }
         return
     }
@@ -247,6 +307,18 @@ fun HomeScreen(
                 MovieRowSection(
                     title = "Action & Thrillers",
                     movies = state.actionMovies,
+                    onMovieClick = onMovieClick
+                )
+            }
+            item { Spacer(modifier = Modifier.height(24.dp)) }
+        }
+
+        // Horror & Suspense
+        if (state.horrorMovies.isNotEmpty()) {
+            item {
+                MovieRowSection(
+                    title = "Horror & Suspense",
+                    movies = state.horrorMovies,
                     onMovieClick = onMovieClick
                 )
             }

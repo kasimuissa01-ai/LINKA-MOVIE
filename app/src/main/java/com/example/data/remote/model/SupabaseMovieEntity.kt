@@ -125,7 +125,6 @@ data class SupabaseMovieEntity(
             put("cover_url", finalCoverUrl)
             put("video_stream_url", finalStreamUrl)
             put("video_key", canonicalVideoKey)
-            put("upload_status", uploadStatus.ifBlank { "completed" })
             put("duration_minutes", durationMinutes)
             put("file_size_mb", fileSizeMb)
             put("release_year", releaseYear)
