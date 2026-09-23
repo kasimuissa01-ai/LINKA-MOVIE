@@ -141,8 +141,7 @@ class AdminViewModel(
             description = description,
             genres = genres,
             coverKey = R2UrlUtils.extractKeyFromAnyUrl(coverUrl),
-            coverUrl = if (coverUrl.isNotBlank()) R2UrlUtils.buildUrl(coverUrl)
-            else "https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=800&auto=format&fit=crop&q=80",
+            coverUrl = if (coverUrl.isNotBlank()) R2UrlUtils.buildUrl(coverUrl) else "",
             videoKey = fallbackVideoKey,
             videoStreamUrl = if (cleanStream.isNotBlank()) R2UrlUtils.buildUrl(cleanStream) else "",
             durationMinutes = 118,
@@ -160,7 +159,7 @@ class AdminViewModel(
             // Upload cover image to Cloudflare R2 if it is a local image URI
             var effectiveCoverKey = R2UrlUtils.extractKeyFromAnyUrl(coverUrl)
             var effectiveCoverUrl = coverUrl
-            val isLocalCover = coverUrl.startsWith("content://") || coverUrl.startsWith("file://") || coverUrl.startsWith("/")
+            val isLocalCover = coverUrl.startsWith("content://") || coverUrl.startsWith("file://") || coverUrl.startsWith("file:/") || coverUrl.startsWith("/")
             if (isLocalCover) {
                 try {
                     _uploadState.value = UploadProgressState(
@@ -168,14 +167,19 @@ class AdminViewModel(
                         overallProgress = 0.02f,
                         statusMessage = "Uploading cover poster to Cloudflare R2..."
                     )
+                    val coverUri = if (coverUrl.startsWith("/")) {
+                        android.net.Uri.fromFile(java.io.File(coverUrl))
+                    } else {
+                        android.net.Uri.parse(coverUrl)
+                    }
                     val r2CoverKey = repository.uploadMovieCoverWithRender(
                         context = context,
-                        imageUri = android.net.Uri.parse(coverUrl),
+                        imageUri = coverUri,
                         customFilename = "${sanitizedTitle}_poster.jpg"
                     )
                     effectiveCoverKey = r2CoverKey
                     effectiveCoverUrl = R2UrlUtils.buildUrl(r2CoverKey)
-                    Log.i("AdminViewModel", "Cover successfully uploaded to R2. Key: $r2CoverKey")
+                    Log.i("AdminViewModel", "Cover successfully uploaded to R2. Key: $r2CoverKey, URL: $effectiveCoverUrl")
                 } catch (e: Exception) {
                     Log.w("AdminViewModel", "Cover upload to R2 encountered issue: ${e.message}. Preserving original path.")
                 }
@@ -295,21 +299,26 @@ class AdminViewModel(
         viewModelScope.launch {
             var finalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(coverUrl)
             var finalCoverUrl = coverUrl
-            val isLocalCover = coverUrl.startsWith("content://") || coverUrl.startsWith("file://") || coverUrl.startsWith("/")
+            val isLocalCover = coverUrl.startsWith("content://") || coverUrl.startsWith("file://") || coverUrl.startsWith("file:/") || coverUrl.startsWith("/")
             if (isLocalCover && context != null) {
                 try {
                     _uploadState.value = UploadProgressState(
                         isUploading = true,
                         statusMessage = "Uploading cover poster to Cloudflare R2..."
                     )
+                    val coverUri = if (coverUrl.startsWith("/")) {
+                        android.net.Uri.fromFile(java.io.File(coverUrl))
+                    } else {
+                        android.net.Uri.parse(coverUrl)
+                    }
                     val r2CoverKey = repository.uploadMovieCoverWithRender(
                         context = context,
-                        imageUri = android.net.Uri.parse(coverUrl),
+                        imageUri = coverUri,
                         customFilename = "${sanitizedTitle}_poster.jpg"
                     )
                     finalCoverKey = r2CoverKey
                     finalCoverUrl = R2UrlUtils.buildUrl(r2CoverKey)
-                    Log.i("AdminViewModel", "Cover image uploaded directly to R2. Key: $r2CoverKey")
+                    Log.i("AdminViewModel", "Cover image uploaded directly to R2. Key: $r2CoverKey, URL: $finalCoverUrl")
                 } catch (e: Exception) {
                     Log.w("AdminViewModel", "Direct cover upload warning: ${e.message}")
                 }
@@ -370,21 +379,26 @@ class AdminViewModel(
         viewModelScope.launch {
             var finalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
             var finalCoverUrl = movie.coverUrl
-            val isLocalCover = finalCoverUrl.startsWith("content://") || finalCoverUrl.startsWith("file://") || finalCoverUrl.startsWith("/")
+            val isLocalCover = finalCoverUrl.startsWith("content://") || finalCoverUrl.startsWith("file://") || finalCoverUrl.startsWith("file:/") || finalCoverUrl.startsWith("/")
             if (isLocalCover && context != null) {
                 try {
                     _uploadState.value = UploadProgressState(
                         isUploading = true,
                         statusMessage = "Uploading cover poster to Cloudflare R2..."
                     )
+                    val coverUri = if (finalCoverUrl.startsWith("/")) {
+                        android.net.Uri.fromFile(java.io.File(finalCoverUrl))
+                    } else {
+                        android.net.Uri.parse(finalCoverUrl)
+                    }
                     val r2CoverKey = repository.uploadMovieCoverWithRender(
                         context = context,
-                        imageUri = android.net.Uri.parse(finalCoverUrl),
+                        imageUri = coverUri,
                         customFilename = "${movie.title.lowercase().replace(" ", "_")}_poster.jpg"
                     )
                     finalCoverKey = r2CoverKey
                     finalCoverUrl = R2UrlUtils.buildUrl(r2CoverKey)
-                    Log.i("AdminViewModel", "Updated cover uploaded directly to R2. Key: $r2CoverKey")
+                    Log.i("AdminViewModel", "Updated cover uploaded directly to R2. Key: $r2CoverKey, URL: $finalCoverUrl")
                 } catch (e: Exception) {
                     Log.w("AdminViewModel", "Cover upload during movie update warning: ${e.message}")
                 }

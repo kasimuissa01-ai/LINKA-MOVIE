@@ -118,19 +118,32 @@ object R2UrlUtils {
 
     /**
      * Extracts pure object key from any URL or key string.
+     * Preserves external non-R2 URLs (such as Unsplash, TMDB, or arbitrary HTTP links).
      */
     fun extractKeyFromAnyUrl(raw: String): String {
         val trimmed = raw.trim().trimStart('/')
+        if (trimmed.isBlank()) return ""
+
+        // Local files or content URIs
+        if (trimmed.startsWith("content://") || trimmed.startsWith("file://") || trimmed.startsWith("file:/") || trimmed.startsWith("/")) {
+            return trimmed
+        }
+
         if (trimmed.contains(".r2.cloudflarestorage.com/")) {
             return extractKeyFromS3Url(trimmed)
         }
         if (trimmed.contains(".r2.dev/")) {
             return trimmed.substringAfter(".r2.dev/").trimStart('/')
         }
-        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-            val path = trimmed.substringAfter("://").substringAfter("/", "")
-            return path.trimStart('/')
+        if (trimmed.contains("movie-cdn.grapherkidd0.workers.dev/")) {
+            return trimmed.substringAfter("movie-cdn.grapherkidd0.workers.dev/").trimStart('/')
         }
+
+        // If it is an external URL (TMDB, Unsplash, etc.), keep the full URL intact
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            return trimmed
+        }
+
         return trimmed
     }
 }

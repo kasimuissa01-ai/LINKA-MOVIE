@@ -128,6 +128,9 @@ data class SupabaseMovieEntity(
             put("description", description)
             put("genres", JSONArray(genres))
             put("cover_url", finalCoverUrl)
+            if (canonicalCoverKey.isNotBlank()) {
+                put("cover_key", canonicalCoverKey)
+            }
             put("video_stream_url", finalStreamUrl)
             put("video_key", canonicalVideoKey)
             put("duration_minutes", durationMinutes)
@@ -155,6 +158,7 @@ data class SupabaseMovieEntity(
                     epArray.put(epObj)
                 }
                 put("episodes_json", epArray.toString())
+                put("episodes", epArray)
             }
         }
     }
@@ -212,32 +216,32 @@ data class SupabaseMovieEntity(
             val uploadStatus = obj.optString("upload_status", "completed").ifBlank { "completed" }
 
             val parsedEpisodes = mutableListOf<Episode>()
-            val epJson = obj.optString("episodes_json", "").ifBlank {
-                obj.optJSONArray("episodes")?.toString() ?: ""
+            val rawEpisodesObj = obj.opt("episodes_json") ?: obj.opt("episodes")
+            val epArray = when (rawEpisodesObj) {
+                is JSONArray -> rawEpisodesObj
+                is String -> if (rawEpisodesObj.isNotBlank()) runCatching { JSONArray(rawEpisodesObj) }.getOrNull() else null
+                else -> null
             }
-            if (epJson.isNotBlank()) {
-                try {
-                    val array = JSONArray(epJson)
-                    for (i in 0 until array.length()) {
-                        val item = array.getJSONObject(i)
-                        val epKey = R2UrlUtils.extractCleanVideoKey(item.optString("videoKey", ""), item.optString("videoStreamUrl", ""))
-                        val epStream = if (epKey.isNotBlank()) R2UrlUtils.buildUrl(epKey) else item.optString("videoStreamUrl", "")
-                        parsedEpisodes.add(
-                            Episode(
-                                id = item.optString("id", "${obj.optString("id")}_ep_${i + 1}"),
-                                movieId = item.optString("movieId", obj.optString("id")),
-                                episodeNumber = item.optInt("episodeNumber", i + 1),
-                                seasonNumber = item.optInt("seasonNumber", 1),
-                                title = item.optString("title", "Episode ${i + 1}"),
-                                description = item.optString("description", ""),
-                                videoKey = epKey,
-                                videoStreamUrl = epStream,
-                                durationMinutes = item.optInt("durationMinutes", 45),
-                                fileSizeMb = item.optLong("fileSizeMb", 250L)
-                            )
+            if (epArray != null) {
+                for (i in 0 until epArray.length()) {
+                    val item = epArray.optJSONObject(i) ?: continue
+                    val epKey = R2UrlUtils.extractCleanVideoKey(item.optString("videoKey", ""), item.optString("videoStreamUrl", ""))
+                    val epStream = if (epKey.isNotBlank()) R2UrlUtils.buildUrl(epKey) else item.optString("videoStreamUrl", "")
+                    parsedEpisodes.add(
+                        Episode(
+                            id = item.optString("id", "${obj.optString("id")}_ep_${i + 1}"),
+                            movieId = item.optString("movieId", obj.optString("id")),
+                            episodeNumber = item.optInt("episodeNumber", i + 1),
+                            seasonNumber = item.optInt("seasonNumber", 1),
+                            title = item.optString("title", "Episode ${i + 1}"),
+                            description = item.optString("description", ""),
+                            videoKey = epKey,
+                            videoStreamUrl = epStream,
+                            durationMinutes = item.optInt("durationMinutes", 45),
+                            fileSizeMb = item.optLong("fileSizeMb", 250L)
                         )
-                    }
-                } catch (e: Exception) { }
+                    )
+                }
             }
 
             return SupabaseMovieEntity(

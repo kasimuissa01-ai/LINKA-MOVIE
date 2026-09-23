@@ -47,6 +47,9 @@ import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.BrightnessLow
 import androidx.compose.material.icons.filled.BrightnessMedium
 import androidx.compose.material.icons.filled.ClosedCaption
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Forward10
@@ -55,6 +58,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
@@ -117,6 +121,7 @@ import com.example.presentation.viewmodel.PlayerViewModel
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
 import com.example.ui.theme.ElectricBlue
+import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.SurfaceElevated
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
@@ -148,12 +153,14 @@ fun VideoPlayerScreen(
     val coroutineScope = rememberCoroutineScope()
     val uiState by playerViewModel.uiState.collectAsState()
 
-    val currentEpisode = remember(movie, episodeId) {
-        if (!episodeId.isNullOrBlank()) movie.episodes.firstOrNull { it.id == episodeId } else null
+    var activeEpisodeId by remember(movie.id, episodeId) { mutableStateOf(episodeId) }
+    val currentEpisode = remember(movie, activeEpisodeId) {
+        if (!activeEpisodeId.isNullOrBlank()) movie.episodes.firstOrNull { it.id == activeEpisodeId } else null
     }
 
     var showSubtitleSheet by remember { mutableStateOf(false) }
     var showSpeedDialog by remember { mutableStateOf(false) }
+    var showEpisodeModal by remember { mutableStateOf(false) }
 
     // Helper to safely restore system UI and portrait orientation
     val restoreSystemUiAndOrientation: () -> Unit = {
@@ -572,20 +579,55 @@ fun VideoPlayerScreen(
                         }
                     }
 
-                    // Top Right Action: Subtitles & Audio
-                    IconButton(
-                        onClick = {
-                            showSubtitleSheet = true
-                            playerViewModel.restartControlsHideTimer()
-                        },
-                        modifier = Modifier.size(40.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ClosedCaption,
-                            contentDescription = "Audio and Subtitles",
-                            tint = if (uiState.selectedSubtitle != "Off") CinematicRed else Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
+                    // Top Right Actions: Episode selector (for series) + Subtitles & Audio
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (movie.episodes.isNotEmpty()) {
+                            Surface(
+                                color = Color.White.copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .clickable {
+                                        showEpisodeModal = true
+                                        playerViewModel.restartControlsHideTimer()
+                                    }
+                                    .testTag("player_episodes_selector_button")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.VideoLibrary,
+                                        contentDescription = "Episodes",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Episodes (${movie.episodes.size})",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+
+                        IconButton(
+                            onClick = {
+                                showSubtitleSheet = true
+                                playerViewModel.restartControlsHideTimer()
+                            },
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ClosedCaption,
+                                contentDescription = "Audio and Subtitles",
+                                tint = if (uiState.selectedSubtitle != "Off") CinematicRed else Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
                     }
                 }
 
@@ -866,6 +908,102 @@ fun VideoPlayerScreen(
             dismissButton = {
                 TextButton(onClick = { showSpeedDialog = false }) {
                     Text("Close", color = TextSecondary)
+                }
+            },
+            containerColor = SurfaceElevated
+        )
+    }
+
+    // Episode selector modal dialog
+    if (showEpisodeModal && movie.episodes.isNotEmpty()) {
+        AlertDialog(
+            onDismissRequest = { showEpisodeModal = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.VideoLibrary,
+                        contentDescription = null,
+                        tint = CinematicRed,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Select Episode",
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp
+                    )
+                }
+            },
+            text = {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 300.dp)
+                ) {
+                    items(movie.episodes.sortedBy { it.episodeNumber }) { ep ->
+                        val isCurrent = (ep.id == activeEpisodeId)
+                        Surface(
+                            color = if (isCurrent) CinematicRed.copy(alpha = 0.25f) else SurfaceDark,
+                            shape = RoundedCornerShape(8.dp),
+                            border = if (isCurrent) BorderStroke(1.2.dp, CinematicRed) else null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    activeEpisodeId = ep.id
+                                    showEpisodeModal = false
+                                    playerViewModel.initializePlayer(context, movie, 0L, ep.id)
+                                }
+                                .testTag("modal_select_episode_${ep.episodeNumber}")
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isCurrent) Icons.Default.PlayArrow else Icons.Default.VideoLibrary,
+                                    contentDescription = null,
+                                    tint = if (isCurrent) CinematicRed else TextSecondary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = if (ep.title.startsWith("Episode", ignoreCase = true)) {
+                                            ep.title
+                                        } else {
+                                            "Episode ${ep.episodeNumber}: ${ep.title}"
+                                        },
+                                        color = TextPrimary,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    if (ep.description.isNotBlank()) {
+                                        Text(
+                                            text = ep.description,
+                                            color = TextSecondary,
+                                            fontSize = 11.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "${ep.durationMinutes}m",
+                                    color = TextSecondary,
+                                    fontSize = 12.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showEpisodeModal = false }) {
+                    Text("Close", color = CinematicRed)
                 }
             },
             containerColor = SurfaceElevated

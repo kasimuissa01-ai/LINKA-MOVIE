@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.VolumeMute
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
@@ -241,6 +242,14 @@ fun MovieDetailScreen(
         }
     }
 
+    // Selected Episode state for series
+    var selectedEpisodeId by remember(movie.id) {
+        mutableStateOf(movie.episodes.firstOrNull()?.id)
+    }
+    val activeEpisode = remember(movie.id, selectedEpisodeId) {
+        movie.episodes.firstOrNull { it.id == selectedEpisodeId }
+    }
+
     // Auto-hide player controls overlay after 3 seconds
     LaunchedEffect(showPlayerControls, isPlaying) {
         if (showPlayerControls && isPlaying) {
@@ -257,6 +266,41 @@ fun MovieDetailScreen(
                 durationMs = inlinePlayer.duration.coerceAtLeast(0L)
             }
             delay(500)
+        }
+    }
+
+    // Dynamic stream loading whenever selectedEpisodeId or movie changes
+    LaunchedEffect(movie.id, selectedEpisodeId) {
+        val targetEpisode = movie.episodes.firstOrNull { it.id == selectedEpisodeId }
+        val epDownload = if (targetEpisode != null) {
+            downloads.find { (it.episodeId == targetEpisode.id || it.id == "${movie.id}_ep_${targetEpisode.id}") && it.movieId == movie.id }
+        } else downloadItem
+
+        val isEpOffline = epDownload?.status == DownloadStatus.COMPLETED
+        val storedEpPath = epDownload?.localFilePath?.trim().orEmpty()
+
+        val mediaUri = when {
+            isEpOffline && storedEpPath.startsWith("content://") -> storedEpPath
+            isEpOffline && storedEpPath.isNotBlank() && java.io.File(storedEpPath.removePrefix("file://")).exists() -> storedEpPath
+            targetEpisode != null -> {
+                val epKey = R2UrlUtils.extractCleanVideoKey(targetEpisode.videoKey, targetEpisode.videoStreamUrl)
+                if (epKey.isNotBlank()) R2UrlUtils.buildUrl(epKey) else targetEpisode.videoStreamUrl
+            }
+            else -> {
+                val movKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
+                if (movKey.isNotBlank()) R2UrlUtils.buildUrl(movKey) else movie.videoStreamUrl
+            }
+        }
+
+        if (mediaUri.isNotBlank()) {
+            inlinePlayer.setMediaItem(MediaItem.fromUri(mediaUri))
+            inlinePlayer.prepare()
+            val resumeKey = if (selectedEpisodeId != null) "${movie.id}_$selectedEpisodeId" else movie.id
+            val resumePos = playerViewModel?.getMovieLastPosition(resumeKey) ?: 0L
+            if (resumePos > 0L) {
+                inlinePlayer.seekTo(resumePos)
+            }
+            inlinePlayer.play()
         }
     }
 
@@ -300,40 +344,11 @@ fun MovieDetailScreen(
         }
         inlinePlayer.addListener(listener)
 
-        // Resolve uri and auto-start (checking verified local offline file first)
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val localFile = java.io.File(destDir, "movie_${movie.id}.mp4")
-        val internalFile = java.io.File(context.filesDir, "movie_${movie.id}.mp4")
-
-        val storedPath = downloadItem?.localFilePath?.trim().orEmpty()
-        val isVerifiedOffline = downloadItem?.status == DownloadStatus.COMPLETED
-
-        val mediaUri = if (isVerifiedOffline && storedPath.startsWith("content://")) {
-            storedPath
-        } else if (isVerifiedOffline && storedPath.isNotBlank() && java.io.File(storedPath.removePrefix("file://")).exists() && java.io.File(storedPath.removePrefix("file://")).length() >= 1024 * 1024L) {
-            java.io.File(storedPath.removePrefix("file://")).toURI().toString()
-        } else if (isVerifiedOffline && localFile.exists() && localFile.length() >= 1024 * 1024L) {
-            localFile.toURI().toString()
-        } else if (isVerifiedOffline && internalFile.exists() && internalFile.length() >= 1024 * 1024L) {
-            internalFile.toURI().toString()
-        } else {
-            R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
-        }
-
-        if (mediaUri.isNotBlank()) {
-            inlinePlayer.setMediaItem(MediaItem.fromUri(mediaUri))
-            inlinePlayer.prepare()
-            val resumePos = playerViewModel?.getMovieLastPosition(movie.id) ?: 0L
-            if (resumePos > 0L) {
-                inlinePlayer.seekTo(resumePos)
-            }
-            inlinePlayer.play()
-        }
-
         onDispose {
             val lastPos = inlinePlayer.currentPosition.coerceAtLeast(0L)
+            val saveKey = if (selectedEpisodeId != null) "${movie.id}_$selectedEpisodeId" else movie.id
             if (lastPos > 0L) {
-                playerViewModel?.saveMoviePosition(movie.id, lastPos)
+                playerViewModel?.saveMoviePosition(saveKey, lastPos)
             }
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             inlinePlayer.removeListener(listener)
@@ -477,6 +492,33 @@ fun MovieDetailScreen(
                                     color = TextSecondary,
                                     fontSize = 12.sp
                                 )
+
+                                if (movie.episodes.isNotEmpty()) {
+                                    Surface(
+                                        color = CinematicRed.copy(alpha = 0.18f),
+                                        shape = RoundedCornerShape(6.dp),
+                                        border = BorderStroke(1.dp, CinematicRed.copy(alpha = 0.5f))
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.VideoLibrary,
+                                                contentDescription = null,
+                                                tint = CinematicRed,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "${movie.episodes.size} Episodes",
+                                                color = CinematicRed,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
                             }
 
                             Spacer(modifier = Modifier.height(6.dp))
@@ -490,6 +532,129 @@ fun MovieDetailScreen(
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
+
+                    // If it is a series with multiple episodes, render prominent interactive Episode Selector Box
+                    if (movie.episodes.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(SurfaceDark.copy(alpha = 0.9f))
+                                .border(BorderStroke(1.2.dp, CinematicRed.copy(alpha = 0.35f)), RoundedCornerShape(14.dp))
+                                .padding(14.dp)
+                                .testTag("detail_series_episode_selector_container")
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Surface(
+                                        color = CinematicRed.copy(alpha = 0.2f),
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.size(26.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.Default.VideoLibrary,
+                                                contentDescription = null,
+                                                tint = CinematicRed,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Episodes (${movie.episodes.size})",
+                                        color = TextPrimary,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                if (activeEpisode != null) {
+                                    Surface(
+                                        color = CinematicRed,
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text(
+                                            text = "Playing: Episode ${activeEpisode.episodeNumber}",
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Text(
+                                text = "Tap any episode below to stream that specific episode immediately:",
+                                color = TextSecondary,
+                                fontSize = 12.sp
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            // Horizontal scrolling row of interactive Episode Pill Boxes
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(movie.episodes.sortedBy { it.episodeNumber }) { ep ->
+                                    val isSelected = (ep.id == selectedEpisodeId)
+                                    Surface(
+                                        color = if (isSelected) CinematicRed else SurfaceElevated,
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = if (isSelected) {
+                                            BorderStroke(1.5.dp, Color.White.copy(alpha = 0.85f))
+                                        } else {
+                                            BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+                                        },
+                                        modifier = Modifier
+                                            .clickable {
+                                                selectedEpisodeId = ep.id
+                                            }
+                                            .testTag("detail_episode_chip_${ep.episodeNumber}")
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isSelected) Icons.Default.PlayArrow else Icons.Default.VideoLibrary,
+                                                contentDescription = null,
+                                                tint = if (isSelected) Color.White else TextSecondary,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = if (ep.title.startsWith("Episode", ignoreCase = true)) {
+                                                    ep.title
+                                                } else {
+                                                    "Episode ${ep.episodeNumber}: ${ep.title}"
+                                                },
+                                                color = if (isSelected) Color.White else TextPrimary,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "${ep.durationMinutes}m",
+                                                color = if (isSelected) Color.White.copy(alpha = 0.8f) else TextSecondary,
+                                                fontSize = 11.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
 
                     // Action Area: Download Movie Button
                     Button(
@@ -611,7 +776,12 @@ fun MovieDetailScreen(
                         MovieEpisodesSection(
                             movie = movie,
                             downloads = downloads,
+                            selectedEpisodeId = selectedEpisodeId,
+                            onSelectEpisode = { ep ->
+                                selectedEpisodeId = ep.id
+                            },
                             onPlayEpisode = { ep ->
+                                selectedEpisodeId = ep.id
                                 onPlayFullscreenClick(movie, 0L, ep.id)
                             },
                             onDownloadEpisode = { ep ->
@@ -1388,6 +1558,8 @@ fun AnimatedNavyGlassFullscreenButton(
 fun MovieEpisodesSection(
     movie: Movie,
     downloads: List<DownloadItem>,
+    selectedEpisodeId: String? = null,
+    onSelectEpisode: ((Episode) -> Unit)? = null,
     onPlayEpisode: (Episode) -> Unit,
     onDownloadEpisode: (Episode) -> Unit,
     modifier: Modifier = Modifier
@@ -1409,12 +1581,21 @@ fun MovieEpisodesSection(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "Episodes",
-                color = TextPrimary,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.VideoLibrary,
+                    contentDescription = null,
+                    tint = CinematicRed,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Episodes & Seasons",
+                    color = TextPrimary,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
             Text(
                 text = "${movie.episodes.size} Total Episodes",
                 color = TextSecondary,
@@ -1461,8 +1642,12 @@ fun MovieEpisodesSection(
                 EpisodeDetailCard(
                     episode = ep,
                     movie = movie,
+                    isSelected = (ep.id == selectedEpisodeId),
                     downloadItem = epDownload,
-                    onPlay = { onPlayEpisode(ep) },
+                    onPlay = {
+                        onSelectEpisode?.invoke(ep)
+                        onPlayEpisode(ep)
+                    },
                     onDownload = { onDownloadEpisode(ep) }
                 )
             }
@@ -1474,6 +1659,7 @@ fun MovieEpisodesSection(
 fun EpisodeDetailCard(
     episode: Episode,
     movie: Movie,
+    isSelected: Boolean = false,
     downloadItem: DownloadItem?,
     onPlay: () -> Unit,
     onDownload: () -> Unit,
@@ -1482,11 +1668,13 @@ fun EpisodeDetailCard(
     val coverUrl = movie.coverUrl
 
     Surface(
-        color = SurfaceDark,
+        color = if (isSelected) SurfaceElevated else SurfaceDark,
         shape = RoundedCornerShape(12.dp),
+        border = if (isSelected) BorderStroke(1.5.dp, CinematicRed) else BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)),
         modifier = modifier
             .fillMaxWidth()
             .clickable { onPlay() }
+            .testTag("detail_episode_card_${episode.episodeNumber}")
     ) {
         Column(
             modifier = Modifier
@@ -1507,7 +1695,7 @@ fun EpisodeDetailCard(
                     contentAlignment = Alignment.Center
                 ) {
                     AsyncImage(
-                        model = coverUrl,
+                        model = com.example.util.MovieCoverUtils.resolveCoverUrl(movie.title, coverUrl, movie.genres),
                         contentDescription = episode.title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
@@ -1515,7 +1703,7 @@ fun EpisodeDetailCard(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.35f)),
+                            .background(if (isSelected) CinematicRed.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.35f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -1530,17 +1718,39 @@ fun EpisodeDetailCard(
                 Spacer(modifier = Modifier.width(12.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "E${episode.episodeNumber} • ${episode.title}",
-                        color = TextPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (episode.title.startsWith("Episode", ignoreCase = true)) {
+                                episode.title
+                            } else {
+                                "Episode ${episode.episodeNumber}: ${episode.title}"
+                            },
+                            color = TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (isSelected) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                color = CinematicRed,
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = "PLAYING",
+                                    color = Color.White,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
                     Spacer(modifier = Modifier.height(3.dp))
                     Text(
-                        text = "${episode.durationMinutes} min",
+                        text = "${episode.durationMinutes} min • ${episode.fileSizeMb} MB",
                         color = TextSecondary,
                         fontSize = 12.sp
                     )

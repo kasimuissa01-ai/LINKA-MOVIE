@@ -243,7 +243,7 @@ fun AdminAddEditMovieScreen(
                         input.copyTo(output)
                     }
                 }
-                coverUrl = destFile.toURI().toString()
+                coverUrl = Uri.fromFile(destFile).toString()
 
                 var displayName = "Cover_Photo.jpg"
                 try {

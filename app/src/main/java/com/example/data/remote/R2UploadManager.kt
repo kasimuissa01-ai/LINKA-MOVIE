@@ -153,9 +153,17 @@ class R2UploadManager(
             }
         }
 
-        if (fileSize <= 0L && uri.scheme == "file") {
-            uri.path?.let { path ->
-                val file = File(path)
+        if (fileSize <= 0L) {
+            val uriStr = uri.toString()
+            val rawPath = when {
+                uri.scheme == "file" && uri.path != null -> uri.path
+                uriStr.startsWith("file:") -> uriStr.removePrefix("file:").removePrefix("//")
+                uriStr.startsWith("/") -> uriStr
+                uri.path != null -> uri.path
+                else -> null
+            }
+            if (rawPath != null) {
+                val file = File(rawPath)
                 if (file.exists()) {
                     fileSize = file.length()
                     if (filename == fallbackName) filename = file.name
@@ -263,10 +271,19 @@ class R2UploadManager(
 
             override fun writeTo(sink: BufferedSink) {
                 val resolverStream = runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
-                val fileStream = if (resolverStream == null && (uri.scheme == "file" || uri.path != null)) {
-                    val path = uri.path ?: uri.toString().removePrefix("file:")
-                    val file = File(path)
-                    if (file.exists()) file.inputStream() else null
+                val fileStream = if (resolverStream == null) {
+                    val uriStr = uri.toString()
+                    val rawPath = when {
+                        uri.scheme == "file" && uri.path != null -> uri.path
+                        uriStr.startsWith("file:") -> uriStr.removePrefix("file:").removePrefix("//")
+                        uriStr.startsWith("/") -> uriStr
+                        uri.path != null -> uri.path
+                        else -> null
+                    }
+                    if (rawPath != null) {
+                        val file = File(rawPath)
+                        if (file.exists()) file.inputStream() else null
+                    } else null
                 } else null
                 val inputStream = resolverStream ?: fileStream ?: throw IOException("Could not open input stream for URI: $uri")
 
