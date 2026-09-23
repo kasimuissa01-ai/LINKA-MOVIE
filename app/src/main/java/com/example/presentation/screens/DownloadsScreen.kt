@@ -57,6 +57,7 @@ import com.example.presentation.viewmodel.DownloadViewModel
 import com.example.presentation.viewmodel.MovieViewModel
 import com.example.ui.theme.CinematicRed
 import com.example.ui.theme.ObsidianBlack
+import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.SurfaceElevated
 import com.example.ui.theme.TextPrimary
@@ -67,7 +68,7 @@ import com.example.ui.theme.TextTertiary
 fun DownloadsScreen(
     downloadViewModel: DownloadViewModel,
     movieViewModel: MovieViewModel,
-    onPlayMovie: (Movie) -> Unit,
+    onPlayMovie: (Movie, String?) -> Unit,
     onBrowseCatalog: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -215,7 +216,7 @@ fun DownloadsScreen(
                                     isFeatured = false
                                 )
                             }
-                            onPlayMovie(movieToPlay)
+                            onPlayMovie(movieToPlay, item.episodeId)
                         },
                         onPauseClick = {
                             downloadViewModel.pauseDownload(item.id)
@@ -278,6 +279,20 @@ fun DownloadItemCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+
+                if (!item.episodeTitle.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    val epNumber = item.episodeNumber ?: 1
+                    val sNumber = item.seasonNumber ?: 1
+                    Text(
+                        text = "S${sNumber}:E${epNumber} • ${item.episodeTitle}",
+                        color = ElectricBlue,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(4.dp))
 

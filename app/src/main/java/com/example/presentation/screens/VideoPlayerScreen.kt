@@ -138,6 +138,7 @@ import com.example.ui.theme.TextSecondary
 fun VideoPlayerScreen(
     movie: Movie,
     initialPositionMs: Long = 0L,
+    episodeId: String? = null,
     playerViewModel: PlayerViewModel,
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -146,6 +147,10 @@ fun VideoPlayerScreen(
     val activity = context as? Activity
     val coroutineScope = rememberCoroutineScope()
     val uiState by playerViewModel.uiState.collectAsState()
+
+    val currentEpisode = remember(movie, episodeId) {
+        if (!episodeId.isNullOrBlank()) movie.episodes.firstOrNull { it.id == episodeId } else null
+    }
 
     var showSubtitleSheet by remember { mutableStateOf(false) }
     var showSpeedDialog by remember { mutableStateOf(false) }
@@ -188,9 +193,9 @@ fun VideoPlayerScreen(
     }
 
     // Deterministic Landscape + Immersive Fullscreen lifecycle
-    DisposableEffect(movie.id) {
+    DisposableEffect(movie.id, episodeId) {
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        playerViewModel.initializePlayer(context, movie, initialPositionMs)
+        playerViewModel.initializePlayer(context, movie, initialPositionMs, episodeId)
         playerViewModel.setOrientationMode(com.example.presentation.viewmodel.OrientationMode.USER_LANDSCAPE)
 
         activity?.let { act ->
@@ -436,7 +441,7 @@ fun VideoPlayerScreen(
                     ) {
                         Button(
                             onClick = {
-                                playerViewModel.retryPlayback(context, movie)
+                                playerViewModel.retryPlayback(context, movie, episodeId)
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = CinematicRed),
                             shape = RoundedCornerShape(8.dp)
@@ -525,8 +530,13 @@ fun VideoPlayerScreen(
                         Spacer(modifier = Modifier.width(12.dp))
 
                         Column {
+                            val displayTitle = if (currentEpisode != null) {
+                                "${movie.title}: S${currentEpisode.seasonNumber}E${currentEpisode.episodeNumber} ${currentEpisode.title}"
+                            } else {
+                                movie.title
+                            }
                             Text(
-                                text = movie.title,
+                                text = displayTitle,
                                 color = Color.White,
                                 fontSize = 17.sp,
                                 fontWeight = FontWeight.Bold,
@@ -534,7 +544,8 @@ fun VideoPlayerScreen(
                             )
 
                             val genreTag = if (movie.genres.isNotEmpty()) " • ${movie.genres.first()}" else ""
-                            val metaText = "${movie.releaseYear} • ${movie.durationMinutes}m$genreTag"
+                            val metaDuration = currentEpisode?.durationMinutes ?: movie.durationMinutes
+                            val metaText = "${movie.releaseYear} • ${metaDuration}m$genreTag"
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     text = metaText,

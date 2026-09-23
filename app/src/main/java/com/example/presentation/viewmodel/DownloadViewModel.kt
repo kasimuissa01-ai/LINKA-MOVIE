@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+import com.example.domain.model.Episode
+
 class DownloadViewModel(
     private val repository: MovieRepository
 ) : ViewModel() {
@@ -22,9 +24,9 @@ class DownloadViewModel(
             initialValue = emptyList()
         )
 
-    fun startDownload(movie: Movie, context: Context) {
+    fun startDownload(movie: Movie, context: Context, episode: Episode? = null) {
         viewModelScope.launch {
-            repository.startDownload(movie, context)
+            repository.startDownload(movie, context, episode)
         }
     }
 
@@ -38,16 +40,19 @@ class DownloadViewModel(
         viewModelScope.launch {
             val movie = repository.getMovieById(item.movieId)
             if (movie != null) {
-                repository.startDownload(movie, context)
+                val episode = if (!item.episodeId.isNullOrBlank()) {
+                    movie.episodes.firstOrNull { it.id == item.episodeId }
+                } else null
+                repository.retryDownload(item.id, movie, context, episode)
             } else {
                 android.util.Log.w("DownloadViewModel", "Cannot retry download: movie ${item.movieId} not found in database.")
             }
         }
     }
 
-    fun deleteDownload(downloadId: String) {
+    fun deleteDownload(downloadId: String, movieId: String = downloadId, episodeId: String? = null) {
         viewModelScope.launch {
-            repository.deleteDownload(downloadId)
+            repository.deleteDownload(downloadId, movieId, episodeId)
         }
     }
 }

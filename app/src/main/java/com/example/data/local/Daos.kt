@@ -55,11 +55,20 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads ORDER BY id DESC")
     fun getAllDownloads(): Flow<List<DownloadEntity>>
 
-    @Query("SELECT * FROM downloads WHERE movieId = :movieId ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
+    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId IS NULL ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
     suspend fun getDownloadByMovieId(movieId: String): DownloadEntity?
 
-    @Query("SELECT * FROM downloads WHERE movieId = :movieId ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
+    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId IS NULL ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
     fun observeDownloadByMovieId(movieId: String): Flow<DownloadEntity?>
+
+    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId = :episodeId ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
+    suspend fun getDownloadByEpisode(movieId: String, episodeId: String): DownloadEntity?
+
+    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId = :episodeId ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
+    fun observeDownloadByEpisode(movieId: String, episodeId: String): Flow<DownloadEntity?>
+
+    @Query("SELECT * FROM downloads WHERE movieId = :movieId")
+    fun observeDownloadsForMovie(movieId: String): Flow<List<DownloadEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdate(download: DownloadEntity)

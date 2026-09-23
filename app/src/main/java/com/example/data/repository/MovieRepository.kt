@@ -17,6 +17,7 @@ import com.example.data.remote.R2UploadConfig
 import com.example.data.remote.R2UploadManager
 import com.example.domain.model.DownloadItem
 import com.example.domain.model.DownloadStatus
+import com.example.domain.model.Episode
 import com.example.domain.model.Movie
 import com.example.domain.model.UploadPart
 import com.example.domain.model.UploadSession
@@ -477,8 +478,8 @@ class MovieRepository(
     fun observeDownloadForMovie(movieId: String): Flow<DownloadItem?> =
         downloadDao.observeDownloadByMovieId(movieId).map { it?.toDomain() }
 
-    fun startDownload(movie: Movie, context: Context) {
-        getDownloadManager(context).startDownload(movie)
+    fun startDownload(movie: Movie, context: Context, episode: Episode? = null) {
+        getDownloadManager(context).startDownload(movie, episode)
     }
 
     suspend fun pauseDownload(downloadId: String) {
@@ -487,17 +488,18 @@ class MovieRepository(
         }
     }
 
-    suspend fun retryDownload(downloadId: String, movie: Movie, context: Context) {
-        getDownloadManager(context).retryDownload(downloadId, movie)
+    suspend fun retryDownload(downloadId: String, movie: Movie, context: Context, episode: Episode? = null) {
+        getDownloadManager(context).retryDownload(downloadId, movie, episode)
     }
 
-    suspend fun deleteDownload(downloadId: String, movieId: String = downloadId) {
-        downloadManagerInstance?.deleteDownload(downloadId, movieId) ?: run {
+    suspend fun deleteDownload(downloadId: String, movieId: String = downloadId, episodeId: String? = null) {
+        downloadManagerInstance?.deleteDownload(downloadId, movieId, episodeId) ?: run {
             downloadDao.deleteById(downloadId)
             appContext?.let { ctx ->
                 val destDir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
-                val finalFile = File(destDir, "movie_${movieId}.mp4")
-                val partFile = File(destDir, "movie_${movieId}.mp4.download")
+                val baseFileName = if (!episodeId.isNullOrBlank()) "movie_${movieId}_ep_${episodeId}.mp4" else "movie_${movieId}.mp4"
+                val finalFile = File(destDir, baseFileName)
+                val partFile = File(destDir, "$baseFileName.download")
                 runCatching { if (finalFile.exists()) finalFile.delete() }
                 runCatching { if (partFile.exists()) partFile.delete() }
             }
@@ -505,19 +507,55 @@ class MovieRepository(
     }
 
     /**
-     * Resolves playback URI:
+     * Resolves playback URI for movie or specific episode:
      * 1. Checks OfflineDownloadManager for a verified complete offline download (>1MB).
      * 2. If an unverified or corrupt partial file is detected on disk, purges it to prevent playback errors.
      * 3. Seamlessly falls back to Cloudflare R2 / CDN online stream.
      */
-    suspend fun resolvePlaybackUri(movie: Movie, context: Context): String = withContext(Dispatchers.IO) {
-        val verifiedOffline = getDownloadManager(context).getVerifiedOfflinePlaybackUri(movie.id)
+    suspend fun resolvePlaybackUri(movie: Movie, context: Context, episodeId: String? = null): String = withContext(Dispatchers.IO) {
+        val verifiedOffline = getDownloadManager(context).getVerifiedOfflinePlaybackUri(movie.id, episodeId)
         if (verifiedOffline != null) {
-            Log.d(TAG, "Resolved verified offline playback for ${movie.title}: $verifiedOffline")
+            val label = if (episodeId != null) "${movie.title} (Ep: $episodeId)" else movie.title
+            Log.d(TAG, "Resolved verified offline playback for $label: $verifiedOffline")
             return@withContext verifiedOffline
         }
 
+        if (!episodeId.isNullOrBlank()) {
+            val ep = movie.episodes.firstOrNull { it.id == episodeId }
+            if (ep != null) {
+                return@withContext resolveEpisodeOnlineStreamUri(movie, ep)
+            }
+        }
+
         return@withContext resolveOnlineStreamUri(movie)
+    }
+
+    suspend fun resolveEpisodeOnlineStreamUri(movie: Movie, episode: Episode, excludeUrl: String = ""): String = withContext(Dispatchers.IO) {
+        val rawKey = episode.videoKey.takeIf { it.isNotBlank() } ?: movie.videoKey
+        val rawStreamUrl = episode.videoStreamUrl.takeIf { it.isNotBlank() } ?: movie.videoStreamUrl
+        val cleanKey = R2UrlUtils.extractCleanVideoKey(rawKey, rawStreamUrl)
+
+        val canonicalDirect = R2UrlUtils.canonicalizeStreamUrl(rawStreamUrl, rawKey)
+        if (canonicalDirect.isNotBlank() && canonicalDirect != excludeUrl) {
+            if (canonicalDirect.startsWith("content://") || canonicalDirect.startsWith("file://") || canonicalDirect.startsWith("/")) {
+                return@withContext canonicalDirect
+            }
+        }
+
+        if (cleanKey.isNotBlank()) {
+            val r2PublicUrl = R2UrlUtils.buildUrl(cleanKey)
+            if (r2PublicUrl.isNotBlank() && r2PublicUrl != excludeUrl) {
+                return@withContext r2PublicUrl
+            }
+        }
+
+        if (canonicalDirect.isNotBlank() && canonicalDirect != excludeUrl &&
+            (canonicalDirect.startsWith("http://") || canonicalDirect.startsWith("https://"))
+        ) {
+            return@withContext canonicalDirect
+        }
+
+        return@withContext resolveOnlineStreamUri(movie, excludeUrl)
     }
 
     /**

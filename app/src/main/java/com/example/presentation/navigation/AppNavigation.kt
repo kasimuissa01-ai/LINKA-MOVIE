@@ -82,8 +82,11 @@ sealed class Screen(val route: String) {
     object MovieDetail : Screen("movie_detail/{movieId}") {
         fun createRoute(movieId: String) = "movie_detail/$movieId"
     }
-    object VideoPlayer : Screen("video_player/{movieId}?startPos={startPos}") {
-        fun createRoute(movieId: String, startPos: Long = 0L) = "video_player/$movieId?startPos=$startPos"
+    object VideoPlayer : Screen("video_player/{movieId}?startPos={startPos}&episodeId={episodeId}") {
+        fun createRoute(movieId: String, startPos: Long = 0L, episodeId: String? = null): String {
+            val base = "video_player/$movieId?startPos=$startPos"
+            return if (!episodeId.isNullOrBlank()) "$base&episodeId=$episodeId" else base
+        }
     }
     object AdminDashboard : Screen("admin_dashboard")
     object AdminAddMovie : Screen("admin_add_movie")
@@ -236,8 +239,8 @@ fun AppNavigation(
                     DownloadsScreen(
                         downloadViewModel = downloadViewModel,
                         movieViewModel = movieViewModel,
-                        onPlayMovie = { movie ->
-                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id)) {
+                        onPlayMovie = { movie, episodeId ->
+                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id, 0L, episodeId)) {
                                 launchSingleTop = true
                             }
                         },
@@ -275,8 +278,8 @@ fun AppNavigation(
                         downloadViewModel = downloadViewModel,
                         playerViewModel = playerViewModel,
                         onBackClick = { navController.popBackStack() },
-                        onPlayFullscreenClick = { selectedMovie, startPos ->
-                            navController.navigate(Screen.VideoPlayer.createRoute(selectedMovie.id, startPos)) {
+                        onPlayFullscreenClick = { selectedMovie, startPos, episodeId ->
+                            navController.navigate(Screen.VideoPlayer.createRoute(selectedMovie.id, startPos, episodeId)) {
                                 launchSingleTop = true
                             }
                         },
@@ -297,11 +300,17 @@ fun AppNavigation(
                     navArgument("startPos") {
                         type = NavType.LongType
                         defaultValue = 0L
+                    },
+                    navArgument("episodeId") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
                     }
                 )
             ) { backStackEntry ->
                 val movieId = backStackEntry.arguments?.getString("movieId")
                 val startPos = backStackEntry.arguments?.getLong("startPos") ?: 0L
+                val episodeId = backStackEntry.arguments?.getString("episodeId")
                 val movieUiState by movieViewModel.uiState.collectAsState()
                 val downloadList by downloadViewModel.downloads.collectAsState()
 
@@ -330,6 +339,7 @@ fun AppNavigation(
                     VideoPlayerScreen(
                         movie = effectiveMovie,
                         initialPositionMs = startPos,
+                        episodeId = episodeId,
                         playerViewModel = playerViewModel,
                         onBackClick = { navController.popBackStack() }
                     )

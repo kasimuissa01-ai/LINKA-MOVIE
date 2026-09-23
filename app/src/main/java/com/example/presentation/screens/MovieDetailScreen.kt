@@ -115,7 +115,9 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.example.data.repository.MovieRepository
+import com.example.domain.model.DownloadItem
 import com.example.domain.model.DownloadStatus
+import com.example.domain.model.Episode
 import com.example.domain.model.Movie
 import com.example.presentation.components.MoviePosterCard
 import com.example.presentation.viewmodel.DownloadViewModel
@@ -123,6 +125,7 @@ import com.example.presentation.viewmodel.PlayerViewModel
 import com.example.util.R2UrlUtils
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
+import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.ObsidianBlack
 import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.SurfaceElevated
@@ -140,7 +143,7 @@ fun MovieDetailScreen(
     movieRepository: MovieRepository? = null,
     playerViewModel: PlayerViewModel? = null,
     onBackClick: () -> Unit,
-    onPlayFullscreenClick: (Movie, Long) -> Unit,
+    onPlayFullscreenClick: (Movie, Long, String?) -> Unit,
     onSelectRecommendedMovie: (Movie) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -601,6 +604,21 @@ fun MovieDetailScreen(
                         originalDescription = movie.description,
                         movieTitle = movie.title
                     )
+
+                    // Episodes & Seasons Section (for Series)
+                    if (movie.episodes.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(24.dp))
+                        MovieEpisodesSection(
+                            movie = movie,
+                            downloads = downloads,
+                            onPlayEpisode = { ep ->
+                                onPlayFullscreenClick(movie, 0L, ep.id)
+                            },
+                            onDownloadEpisode = { ep ->
+                                downloadViewModel.startDownload(movie, context, ep)
+                            }
+                        )
+                    }
 
                     // Cast Section
                     if (movie.cast.isNotEmpty()) {
@@ -1363,5 +1381,216 @@ fun AnimatedNavyGlassFullscreenButton(
                     rotationZ = iconRotation
                 }
         )
+    }
+}
+
+@Composable
+fun MovieEpisodesSection(
+    movie: Movie,
+    downloads: List<DownloadItem>,
+    onPlayEpisode: (Episode) -> Unit,
+    onDownloadEpisode: (Episode) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val seasons = remember(movie.episodes) {
+        movie.episodes.map { it.seasonNumber }.distinct().sorted()
+    }
+    var selectedSeason by remember(movie.id) {
+        mutableStateOf(seasons.firstOrNull() ?: 1)
+    }
+
+    val episodesInSeason = remember(movie.episodes, selectedSeason) {
+        movie.episodes.filter { it.seasonNumber == selectedSeason }.sortedBy { it.episodeNumber }
+    }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Episodes",
+                color = TextPrimary,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "${movie.episodes.size} Total Episodes",
+                color = TextSecondary,
+                fontSize = 12.sp
+            )
+        }
+
+        if (seasons.size > 1) {
+            Spacer(modifier = Modifier.height(12.dp))
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                items(seasons) { season ->
+                    val isSelected = season == selectedSeason
+                    Surface(
+                        color = if (isSelected) CinematicRed else SurfaceDark,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.clickable { selectedSeason = season }
+                    ) {
+                        Text(
+                            text = "Season $season",
+                            color = if (isSelected) Color.White else TextSecondary,
+                            fontSize = 13.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        Column(
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            episodesInSeason.forEach { ep ->
+                val epDownload = downloads.find {
+                    (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.movieId == movie.id
+                }
+
+                EpisodeDetailCard(
+                    episode = ep,
+                    movie = movie,
+                    downloadItem = epDownload,
+                    onPlay = { onPlayEpisode(ep) },
+                    onDownload = { onDownloadEpisode(ep) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun EpisodeDetailCard(
+    episode: Episode,
+    movie: Movie,
+    downloadItem: DownloadItem?,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val coverUrl = movie.coverUrl
+
+    Surface(
+        color = SurfaceDark,
+        shape = RoundedCornerShape(12.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { onPlay() }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Thumbnail with overlay Play icon
+                Box(
+                    modifier = Modifier
+                        .width(100.dp)
+                        .height(60.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SurfaceElevated),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = coverUrl,
+                        contentDescription = episode.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.35f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Play Episode",
+                            tint = Color.White,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "E${episode.episodeNumber} • ${episode.title}",
+                        color = TextPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = "${episode.durationMinutes} min",
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+                }
+
+                // Download Button for Episode
+                IconButton(
+                    onClick = onDownload,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    when (downloadItem?.status) {
+                        DownloadStatus.DOWNLOADING -> {
+                            CircularProgressIndicator(
+                                progress = downloadItem.progress,
+                                color = CinematicRed,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        DownloadStatus.COMPLETED -> {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Downloaded",
+                                tint = Color(0xFF4CAF50),
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        else -> {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = "Download Episode",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (episode.description.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = episode.description,
+                    color = TextSecondary.copy(alpha = 0.85f),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
     }
 }

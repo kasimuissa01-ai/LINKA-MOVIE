@@ -115,14 +115,18 @@ class PlayerViewModel(
         return moviePositions[movieId] ?: 0L
     }
 
-    fun initializePlayer(context: Context, movie: Movie, initialPositionMs: Long = 0L) {
-        val isSameMovie = (currentMovieId == movie.id)
+    private var currentEpisodeId: String? = null
+
+    fun initializePlayer(context: Context, movie: Movie, initialPositionMs: Long = 0L, episodeId: String? = null) {
+        val isSameMovie = (currentMovieId == movie.id && currentEpisodeId == episodeId)
         currentMovieId = movie.id
+        currentEpisodeId = episodeId
+        val positionKey = if (episodeId != null) "${movie.id}_ep_${episodeId}" else movie.id
         val targetStartPos = if (initialPositionMs > 0L) {
-            saveMoviePosition(movie.id, initialPositionMs)
+            saveMoviePosition(positionKey, initialPositionMs)
             initialPositionMs
         } else {
-            getMovieLastPosition(movie.id)
+            getMovieLastPosition(positionKey)
         }
 
         // If player already exists for THIS SAME movie, seek to target and ensure playback is active
@@ -212,10 +216,16 @@ class PlayerViewModel(
                     android.util.Log.w("PlayerViewModel", "Corrupted or unreadable local file detected. Purging file and seamlessly failing over to online stream...")
                     viewModelScope.launch {
                         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-                        val localFile = java.io.File(destDir, "movie_${movie.id}.mp4")
+                        val targetFilename = if (episodeId != null) "movie_${movie.id}_ep_${episodeId}.mp4" else "movie_${movie.id}.mp4"
+                        val localFile = java.io.File(destDir, targetFilename)
                         runCatching { if (localFile.exists()) localFile.delete() }
 
-                        val onlineUrl = repository.resolveOnlineStreamUri(movie)
+                        val onlineUrl = if (episodeId != null) {
+                            val ep = movie.episodes.firstOrNull { it.id == episodeId }
+                            if (ep != null) repository.resolveEpisodeOnlineStreamUri(movie, ep) else repository.resolveOnlineStreamUri(movie)
+                        } else {
+                            repository.resolveOnlineStreamUri(movie)
+                        }
                         _uiState.value = _uiState.value.copy(
                             isOfflinePlayback = false,
                             currentPlaybackUrl = onlineUrl,
@@ -311,13 +321,19 @@ class PlayerViewModel(
 
         // Check if verified offline file exists or direct stream is available for zero-delay start
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val localFile = java.io.File(destDir, "movie_${movie.id}.mp4")
-        val internalFile = java.io.File(context.filesDir, "movie_${movie.id}.mp4")
+        val filename = if (episodeId != null) "movie_${movie.id}_ep_${episodeId}.mp4" else "movie_${movie.id}.mp4"
+        val localFile = java.io.File(destDir, filename)
+        val internalFile = java.io.File(context.filesDir, filename)
 
+        val targetEpisode = if (episodeId != null) movie.episodes.firstOrNull { it.id == episodeId } else null
         val directUrl = if (localFile.exists() && localFile.length() >= 1024 * 1024L) {
             localFile.toURI().toString()
         } else if (internalFile.exists() && internalFile.length() >= 1024 * 1024L) {
             internalFile.toURI().toString()
+        } else if (targetEpisode != null) {
+            val epKey = targetEpisode.videoKey.takeIf { it.isNotBlank() } ?: movie.videoKey
+            val epStream = targetEpisode.videoStreamUrl.takeIf { it.isNotBlank() } ?: movie.videoStreamUrl
+            R2UrlUtils.canonicalizeStreamUrl(epStream, epKey)
         } else {
             R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
         }
@@ -347,13 +363,14 @@ class PlayerViewModel(
                     isResolvingStreamUrl = true,
                     loadingStage = "Resolving video stream..."
                 )
-                val playbackUrl = repository.resolvePlaybackUri(movie, context)
+                val playbackUrl = repository.resolvePlaybackUri(movie, context, episodeId)
                 if (playbackUrl.isBlank()) {
+                    val label = targetEpisode?.title ?: movie.title
                     _uiState.value = _uiState.value.copy(
                         isPlaying = false,
                         isLoading = false,
                         isResolvingStreamUrl = false,
-                        errorMessage = "No video stream is available for '${movie.title}'. Please upload a video or configure a stream URL."
+                        errorMessage = "No video stream is available for '$label'. Please upload a video or configure a stream URL."
                     )
                     return@launch
                 }
@@ -381,7 +398,7 @@ class PlayerViewModel(
         }
     }
 
-    fun retryPlayback(context: Context, movie: Movie) {
+    fun retryPlayback(context: Context, movie: Movie, episodeId: String? = currentEpisodeId) {
         _uiState.value = _uiState.value.copy(
             isLoading = true,
             isResolvingStreamUrl = true,
@@ -393,9 +410,10 @@ class PlayerViewModel(
                 _uiState.value = _uiState.value.copy(
                     loadingStage = "Buffering cinema stream..."
                 )
-                val playbackUrl = repository.resolvePlaybackUri(movie, context)
+                val playbackUrl = repository.resolvePlaybackUri(movie, context, episodeId)
                 val isOffline = playbackUrl.startsWith("file://") || playbackUrl.startsWith("/")
-                val resumePos = getMovieLastPosition(movie.id)
+                val positionKey = if (episodeId != null) "${movie.id}_ep_${episodeId}" else movie.id
+                val resumePos = getMovieLastPosition(positionKey)
                 _uiState.value = _uiState.value.copy(
                     isOfflinePlayback = isOffline,
                     currentPlaybackUrl = playbackUrl,

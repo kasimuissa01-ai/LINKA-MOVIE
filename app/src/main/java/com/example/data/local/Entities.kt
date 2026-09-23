@@ -4,10 +4,13 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.example.domain.model.DownloadItem
 import com.example.domain.model.DownloadStatus
+import com.example.domain.model.Episode
 import com.example.domain.model.Movie
 import com.example.domain.model.UploadPart
 import com.example.domain.model.UploadSession
 import com.example.util.R2UrlUtils
+import org.json.JSONArray
+import org.json.JSONObject
 
 @Entity(tableName = "movies")
 data class MovieEntity(
@@ -26,7 +29,8 @@ data class MovieEntity(
     val cast: String = "",
     val isFeatured: Boolean = false,
     val uploadStatus: String = "completed",
-    val uploadDate: Long = System.currentTimeMillis()
+    val uploadDate: Long = System.currentTimeMillis(),
+    val episodesJson: String = "" // Serialized episodes list
 ) {
     fun toDomain(): Movie {
         val parsedGenres = if (genres.isBlank()) emptyList() else genres.split(",").map { it.trim() }
@@ -34,6 +38,37 @@ data class MovieEntity(
         val cleanCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (coverKey.isNotBlank()) coverKey else coverUrl)
         val resolvedStreamUrl = if (cleanVideoKey.isNotBlank()) R2UrlUtils.buildUrl(cleanVideoKey) else videoStreamUrl
         val resolvedCoverUrl = if (cleanCoverKey.isNotBlank()) R2UrlUtils.buildUrl(cleanCoverKey) else coverUrl
+
+        val parsedEpisodes = if (episodesJson.isBlank()) {
+            emptyList()
+        } else {
+            try {
+                val array = JSONArray(episodesJson)
+                val list = mutableListOf<Episode>()
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val epVideoKey = R2UrlUtils.extractCleanVideoKey(obj.optString("videoKey", ""), obj.optString("videoStreamUrl", ""))
+                    val epStreamUrl = if (epVideoKey.isNotBlank()) R2UrlUtils.buildUrl(epVideoKey) else obj.optString("videoStreamUrl", "")
+                    list.add(
+                        Episode(
+                            id = obj.optString("id", "${id}_ep_${i + 1}"),
+                            movieId = obj.optString("movieId", id),
+                            episodeNumber = obj.optInt("episodeNumber", i + 1),
+                            seasonNumber = obj.optInt("seasonNumber", 1),
+                            title = obj.optString("title", "Episode ${i + 1}"),
+                            description = obj.optString("description", ""),
+                            videoKey = epVideoKey,
+                            videoStreamUrl = epStreamUrl,
+                            durationMinutes = obj.optInt("durationMinutes", 45),
+                            fileSizeMb = obj.optLong("fileSizeMb", 250L)
+                        )
+                    )
+                }
+                list
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
 
         return Movie(
             id = id,
@@ -51,7 +86,8 @@ data class MovieEntity(
             cast = if (cast.isBlank()) emptyList() else cast.split(",").map { it.trim() },
             isFeatured = isFeatured,
             uploadStatus = uploadStatus,
-            uploadDate = uploadDate
+            uploadDate = uploadDate,
+            episodes = parsedEpisodes
         )
     }
 
@@ -59,6 +95,26 @@ data class MovieEntity(
         fun fromDomain(movie: Movie): MovieEntity {
             val cleanVideoKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
             val cleanCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
+            val episodesJsonString = if (movie.episodes.isNotEmpty()) {
+                val array = JSONArray()
+                for (ep in movie.episodes) {
+                    val epObj = JSONObject().apply {
+                        put("id", ep.id)
+                        put("movieId", ep.movieId)
+                        put("episodeNumber", ep.episodeNumber)
+                        put("seasonNumber", ep.seasonNumber)
+                        put("title", ep.title)
+                        put("description", ep.description)
+                        put("videoKey", ep.videoKey)
+                        put("videoStreamUrl", ep.videoStreamUrl)
+                        put("durationMinutes", ep.durationMinutes)
+                        put("fileSizeMb", ep.fileSizeMb)
+                    }
+                    array.put(epObj)
+                }
+                array.toString()
+            } else ""
+
             return MovieEntity(
                 id = movie.id,
                 title = movie.title,
@@ -75,7 +131,8 @@ data class MovieEntity(
                 cast = movie.cast.joinToString(","),
                 isFeatured = movie.isFeatured,
                 uploadStatus = movie.uploadStatus,
-                uploadDate = movie.uploadDate
+                uploadDate = movie.uploadDate,
+                episodesJson = episodesJsonString
             )
         }
     }
@@ -91,7 +148,11 @@ data class DownloadEntity(
     val progress: Float,
     val status: String,
     val downloadedBytes: Long,
-    val totalBytes: Long
+    val totalBytes: Long,
+    val episodeId: String? = null,
+    val episodeTitle: String? = null,
+    val seasonNumber: Int? = null,
+    val episodeNumber: Int? = null
 ) {
     fun toDomain(): DownloadItem = DownloadItem(
         id = id,
@@ -102,7 +163,11 @@ data class DownloadEntity(
         progress = progress,
         status = runCatching { DownloadStatus.valueOf(status) }.getOrDefault(DownloadStatus.QUEUED),
         downloadedBytes = downloadedBytes,
-        totalBytes = totalBytes
+        totalBytes = totalBytes,
+        episodeId = episodeId,
+        episodeTitle = episodeTitle,
+        seasonNumber = seasonNumber,
+        episodeNumber = episodeNumber
     )
 
     companion object {
@@ -115,7 +180,11 @@ data class DownloadEntity(
             progress = item.progress,
             status = item.status.name,
             downloadedBytes = item.downloadedBytes,
-            totalBytes = item.totalBytes
+            totalBytes = item.totalBytes,
+            episodeId = item.episodeId,
+            episodeTitle = item.episodeTitle,
+            seasonNumber = item.seasonNumber,
+            episodeNumber = item.episodeNumber
         )
     }
 }

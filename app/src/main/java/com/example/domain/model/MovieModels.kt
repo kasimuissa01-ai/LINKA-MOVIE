@@ -1,5 +1,18 @@
 package com.example.domain.model
 
+data class Episode(
+    val id: String,
+    val movieId: String,
+    val episodeNumber: Int,
+    val seasonNumber: Int = 1,
+    val title: String,
+    val description: String = "",
+    val videoKey: String = "",
+    val videoStreamUrl: String = "",
+    val durationMinutes: Int = 45,
+    val fileSizeMb: Long = 250L
+)
+
 data class Movie(
     val id: String,
     val title: String,
@@ -16,7 +29,8 @@ data class Movie(
     val cast: List<String> = emptyList(),
     val isFeatured: Boolean = false,
     val uploadStatus: String = "completed",
-    val uploadDate: Long = System.currentTimeMillis()
+    val uploadDate: Long = System.currentTimeMillis(),
+    val episodes: List<Episode> = emptyList()
 )
 
 enum class DownloadStatus {
@@ -36,7 +50,11 @@ data class DownloadItem(
     val progress: Float, // 0.0 to 1.0
     val status: DownloadStatus,
     val downloadedBytes: Long,
-    val totalBytes: Long
+    val totalBytes: Long,
+    val episodeId: String? = null,
+    val episodeTitle: String? = null,
+    val seasonNumber: Int? = null,
+    val episodeNumber: Int? = null
 )
 
 data class UploadPart(
