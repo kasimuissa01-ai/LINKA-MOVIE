@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -86,6 +87,7 @@ fun AdminDashboardScreen(
     var movieToDelete by remember { mutableStateOf<Movie?>(null) }
     var syncBannerMessage by remember { mutableStateOf<String?>(null) }
     var movieForCoverChange by remember { mutableStateOf<Movie?>(null) }
+    var managingMovieEpisodes by remember { mutableStateOf<Movie?>(null) }
 
     val coverChangeLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()
@@ -334,7 +336,7 @@ fun AdminDashboardScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Row {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
                                     Surface(
                                         color = SurfaceElevated,
                                         shape = RoundedCornerShape(4.dp)
@@ -360,10 +362,40 @@ fun AdminDashboardScreen(
                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                         )
                                     }
+                                    if (movie.episodes.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            color = Color(0x3300C853),
+                                            shape = RoundedCornerShape(4.dp),
+                                            modifier = Modifier.clickable {
+                                                managingMovieEpisodes = movie
+                                            }
+                                        ) {
+                                            Text(
+                                                text = "Series: ${movie.episodes.size} eps",
+                                                color = Color(0xFF69F0AE),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
 
                             Row {
+                                IconButton(
+                                    onClick = {
+                                        managingMovieEpisodes = movie
+                                    },
+                                    modifier = Modifier.testTag("admin_episodes_${movie.id}")
+                                ) {
+                                    Icon(
+                                        Icons.Default.VideoLibrary,
+                                        contentDescription = "Manage Episodes",
+                                        tint = if (movie.episodes.isNotEmpty()) Color(0xFF69F0AE) else TextSecondary
+                                    )
+                                }
                                 IconButton(
                                     onClick = {
                                         movieForCoverChange = movie
@@ -416,6 +448,17 @@ fun AdminDashboardScreen(
                 Text("Add Movie", fontWeight = FontWeight.Bold)
             }
         }
+    }
+
+    // Manage Episodes Modal Dialog
+    managingMovieEpisodes?.let { selectedMovie ->
+        // Keep synced with latest version in movies state
+        val liveMovie = movies.find { it.id == selectedMovie.id } ?: selectedMovie
+        AdminManageEpisodesModal(
+            movie = liveMovie,
+            adminViewModel = adminViewModel,
+            onDismiss = { managingMovieEpisodes = null }
+        )
     }
 
     // Delete Confirmation Dialog

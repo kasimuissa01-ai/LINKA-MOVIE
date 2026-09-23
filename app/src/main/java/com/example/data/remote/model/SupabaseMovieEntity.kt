@@ -1,5 +1,6 @@
 package com.example.data.remote.model
 
+import com.example.domain.model.Episode
 import com.example.domain.model.Movie
 import com.example.util.R2UrlUtils
 import com.squareup.moshi.Json
@@ -66,6 +67,9 @@ data class SupabaseMovieEntity(
     @Json(name = "view_count")
     val viewCount: Long = 0L,
 
+    @Json(name = "episodes")
+    val episodes: List<Episode> = emptyList(),
+
     @Json(name = "created_at")
     val createdAt: String? = null,
 
@@ -104,7 +108,8 @@ data class SupabaseMovieEntity(
             cast = castMembers,
             isFeatured = isFeatured,
             uploadStatus = uploadStatus,
-            uploadDate = System.currentTimeMillis()
+            uploadDate = System.currentTimeMillis(),
+            episodes = episodes
         )
     }
 
@@ -132,6 +137,25 @@ data class SupabaseMovieEntity(
             put("cast_members", JSONArray(castMembers))
             put("is_featured", isFeatured)
             put("view_count", viewCount)
+            if (episodes.isNotEmpty()) {
+                val epArray = JSONArray()
+                for (ep in episodes) {
+                    val epObj = JSONObject().apply {
+                        put("id", ep.id)
+                        put("movieId", ep.movieId)
+                        put("episodeNumber", ep.episodeNumber)
+                        put("seasonNumber", ep.seasonNumber)
+                        put("title", ep.title)
+                        put("description", ep.description)
+                        put("videoKey", ep.videoKey)
+                        put("videoStreamUrl", ep.videoStreamUrl)
+                        put("durationMinutes", ep.durationMinutes)
+                        put("fileSizeMb", ep.fileSizeMb)
+                    }
+                    epArray.put(epObj)
+                }
+                put("episodes_json", epArray.toString())
+            }
         }
     }
 
@@ -155,7 +179,8 @@ data class SupabaseMovieEntity(
                 releaseYear = movie.releaseYear,
                 rating = movie.rating,
                 castMembers = movie.cast,
-                isFeatured = movie.isFeatured
+                isFeatured = movie.isFeatured,
+                episodes = movie.episodes
             )
         }
 
@@ -186,6 +211,35 @@ data class SupabaseMovieEntity(
 
             val uploadStatus = obj.optString("upload_status", "completed").ifBlank { "completed" }
 
+            val parsedEpisodes = mutableListOf<Episode>()
+            val epJson = obj.optString("episodes_json", "").ifBlank {
+                obj.optJSONArray("episodes")?.toString() ?: ""
+            }
+            if (epJson.isNotBlank()) {
+                try {
+                    val array = JSONArray(epJson)
+                    for (i in 0 until array.length()) {
+                        val item = array.getJSONObject(i)
+                        val epKey = R2UrlUtils.extractCleanVideoKey(item.optString("videoKey", ""), item.optString("videoStreamUrl", ""))
+                        val epStream = if (epKey.isNotBlank()) R2UrlUtils.buildUrl(epKey) else item.optString("videoStreamUrl", "")
+                        parsedEpisodes.add(
+                            Episode(
+                                id = item.optString("id", "${obj.optString("id")}_ep_${i + 1}"),
+                                movieId = item.optString("movieId", obj.optString("id")),
+                                episodeNumber = item.optInt("episodeNumber", i + 1),
+                                seasonNumber = item.optInt("seasonNumber", 1),
+                                title = item.optString("title", "Episode ${i + 1}"),
+                                description = item.optString("description", ""),
+                                videoKey = epKey,
+                                videoStreamUrl = epStream,
+                                durationMinutes = item.optInt("durationMinutes", 45),
+                                fileSizeMb = item.optLong("fileSizeMb", 250L)
+                            )
+                        )
+                    }
+                } catch (e: Exception) { }
+            }
+
             return SupabaseMovieEntity(
                 id = obj.optString("id"),
                 title = obj.optString("title"),
@@ -203,6 +257,7 @@ data class SupabaseMovieEntity(
                 castMembers = castList,
                 isFeatured = obj.optBoolean("is_featured", false),
                 viewCount = obj.optLong("view_count", 0L),
+                episodes = parsedEpisodes,
                 createdAt = obj.optString("created_at").takeIf { it.isNotBlank() },
                 updatedAt = obj.optString("updated_at").takeIf { it.isNotBlank() }
             )

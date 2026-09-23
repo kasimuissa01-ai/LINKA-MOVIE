@@ -1,11 +1,14 @@
 package com.example.presentation.viewmodel
 
+import android.content.Context
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.remote.TmdbMovieResult
 import com.example.data.remote.TmdbService
 import com.example.data.repository.MovieRepository
+import com.example.domain.model.Episode
 import com.example.domain.model.Movie
 import com.example.domain.model.UploadSession
 import com.example.util.R2UrlUtils
@@ -122,7 +125,8 @@ class AdminViewModel(
         streamUrl: String = "",
         releaseYear: Int = 2026,
         rating: Double = 4.8,
-        isFeatured: Boolean = false
+        isFeatured: Boolean = false,
+        episodes: List<Episode> = emptyList()
     ) {
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
         val sanitizedTitle = title.lowercase().replace(Regex("[^a-z0-9]"), "_").replace(Regex("_+"), "_")
@@ -147,7 +151,8 @@ class AdminViewModel(
             rating = rating,
             cast = listOf("Movie Cast"),
             isFeatured = isFeatured,
-            uploadStatus = "completed"
+            uploadStatus = "completed",
+            episodes = episodes.map { it.copy(movieId = movieId) }
         )
 
         activeUploadJob?.cancel()
@@ -274,7 +279,8 @@ class AdminViewModel(
         streamUrl: String = "",
         releaseYear: Int = 2026,
         rating: Double = 4.8,
-        isFeatured: Boolean = false
+        isFeatured: Boolean = false,
+        episodes: List<Episode> = emptyList()
     ) {
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
         val sanitizedTitle = title.lowercase().replace(" ", "_")
@@ -324,7 +330,8 @@ class AdminViewModel(
                 rating = rating,
                 cast = listOf("Movie Cast"),
                 isFeatured = isFeatured,
-                uploadStatus = "completed"
+                uploadStatus = "completed",
+                episodes = episodes.map { it.copy(movieId = movieId) }
             )
 
             try {
@@ -395,6 +402,141 @@ class AdminViewModel(
                 isCompleted = true,
                 statusMessage = "Movie '${updatedMovie.title}' updated with verified R2 cover in Supabase!"
             )
+        }
+    }
+
+    /**
+     * Adds or updates a single Episode in an existing Movie / TV Series.
+     * Optionally uploads the local video file to Cloudflare R2 via Render.
+     */
+    fun addOrUpdateEpisode(
+        context: Context,
+        movie: Movie,
+        episode: Episode,
+        videoUri: Uri? = null,
+        onResult: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            _uploadState.value = UploadProgressState(
+                isUploading = true,
+                overallProgress = 0.05f,
+                statusMessage = "Processing episode '${episode.title}'..."
+            )
+
+            var finalVideoKey = episode.videoKey
+            var finalStreamUrl = episode.videoStreamUrl
+            var finalFileSizeMb = episode.fileSizeMb
+
+            if (videoUri != null) {
+                try {
+                    _uploadState.value = UploadProgressState(
+                        isUploading = true,
+                        overallProgress = 0.1f,
+                        statusMessage = "Uploading S${episode.seasonNumber}E${episode.episodeNumber} video to Cloudflare R2..."
+                    )
+
+                    val sanitizedTitle = movie.title.lowercase().replace(Regex("[^a-z0-9]"), "_")
+                    val customFilename = "${sanitizedTitle}_s${episode.seasonNumber}e${episode.episodeNumber}.mp4"
+
+                    val uploadResult = repository.uploadMovieVideoWithRender(
+                        context = context,
+                        videoUri = videoUri,
+                        customFilename = customFilename
+                    ) { progressPct, statusMsg ->
+                        val fraction = (progressPct / 100f).coerceIn(0f, 1f)
+                        _uploadState.value = _uploadState.value.copy(
+                            overallProgress = fraction,
+                            statusMessage = "S${episode.seasonNumber}E${episode.episodeNumber}: $statusMsg"
+                        )
+                    }
+
+                    finalVideoKey = R2UrlUtils.extractCleanVideoKey(uploadResult.key, uploadResult.url)
+                    finalStreamUrl = R2UrlUtils.buildUrl(finalVideoKey)
+                } catch (e: Exception) {
+                    Log.e("AdminViewModel", "Episode video upload failed: ${e.message}", e)
+                    _uploadState.value = UploadProgressState(
+                        isUploading = false,
+                        isCompleted = false,
+                        error = e.message ?: "Episode video upload failed",
+                        statusMessage = "Episode upload failed: ${e.message}"
+                    )
+                    onResult(false, e.message ?: "Episode video upload failed")
+                    return@launch
+                }
+            } else if (finalStreamUrl.isNotBlank()) {
+                val cleanKey = R2UrlUtils.extractCleanVideoKey(finalVideoKey, finalStreamUrl)
+                if (cleanKey.isNotBlank()) {
+                    finalVideoKey = cleanKey
+                    finalStreamUrl = R2UrlUtils.buildUrl(cleanKey)
+                }
+            }
+
+            val updatedEpisode = episode.copy(
+                movieId = movie.id,
+                videoKey = finalVideoKey,
+                videoStreamUrl = finalStreamUrl,
+                fileSizeMb = finalFileSizeMb
+            )
+
+            val currentEpisodes = movie.episodes.toMutableList()
+            val existingIndex = currentEpisodes.indexOfFirst { it.id == updatedEpisode.id }
+            if (existingIndex >= 0) {
+                currentEpisodes[existingIndex] = updatedEpisode
+            } else {
+                currentEpisodes.add(updatedEpisode)
+            }
+
+            // Sort by season and episode number
+            val sortedEpisodes = currentEpisodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+            val updatedMovie = movie.copy(episodes = sortedEpisodes)
+
+            try {
+                repository.updateMovie(updatedMovie)
+                _uploadState.value = UploadProgressState(
+                    isUploading = false,
+                    isCompleted = true,
+                    overallProgress = 1.0f,
+                    statusMessage = "Successfully saved Season ${updatedEpisode.seasonNumber} Episode ${updatedEpisode.episodeNumber} to '${movie.title}'!"
+                )
+                onResult(true, "Episode saved successfully")
+            } catch (e: Exception) {
+                _uploadState.value = UploadProgressState(
+                    isUploading = false,
+                    isCompleted = false,
+                    error = e.message ?: "Failed to save episode",
+                    statusMessage = "Error: ${e.message}"
+                )
+                onResult(false, e.message ?: "Failed to save episode")
+            }
+        }
+    }
+
+    /**
+     * Deletes an episode from an existing movie/show.
+     */
+    fun deleteEpisode(
+        movie: Movie,
+        episodeId: String,
+        onResult: (Boolean, String) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            val filteredEpisodes = movie.episodes.filterNot { it.id == episodeId }
+            val updatedMovie = movie.copy(episodes = filteredEpisodes)
+            try {
+                repository.updateMovie(updatedMovie)
+                _uploadState.value = UploadProgressState(
+                    isUploading = false,
+                    isCompleted = true,
+                    statusMessage = "Episode removed from '${movie.title}'."
+                )
+                onResult(true, "Episode deleted")
+            } catch (e: Exception) {
+                _uploadState.value = UploadProgressState(
+                    isUploading = false,
+                    error = e.message ?: "Failed to delete episode"
+                )
+                onResult(false, e.message ?: "Failed to delete episode")
+            }
         }
     }
 
