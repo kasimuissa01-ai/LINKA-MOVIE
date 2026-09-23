@@ -81,6 +81,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import com.example.presentation.components.Media3GestureOverlay
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -273,15 +274,12 @@ fun VideoPlayerScreen(
         }
     }
 
-    BoxWithConstraints(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
             .testTag("video_player_screen")
     ) {
-        val totalWidth = constraints.maxWidth.toFloat()
-        val totalHeight = constraints.maxHeight.toFloat().coerceAtLeast(1f)
-
         // 1. Fullscreen Video Surface
         AndroidView(
             factory = { ctx ->
@@ -304,303 +302,17 @@ fun VideoPlayerScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 2. Comprehensive Touch Gesture Layer:
-        // - Double-tap edges to seek +/- 10s (Left = -10s, Right = +10s)
-        // - Vertical drag on left side for brightness
-        // - Vertical drag on right side for volume control
-        // - Single tap toggles playback controls
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(totalWidth, totalHeight) {
-                    var lastTapTime = 0L
-                    var lastTapPosition = Offset.Zero
-                    var singleTapJob: Job? = null
-
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        val downTime = android.os.SystemClock.uptimeMillis()
-                        val downPos = down.position
-                        val isLeftHalf = downPos.x < totalWidth * 0.5f
-
-                        var isDragging = false
-                        var lastY = downPos.y
-                        var wasPointerConsumed = false
-                        val touchSlop = viewConfiguration.touchSlop
-
-                        try {
-                            while (true) {
-                                val event = awaitPointerEvent(PointerEventPass.Main)
-                                val currentPointer = event.changes.firstOrNull { it.id == down.id } ?: break
-
-                                if (!currentPointer.pressed) {
-                                    wasPointerConsumed = currentPointer.isConsumed
-                                    currentPointer.consume()
-                                    break
-                                }
-
-                                val currentPos = currentPointer.position
-                                val deltaY = currentPos.y - lastY
-                                val totalDiffX = abs(currentPos.x - downPos.x)
-                                val totalDiffY = abs(currentPos.y - downPos.y)
-
-                                if (!isDragging) {
-                                    if (totalDiffY > touchSlop && totalDiffY > totalDiffX * 1.1f) {
-                                        isDragging = true
-                                        singleTapJob?.cancel()
-                                        lastTapTime = 0L
-                                        if (isLeftHalf) {
-                                            playerViewModel.onBrightnessDragStart(activity?.window)
-                                        } else {
-                                            playerViewModel.onVolumeDragStart(context)
-                                        }
-                                    } else if (totalDiffX > touchSlop) {
-                                        break
-                                    }
-                                }
-
-                                if (isDragging) {
-                                    currentPointer.consume()
-                                    val dragRatio = -deltaY / totalHeight
-                                    if (isLeftHalf) {
-                                        playerViewModel.onBrightnessSwipe(dragRatio, activity?.window)
-                                    } else {
-                                        playerViewModel.onVolumeSwipe(dragRatio, context)
-                                    }
-                                    lastY = currentPos.y
-                                }
-                            }
-                        } finally {
-                            if (isDragging) {
-                                playerViewModel.onDragEnd()
-                            }
-                        }
-
-                        // Process Tap & Double Tap gestures if no vertical drag occurred
-                        if (!isDragging && !wasPointerConsumed) {
-                            val tapDuration = android.os.SystemClock.uptimeMillis() - downTime
-                            if (tapDuration < 450L) {
-                                val now = android.os.SystemClock.uptimeMillis()
-                                val activeSeek = playerViewModel.uiState.value.doubleTapSeek
-                                val isConsecutiveSeek = activeSeek != null && (
-                                    (activeSeek.isForward && !isLeftHalf) ||
-                                    (!activeSeek.isForward && isLeftHalf)
-                                )
-                                val isDoubleTap = (now - lastTapTime < 340L) &&
-                                        (hypot(downPos.x - lastTapPosition.x, downPos.y - lastTapPosition.y) < 130.dp.toPx())
-
-                                if (isConsecutiveSeek || isDoubleTap) {
-                                    singleTapJob?.cancel()
-                                    lastTapTime = now
-                                    lastTapPosition = downPos
-                                    if (isLeftHalf) {
-                                        playerViewModel.seekRelative(-10, isForward = false)
-                                    } else {
-                                        playerViewModel.seekRelative(10, isForward = true)
-                                    }
-                                } else {
-                                    lastTapTime = now
-                                    lastTapPosition = downPos
-                                    singleTapJob?.cancel()
-                                    singleTapJob = coroutineScope.launch {
-                                        delay(260L)
-                                        playerViewModel.toggleControls()
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+        // 2. Custom Media3 Gesture Overlay (Double-tap +/-10s seek, brightness & volume gestures with animated HUDs)
+        Media3GestureOverlay(
+            player = playerViewModel.exoPlayer,
+            onSingleTap = {
+                playerViewModel.toggleControls()
+            },
+            onSeekRelative = { seconds, isForward ->
+                playerViewModel.seekRelative(if (isForward) seconds else -seconds, isForward)
+            },
+            modifier = Modifier.fillMaxSize()
         )
-
-        // 3. Double-tap Seek HUD (+10s / -10s on edges with pulse animation)
-        uiState.doubleTapSeek?.let { seekState ->
-            val pulseAnim = remember { Animatable(0.85f) }
-
-            LaunchedEffect(seekState.seconds, seekState.isForward) {
-                pulseAnim.snapTo(0.85f)
-                pulseAnim.animateTo(
-                    targetValue = 1.15f,
-                    animationSpec = tween(280)
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 48.dp),
-                contentAlignment = if (seekState.isForward) Alignment.CenterEnd else Alignment.CenterStart
-            ) {
-                Surface(
-                    color = Color(0xCC111118),
-                    shape = RoundedCornerShape(22.dp),
-                    border = BorderStroke(1.5.dp, CinematicRed.copy(alpha = 0.8f)),
-                    modifier = Modifier.scale(pulseAnim.value)
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier.padding(horizontal = 22.dp, vertical = 16.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            if (!seekState.isForward) {
-                                Icon(
-                                    imageVector = Icons.Default.FastRewind,
-                                    contentDescription = null,
-                                    tint = CinematicRed,
-                                    modifier = Modifier.size(28.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                            }
-                            Text(
-                                text = "${if (seekState.isForward) "+" else "-"}${seekState.seconds}s",
-                                color = Color.White,
-                                fontSize = 16.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            if (seekState.isForward) {
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Icon(
-                                    imageVector = Icons.Default.FastForward,
-                                    contentDescription = null,
-                                    tint = CinematicRed,
-                                    modifier = Modifier.size(28.dp)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(
-                            text = if (seekState.isForward) "Fast Forward" else "Rewind",
-                            color = Color.White.copy(alpha = 0.7f),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            }
-        }
-
-        // 4. Volume / Brightness HUD Overlays (Minimal, Sleek Glassmorphic)
-        // Volume HUD (Right side vertical drag)
-        AnimatedVisibility(
-            visible = uiState.showVolumeHud,
-            enter = fadeIn(tween(150)),
-            exit = fadeOut(tween(200)),
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 40.dp)
-        ) {
-            Surface(
-                color = Color(0xCC111118),
-                shape = RoundedCornerShape(18.dp),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
-                modifier = Modifier
-                    .width(52.dp)
-                    .height(170.dp)
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.padding(vertical = 14.dp)
-                ) {
-                    val volumeIcon = when {
-                        uiState.volumeLevel <= 0.01f -> Icons.Default.VolumeOff
-                        uiState.volumeLevel < 0.5f -> Icons.Default.VolumeDown
-                        else -> Icons.Default.VolumeUp
-                    }
-                    Icon(
-                        imageVector = volumeIcon,
-                        contentDescription = "Volume",
-                        tint = CinematicRed,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .width(8.dp)
-                            .height(90.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0x33FFFFFF))
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .fillMaxHeight(uiState.volumeLevel.coerceIn(0f, 1f))
-                                .align(Alignment.BottomCenter)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(CinematicRed)
-                        )
-                    }
-                    Text(
-                        text = "${(uiState.volumeLevel * 100).roundToInt()}%",
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-
-        // Brightness HUD (Left side vertical drag)
-        AnimatedVisibility(
-            visible = uiState.showBrightnessHud,
-            enter = fadeIn(tween(150)),
-            exit = fadeOut(tween(200)),
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = 40.dp)
-        ) {
-            Surface(
-                color = Color(0xCC111118),
-                shape = RoundedCornerShape(18.dp),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.15f)),
-                modifier = Modifier
-                    .width(52.dp)
-                    .height(170.dp)
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.padding(vertical = 14.dp)
-                ) {
-                    val brightnessIcon = when {
-                        uiState.brightnessLevel < 0.35f -> Icons.Default.BrightnessLow
-                        uiState.brightnessLevel < 0.7f -> Icons.Default.BrightnessMedium
-                        else -> Icons.Default.BrightnessHigh
-                    }
-                    Icon(
-                        imageVector = brightnessIcon,
-                        contentDescription = "Brightness",
-                        tint = AmberGold,
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .width(8.dp)
-                            .height(90.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0x33FFFFFF))
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .fillMaxHeight(uiState.brightnessLevel.coerceIn(0f, 1f))
-                                .align(Alignment.BottomCenter)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(AmberGold)
-                        )
-                    }
-                    Text(
-                        text = "${(uiState.brightnessLevel * 100).roundToInt()}%",
-                        color = Color.White,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
 
         // 5. Cinematic Loading State Overlay (Displays ONLY while initially resolving stream URL)
         CinematicLoadingOverlay(

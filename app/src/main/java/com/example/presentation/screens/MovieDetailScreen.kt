@@ -81,6 +81,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import com.example.presentation.components.Media3GestureOverlay
 import com.example.presentation.components.SwahiliDescriptionSection
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -674,14 +675,23 @@ fun MovieDetailScreen(
                     .background(Color.Black)
                     .testTag("detail_inline_video_container")
             }
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) {
-                showPlayerControls = !showPlayerControls
-            }
         ) {
-            // Shimmer skeleton when content is fetching / buffering
+            // Custom Gesture Overlay for Double-Tap Seek (+/-10s), Brightness (Left Swipe), Voice/Volume (Right Swipe)
+            Media3GestureOverlay(
+                player = inlinePlayer,
+                onSingleTap = {
+                    showPlayerControls = !showPlayerControls
+                },
+                onSeekRelative = { seconds, isForward ->
+                    val step = if (isForward) 10 else -10
+                    val maxDur = inlinePlayer.duration.takeIf { it > 0L } ?: Long.MAX_VALUE
+                    val target = (inlinePlayer.currentPosition + (step * 1000L)).coerceIn(0L, maxDur)
+                    inlinePlayer.seekTo(target)
+                    currentPositionMs = target
+                },
+                modifier = Modifier.fillMaxSize()
+            ) {
+                // Shimmer skeleton when content is fetching / buffering
             val isShowingLoadingLayer = !isPlaying || isBuffering || streamError != null
             if (isShowingLoadingLayer && streamError == null) {
                 val shimmerTransition = rememberInfiniteTransition(label = "player_shimmer")
@@ -1229,6 +1239,7 @@ fun MovieDetailScreen(
                     }
                 }
             }
+        }
         }
     }
 }
