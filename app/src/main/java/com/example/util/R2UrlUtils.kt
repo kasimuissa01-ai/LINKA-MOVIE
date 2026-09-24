@@ -25,7 +25,13 @@ object R2UrlUtils {
         if (trimmed.isBlank()) return ""
 
         // 1. Local files and gallery content URIs
-        if (trimmed.startsWith("content://") || trimmed.startsWith("file://") || trimmed.startsWith("/")) {
+        if (trimmed.startsWith("content://") ||
+            trimmed.startsWith("file://") ||
+            trimmed.startsWith("file:/") ||
+            trimmed.startsWith("/") ||
+            trimmed.contains("/data/user/") ||
+            trimmed.contains("/storage/emulated/")
+        ) {
             return trimmed
         }
 
@@ -61,7 +67,13 @@ object R2UrlUtils {
         val trimmedStream = streamUrl?.trim().orEmpty()
         if (trimmedStream.isBlank()) return ""
 
-        if (trimmedStream.startsWith("content://") || trimmedStream.startsWith("file://") || trimmedStream.startsWith("/")) {
+        if (trimmedStream.startsWith("content://") ||
+            trimmedStream.startsWith("file://") ||
+            trimmedStream.startsWith("file:/") ||
+            trimmedStream.startsWith("/") ||
+            trimmedStream.contains("/data/user/") ||
+            trimmedStream.contains("/storage/emulated/")
+        ) {
             return trimmedStream
         }
 

@@ -118,8 +118,14 @@ data class SupabaseMovieEntity(
      */
     fun toJsonObject(): JSONObject {
         val canonicalVideoKey = R2UrlUtils.extractCleanVideoKey(videoKey, videoStreamUrl)
-        val canonicalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (coverKey.isNotBlank()) coverKey else coverUrl)
-        val finalCoverUrl = if (canonicalCoverKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalCoverKey) else coverUrl
+        val rawCoverCandidate = if (coverKey.isNotBlank()) coverKey else coverUrl
+        val isLocalCover = rawCoverCandidate.startsWith("file:") ||
+            rawCoverCandidate.startsWith("content:") ||
+            rawCoverCandidate.startsWith("/") ||
+            rawCoverCandidate.contains("/data/user/") ||
+            rawCoverCandidate.contains("/storage/emulated/")
+        val canonicalCoverKey = if (isLocalCover) "" else R2UrlUtils.extractKeyFromAnyUrl(rawCoverCandidate)
+        val finalCoverUrl = if (canonicalCoverKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalCoverKey) else if (!isLocalCover) coverUrl else ""
         val finalStreamUrl = if (canonicalVideoKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalVideoKey) else videoStreamUrl
 
         return JSONObject().apply {
