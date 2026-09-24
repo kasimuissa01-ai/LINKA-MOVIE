@@ -1,3 +1,5 @@
+@file:kotlin.OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
+
 package com.example.presentation.screens
 
 import android.app.Activity
@@ -58,6 +60,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
@@ -125,12 +129,15 @@ import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.example.data.repository.MovieRepository
 import com.example.domain.model.DownloadItem
+import com.example.data.download.EpisodeDownloadProgress
 import com.example.domain.model.DownloadStatus
 import com.example.domain.model.Episode
 import com.example.domain.model.Movie
 import com.example.presentation.components.MoviePosterCard
 import com.example.presentation.viewmodel.DownloadViewModel
 import com.example.presentation.viewmodel.PlayerViewModel
+import com.example.presentation.navigation.movieSharedBounds
+import com.example.presentation.navigation.movieSharedElement
 import com.example.util.R2UrlUtils
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
@@ -157,6 +164,7 @@ fun MovieDetailScreen(
     modifier: Modifier = Modifier
 ) {
     val downloads by downloadViewModel.downloads.collectAsState()
+    val episodeProgressMap by downloadViewModel.episodeProgressMap.collectAsState()
     val downloadItem = downloads.find { it.movieId == movie.id }
     val context = LocalContext.current
     val activity = context as? Activity
@@ -448,6 +456,7 @@ fun MovieDetailScreen(
                             modifier = Modifier
                                 .width(85.dp)
                                 .height(125.dp)
+                                .movieSharedElement(key = "movie_poster_${movie.id}")
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(SurfaceElevated)
                         )
@@ -460,7 +469,8 @@ fun MovieDetailScreen(
                                 color = TextPrimary,
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.Black,
-                                lineHeight = 28.sp
+                                lineHeight = 28.sp,
+                                modifier = Modifier.movieSharedBounds(key = "movie_title_${movie.id}")
                             )
 
                             Spacer(modifier = Modifier.height(10.dp))
@@ -473,7 +483,8 @@ fun MovieDetailScreen(
                                 // Rating
                                 Surface(
                                     color = SurfaceDark,
-                                    shape = RoundedCornerShape(6.dp)
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.movieSharedBounds(key = "movie_rating_${movie.id}")
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
@@ -546,6 +557,7 @@ fun MovieDetailScreen(
                         TabbedDropdownEpisodeSelector(
                             movie = movie,
                             selectedEpisodeId = selectedEpisodeId,
+                            episodeProgressMap = episodeProgressMap,
                             onSelectEpisode = { ep ->
                                 selectedEpisodeId = ep.id
                             }
@@ -673,6 +685,7 @@ fun MovieDetailScreen(
                         MovieEpisodesSection(
                             movie = movie,
                             downloads = downloads,
+                            episodeProgressMap = episodeProgressMap,
                             selectedEpisodeId = selectedEpisodeId,
                             onSelectEpisode = { ep ->
                                 selectedEpisodeId = ep.id
@@ -683,6 +696,9 @@ fun MovieDetailScreen(
                             },
                             onDownloadEpisode = { ep ->
                                 downloadViewModel.startDownload(movie, context, ep)
+                            },
+                            onCancelDownloadEpisode = { ep ->
+                                downloadViewModel.cancelEpisodeDownload(movie.id, ep.id, context)
                             }
                         )
                     }
@@ -1455,6 +1471,7 @@ fun AnimatedNavyGlassFullscreenButton(
 fun TabbedDropdownEpisodeSelector(
     movie: Movie,
     selectedEpisodeId: String?,
+    episodeProgressMap: Map<String, EpisodeDownloadProgress> = emptyMap(),
     onSelectEpisode: (Episode) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1726,18 +1743,54 @@ fun TabbedDropdownEpisodeSelector(
                                         )
                                     }
                                 }
-                                if (isSelected) {
-                                    Surface(
-                                        color = CinematicRed,
-                                        shape = RoundedCornerShape(4.dp)
-                                    ) {
-                                        Text(
-                                            text = "PLAYING",
-                                            color = Color.White,
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                                        )
+                                val epProgress = episodeProgressMap[ep.id]
+                                val isEpDownloading = epProgress?.isDownloading == true
+                                val isEpCached = epProgress?.isCompleted == true
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (isEpDownloading) {
+                                        Surface(
+                                            color = CinematicRed.copy(alpha = 0.2f),
+                                            shape = RoundedCornerShape(4.dp),
+                                            border = BorderStroke(1.dp, CinematicRed.copy(alpha = 0.4f))
+                                        ) {
+                                            Text(
+                                                text = "${epProgress.progressPercent}% ⬇",
+                                                color = CinematicRed,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                    } else if (isEpCached) {
+                                        Surface(
+                                            color = Color(0xFF4CAF50).copy(alpha = 0.2f),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "✓ CACHED",
+                                                color = Color(0xFF4CAF50),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                    }
+                                    if (isSelected) {
+                                        Surface(
+                                            color = CinematicRed,
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "PLAYING",
+                                                color = Color.White,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1770,11 +1823,19 @@ fun TabbedDropdownEpisodeSelector(
         ) {
             items(episodesInCurrentSeason) { ep ->
                 val isSelected = (ep.id == selectedEpisodeId)
+                val epProgress = episodeProgressMap[ep.id]
+                val isEpDownloading = epProgress?.isDownloading == true
+                val isEpCached = epProgress?.isCompleted == true
+
                 Surface(
                     color = if (isSelected) CinematicRed else SurfaceElevated,
                     shape = RoundedCornerShape(10.dp),
                     border = if (isSelected) {
                         BorderStroke(1.5.dp, Color.White.copy(alpha = 0.85f))
+                    } else if (isEpDownloading) {
+                        BorderStroke(1.dp, CinematicRed)
+                    } else if (isEpCached) {
+                        BorderStroke(1.dp, Color(0xFF4CAF50).copy(alpha = 0.5f))
                     } else {
                         BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
                     },
@@ -1791,15 +1852,21 @@ fun TabbedDropdownEpisodeSelector(
                         Icon(
                             imageVector = if (isSelected) Icons.Default.PlayArrow else Icons.Default.VideoLibrary,
                             contentDescription = null,
-                            tint = if (isSelected) Color.White else TextSecondary,
+                            tint = if (isSelected) Color.White else if (isEpDownloading) CinematicRed else TextSecondary,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Ep ${ep.episodeNumber}",
-                            color = if (isSelected) Color.White else TextPrimary,
+                            text = if (isEpDownloading) {
+                                "Ep ${ep.episodeNumber} (${epProgress.progressPercent}%)"
+                            } else if (isEpCached) {
+                                "Ep ${ep.episodeNumber} ✓"
+                            } else {
+                                "Ep ${ep.episodeNumber}"
+                            },
+                            color = if (isSelected) Color.White else if (isEpDownloading) CinematicRed else if (isEpCached) Color(0xFF4CAF50) else TextPrimary,
                             fontSize = 13.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            fontWeight = if (isSelected || isEpDownloading) FontWeight.Bold else FontWeight.Medium
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
@@ -1818,10 +1885,12 @@ fun TabbedDropdownEpisodeSelector(
 fun MovieEpisodesSection(
     movie: Movie,
     downloads: List<DownloadItem>,
+    episodeProgressMap: Map<String, EpisodeDownloadProgress> = emptyMap(),
     selectedEpisodeId: String? = null,
     onSelectEpisode: ((Episode) -> Unit)? = null,
     onPlayEpisode: (Episode) -> Unit,
     onDownloadEpisode: (Episode) -> Unit,
+    onCancelDownloadEpisode: ((Episode) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val seasons = remember(movie.episodes) {
@@ -1898,17 +1967,20 @@ fun MovieEpisodesSection(
                 val epDownload = downloads.find {
                     (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.movieId == movie.id
                 }
+                val epWorkProgress = episodeProgressMap[ep.id]
 
                 EpisodeDetailCard(
                     episode = ep,
                     movie = movie,
                     isSelected = (ep.id == selectedEpisodeId),
                     downloadItem = epDownload,
+                    workProgress = epWorkProgress,
                     onPlay = {
                         onSelectEpisode?.invoke(ep)
                         onPlayEpisode(ep)
                     },
-                    onDownload = { onDownloadEpisode(ep) }
+                    onDownload = { onDownloadEpisode(ep) },
+                    onCancelDownload = { onCancelDownloadEpisode?.invoke(ep) }
                 )
             }
         }
@@ -1921,16 +1993,52 @@ fun EpisodeDetailCard(
     movie: Movie,
     isSelected: Boolean = false,
     downloadItem: DownloadItem?,
+    workProgress: EpisodeDownloadProgress? = null,
     onPlay: () -> Unit,
     onDownload: () -> Unit,
+    onCancelDownload: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val coverUrl = movie.coverUrl
 
+    val isDownloading = workProgress?.isDownloading == true || downloadItem?.status == DownloadStatus.DOWNLOADING
+    val isCompleted = workProgress?.isCompleted == true || downloadItem?.status == DownloadStatus.COMPLETED
+
+    val progressFraction = when {
+        isCompleted -> 1.0f
+        workProgress?.isDownloading == true -> workProgress.progressFraction
+        downloadItem?.status == DownloadStatus.DOWNLOADING -> downloadItem.progress
+        else -> 0f
+    }.coerceIn(0f, 1f)
+
+    val progressPercent = when {
+        isCompleted -> 100
+        workProgress?.isDownloading == true -> workProgress.progressPercent
+        downloadItem?.status == DownloadStatus.DOWNLOADING -> (downloadItem.progress * 100).toInt()
+        else -> 0
+    }.coerceIn(0, 100)
+
+    val bytesDownloaded = when {
+        workProgress != null && workProgress.bytesDownloaded > 0L -> workProgress.bytesDownloaded
+        downloadItem != null && downloadItem.downloadedBytes > 0L -> downloadItem.downloadedBytes
+        else -> (progressFraction * episode.fileSizeMb * 1024L * 1024L).toLong()
+    }
+
+    val totalBytes = when {
+        workProgress != null && workProgress.totalBytes > 0L -> workProgress.totalBytes
+        downloadItem != null && downloadItem.totalBytes > 0L -> downloadItem.totalBytes
+        episode.fileSizeMb > 0 -> episode.fileSizeMb * 1024L * 1024L
+        else -> 0L
+    }
+
     Surface(
         color = if (isSelected) SurfaceElevated else SurfaceDark,
         shape = RoundedCornerShape(12.dp),
-        border = if (isSelected) BorderStroke(1.5.dp, CinematicRed) else BorderStroke(1.dp, Color.White.copy(alpha = 0.05f)),
+        border = when {
+            isSelected -> BorderStroke(1.5.dp, CinematicRed)
+            isDownloading -> BorderStroke(1.dp, CinematicRed.copy(alpha = 0.5f))
+            else -> BorderStroke(1.dp, Color.White.copy(alpha = 0.05f))
+        },
         modifier = modifier
             .fillMaxWidth()
             .clickable { onPlay() }
@@ -1978,7 +2086,10 @@ fun EpisodeDetailCard(
                 Spacer(modifier = Modifier.width(12.dp))
 
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Text(
                             text = if (episode.title.startsWith("Episode", ignoreCase = true)) {
                                 episode.title
@@ -1992,7 +2103,48 @@ fun EpisodeDetailCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false)
                         )
-                        if (isSelected) {
+                        if (isDownloading) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                color = CinematicRed.copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(4.dp),
+                                border = BorderStroke(1.dp, CinematicRed.copy(alpha = 0.5f))
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        progress = { progressFraction },
+                                        color = CinematicRed,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(10.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "$progressPercent%",
+                                        color = CinematicRed,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        } else if (isCompleted) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                color = Color(0xFF4CAF50).copy(alpha = 0.18f),
+                                shape = RoundedCornerShape(4.dp),
+                                border = BorderStroke(1.dp, Color(0xFF4CAF50).copy(alpha = 0.4f))
+                            ) {
+                                Text(
+                                    text = "CACHED",
+                                    color = Color(0xFF4CAF50),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                )
+                            }
+                        } else if (isSelected) {
                             Spacer(modifier = Modifier.width(6.dp))
                             Surface(
                                 color = CinematicRed,
@@ -2016,37 +2168,126 @@ fun EpisodeDetailCard(
                     )
                 }
 
-                // Download Button for Episode
-                IconButton(
-                    onClick = onDownload,
-                    modifier = Modifier.size(36.dp)
+                // Download / Action Button for Episode
+                if (isDownloading) {
+                    IconButton(
+                        onClick = { onCancelDownload?.invoke() },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cancel Download",
+                            tint = CinematicRed,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                } else if (isCompleted) {
+                    IconButton(
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "Cached Locally",
+                            tint = Color(0xFF4CAF50),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                } else {
+                    IconButton(
+                        onClick = onDownload,
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = "Download Episode",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+            }
+
+            // Real-time Download Progress Indicator Box
+            if (isDownloading) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    color = SurfaceElevated.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, CinematicRed.copy(alpha = 0.3f)),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    when (downloadItem?.status) {
-                        DownloadStatus.DOWNLOADING -> {
-                            CircularProgressIndicator(
-                                progress = downloadItem.progress,
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Caching episode locally...",
+                                color = TextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "$progressPercent%",
                                 color = CinematicRed,
-                                strokeWidth = 2.dp,
-                                modifier = Modifier.size(20.dp)
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
-                        DownloadStatus.COMPLETED -> {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = "Downloaded",
-                                tint = Color(0xFF4CAF50),
-                                modifier = Modifier.size(22.dp)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LinearProgressIndicator(
+                            progress = { progressFraction },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = CinematicRed,
+                            trackColor = SurfaceDark
+                        )
+                        Spacer(modifier = Modifier.height(5.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (totalBytes > 0) "${formatBytes(bytesDownloaded)} / ${formatBytes(totalBytes)}" else "${formatBytes(bytesDownloaded)} downloaded",
+                                color = TextSecondary,
+                                fontSize = 10.sp
                             )
-                        }
-                        else -> {
-                            Icon(
-                                imageVector = Icons.Default.Download,
-                                contentDescription = "Download Episode",
-                                tint = TextSecondary,
-                                modifier = Modifier.size(22.dp)
+                            val speed = workProgress?.speedText.orEmpty()
+                            Text(
+                                text = if (speed.isNotBlank()) speed else "Downloading...",
+                                color = AmberGold,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium
                             )
                         }
                     }
+                }
+            } else if (isCompleted) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint = Color(0xFF4CAF50),
+                        modifier = Modifier.size(12.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Available offline • ${formatBytes(totalBytes)}",
+                        color = Color(0xFF4CAF50),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
 
@@ -2062,5 +2303,15 @@ fun EpisodeDetailCard(
                 )
             }
         }
+    }
+}
+
+private fun formatBytes(bytes: Long): String {
+    if (bytes <= 0) return "0 MB"
+    val mb = bytes / (1024.0 * 1024.0)
+    return if (mb >= 1024) {
+        String.format("%.2f GB", mb / 1024.0)
+    } else {
+        String.format("%.1f MB", mb)
     }
 }

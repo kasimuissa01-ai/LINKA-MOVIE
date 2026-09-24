@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.model.Movie
+import com.example.presentation.components.MovieGridSkeleton
 import com.example.presentation.components.MoviePosterCard
 import com.example.presentation.viewmodel.MovieViewModel
 import com.example.ui.theme.CinematicRed
@@ -149,8 +150,10 @@ fun SearchScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // Results Grid or Empty State
-        if (state.searchResults.isEmpty()) {
+        // Results Grid, Loading Skeleton, or Empty State
+        if (state.isLoading) {
+            MovieGridSkeleton()
+        } else if (state.searchResults.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()

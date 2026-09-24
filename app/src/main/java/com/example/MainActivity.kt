@@ -109,7 +109,7 @@ class MainActivity : ComponentActivity() {
         )
 
         movieViewModel = MovieViewModel(movieRepository)
-        downloadViewModel = DownloadViewModel(movieRepository)
+        downloadViewModel = DownloadViewModel(movieRepository, applicationContext)
         adminViewModel = AdminViewModel(movieRepository)
         authViewModel = AuthViewModel(movieRepository)
         playerViewModel = PlayerViewModel(movieRepository)

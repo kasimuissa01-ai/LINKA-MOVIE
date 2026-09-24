@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.domain.model.Movie
+import com.example.presentation.components.HomeScreenSkeleton
 import com.example.presentation.components.MoviePosterCard
 import com.example.presentation.viewmodel.DownloadViewModel
 import com.example.presentation.viewmodel.MovieViewModel
@@ -118,22 +119,7 @@ fun HomeScreen(
     }
 
     if (state.isLoading) {
-        Box(
-            modifier = modifier
-                .fillMaxSize()
-                .background(ObsidianBlack),
-            contentAlignment = Alignment.Center
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = CinematicRed)
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "Loading movies...",
-                    color = TextSecondary,
-                    fontSize = 14.sp
-                )
-            }
-        }
+        HomeScreenSkeleton(modifier = modifier)
         return
     }
 

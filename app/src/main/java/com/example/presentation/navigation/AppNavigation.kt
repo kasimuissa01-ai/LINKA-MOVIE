@@ -1,7 +1,12 @@
 package com.example.presentation.navigation
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
@@ -27,6 +32,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,6 +58,7 @@ import androidx.navigation.navArgument
 import com.example.domain.model.Movie
 import com.example.presentation.components.AppUpdateDialog
 import com.example.presentation.components.BottomUpdateAlert
+import com.example.presentation.components.MovieDetailSkeletonScreen
 import com.example.presentation.screens.AdminAddEditMovieScreen
 import com.example.presentation.screens.AdminDashboardScreen
 import com.example.presentation.screens.DownloadsScreen
@@ -190,199 +197,244 @@ fun AppNavigation(
             containerColor = ObsidianBlack,
             modifier = Modifier.fillMaxSize()
         ) { innerPadding ->
-            NavHost(
-                navController = navController,
-                startDestination = if (authViewModel.isUserLoggedIn()) Screen.Home.route else Screen.OnboardingAuth.route,
-                modifier = Modifier.padding(innerPadding)
-            ) {
-                // Onboarding & Phone Auth
-                composable(Screen.OnboardingAuth.route) {
-                    OnboardingAuthScreen(
-                        authViewModel = authViewModel,
-                        onNavigateToHome = {
-                            navController.navigate(Screen.Home.route) {
-                                popUpTo(Screen.OnboardingAuth.route) { inclusive = true }
+            @OptIn(ExperimentalSharedTransitionApi::class)
+            SharedTransitionLayout(modifier = Modifier.fillMaxSize()) {
+                CompositionLocalProvider(LocalSharedTransitionScope provides this) {
+                    NavHost(
+                        navController = navController,
+                        startDestination = if (authViewModel.isUserLoggedIn()) Screen.Home.route else Screen.OnboardingAuth.route,
+                        modifier = Modifier.padding(innerPadding)
+                    ) {
+                        // Onboarding & Phone Auth
+                        composable(Screen.OnboardingAuth.route) {
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
+                                OnboardingAuthScreen(
+                                    authViewModel = authViewModel,
+                                    onNavigateToHome = {
+                                        navController.navigate(Screen.Home.route) {
+                                            popUpTo(Screen.OnboardingAuth.route) { inclusive = true }
+                                        }
+                                    }
+                                )
                             }
                         }
-                    )
-                }
 
-                // Home
-                composable(Screen.Home.route) {
-                    HomeScreen(
-                        movieViewModel = movieViewModel,
-                        downloadViewModel = downloadViewModel,
-                        updateViewModel = updateViewModel,
-                        onMovieClick = { movie ->
-                            navController.navigate(Screen.MovieDetail.createRoute(movie.id))
-                        },
-                        onPlayClick = { movie ->
-                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id)) {
-                                launchSingleTop = true
+                        // Home
+                        composable(
+                            route = Screen.Home.route,
+                            enterTransition = { fadeIn(animationSpec = tween(380)) },
+                            exitTransition = { fadeOut(animationSpec = tween(300)) },
+                            popEnterTransition = { fadeIn(animationSpec = tween(380)) },
+                            popExitTransition = { fadeOut(animationSpec = tween(300)) }
+                        ) {
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
+                                HomeScreen(
+                                    movieViewModel = movieViewModel,
+                                    downloadViewModel = downloadViewModel,
+                                    updateViewModel = updateViewModel,
+                                    onMovieClick = { movie ->
+                                        navController.navigate(Screen.MovieDetail.createRoute(movie.id))
+                                    },
+                                    onPlayClick = { movie ->
+                                        navController.navigate(Screen.VideoPlayer.createRoute(movie.id)) {
+                                            launchSingleTop = true
+                                        }
+                                    }
+                                )
                             }
                         }
-                    )
-                }
 
-                // Search
-                composable(Screen.Search.route) {
-                    SearchScreen(
-                        movieViewModel = movieViewModel,
-                        onMovieClick = { movie ->
-                            navController.navigate(Screen.MovieDetail.createRoute(movie.id))
-                        }
-                    )
-                }
-
-                // Downloads
-                composable(Screen.Downloads.route) {
-                    DownloadsScreen(
-                        downloadViewModel = downloadViewModel,
-                        movieViewModel = movieViewModel,
-                        onPlayMovie = { movie, episodeId ->
-                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id, 0L, episodeId)) {
-                                launchSingleTop = true
-                            }
-                        },
-                        onBrowseCatalog = {
-                            navController.navigate(Screen.Home.route)
-                        }
-                    )
-                }
-
-                // Profile
-                composable(Screen.Profile.route) {
-                    ProfileScreen(
-                        authViewModel = authViewModel,
-                        onNavigateToAdmin = {
-                            navController.navigate(Screen.AdminDashboard.route)
-                        },
-                        onNavigateToOnboarding = {
-                            navController.navigate(Screen.OnboardingAuth.route)
-                        }
-                    )
-                }
-
-            // Movie Detail
-            composable(
-                route = Screen.MovieDetail.route,
-                arguments = listOf(navArgument("movieId") { type = NavType.StringType })
-            ) { backStackEntry ->
-                val movieId = backStackEntry.arguments?.getString("movieId")
-                val movieUiState by movieViewModel.uiState.collectAsState()
-                val movie = movieUiState.allMovies.find { it.id == movieId }
-                if (movie != null) {
-                    MovieDetailScreen(
-                        movie = movie,
-                        allMovies = movieUiState.allMovies,
-                        downloadViewModel = downloadViewModel,
-                        playerViewModel = playerViewModel,
-                        onBackClick = { navController.popBackStack() },
-                        onPlayFullscreenClick = { selectedMovie, startPos, episodeId ->
-                            navController.navigate(Screen.VideoPlayer.createRoute(selectedMovie.id, startPos, episodeId)) {
-                                launchSingleTop = true
-                            }
-                        },
-                        onSelectRecommendedMovie = { recommendedMovie ->
-                            navController.navigate(Screen.MovieDetail.createRoute(recommendedMovie.id)) {
-                                launchSingleTop = true
+                        // Search
+                        composable(
+                            route = Screen.Search.route,
+                            enterTransition = { fadeIn(animationSpec = tween(380)) },
+                            exitTransition = { fadeOut(animationSpec = tween(300)) },
+                            popEnterTransition = { fadeIn(animationSpec = tween(380)) },
+                            popExitTransition = { fadeOut(animationSpec = tween(300)) }
+                        ) {
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
+                                SearchScreen(
+                                    movieViewModel = movieViewModel,
+                                    onMovieClick = { movie ->
+                                        navController.navigate(Screen.MovieDetail.createRoute(movie.id))
+                                    }
+                                )
                             }
                         }
-                    )
-                }
-            }
 
-            // Video Player
-            composable(
-                route = Screen.VideoPlayer.route,
-                arguments = listOf(
-                    navArgument("movieId") { type = NavType.StringType },
-                    navArgument("startPos") {
-                        type = NavType.LongType
-                        defaultValue = 0L
-                    },
-                    navArgument("episodeId") {
-                        type = NavType.StringType
-                        nullable = true
-                        defaultValue = null
+                        // Downloads
+                        composable(Screen.Downloads.route) {
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
+                                DownloadsScreen(
+                                    downloadViewModel = downloadViewModel,
+                                    movieViewModel = movieViewModel,
+                                    onPlayMovie = { movie, episodeId ->
+                                        navController.navigate(Screen.VideoPlayer.createRoute(movie.id, 0L, episodeId)) {
+                                            launchSingleTop = true
+                                        }
+                                    },
+                                    onBrowseCatalog = {
+                                        navController.navigate(Screen.Home.route)
+                                    }
+                                )
+                            }
+                        }
+
+                        // Profile
+                        composable(Screen.Profile.route) {
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
+                                ProfileScreen(
+                                    authViewModel = authViewModel,
+                                    onNavigateToAdmin = {
+                                        navController.navigate(Screen.AdminDashboard.route)
+                                    },
+                                    onNavigateToOnboarding = {
+                                        navController.navigate(Screen.OnboardingAuth.route)
+                                    }
+                                )
+                            }
+                        }
+
+                        // Movie Detail
+                        composable(
+                            route = Screen.MovieDetail.route,
+                            arguments = listOf(navArgument("movieId") { type = NavType.StringType }),
+                            enterTransition = { fadeIn(animationSpec = tween(380)) },
+                            exitTransition = { fadeOut(animationSpec = tween(300)) },
+                            popEnterTransition = { fadeIn(animationSpec = tween(380)) },
+                            popExitTransition = { fadeOut(animationSpec = tween(300)) }
+                        ) { backStackEntry ->
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
+                                val movieId = backStackEntry.arguments?.getString("movieId")
+                                val movieUiState by movieViewModel.uiState.collectAsState()
+                                val movie = movieUiState.allMovies.find { it.id == movieId }
+                                if (movie != null) {
+                                    MovieDetailScreen(
+                                        movie = movie,
+                                        allMovies = movieUiState.allMovies,
+                                        downloadViewModel = downloadViewModel,
+                                        playerViewModel = playerViewModel,
+                                        onBackClick = { navController.popBackStack() },
+                                        onPlayFullscreenClick = { selectedMovie, startPos, episodeId ->
+                                            navController.navigate(Screen.VideoPlayer.createRoute(selectedMovie.id, startPos, episodeId)) {
+                                                launchSingleTop = true
+                                            }
+                                        },
+                                        onSelectRecommendedMovie = { recommendedMovie ->
+                                            navController.navigate(Screen.MovieDetail.createRoute(recommendedMovie.id)) {
+                                                launchSingleTop = true
+                                            }
+                                        }
+                                    )
+                                } else {
+                                    MovieDetailSkeletonScreen(
+                                        onBackClick = { navController.popBackStack() }
+                                    )
+                                }
+                            }
+                        }
+
+                        // Video Player
+                        composable(
+                            route = Screen.VideoPlayer.route,
+                            arguments = listOf(
+                                navArgument("movieId") { type = NavType.StringType },
+                                navArgument("startPos") {
+                                    type = NavType.LongType
+                                    defaultValue = 0L
+                                },
+                                navArgument("episodeId") {
+                                    type = NavType.StringType
+                                    nullable = true
+                                    defaultValue = null
+                                }
+                            )
+                        ) { backStackEntry ->
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
+                                val movieId = backStackEntry.arguments?.getString("movieId")
+                                val startPos = backStackEntry.arguments?.getLong("startPos") ?: 0L
+                                val episodeId = backStackEntry.arguments?.getString("episodeId")
+                                val movieUiState by movieViewModel.uiState.collectAsState()
+                                val downloadList by downloadViewModel.downloads.collectAsState()
+
+                                val foundMovie = movieUiState.allMovies.find { it.id == movieId }
+                                val downloadItem = downloadList.find { it.movieId == movieId }
+
+                                val effectiveMovie = foundMovie ?: downloadItem?.let { item ->
+                                    Movie(
+                                        id = item.movieId,
+                                        title = item.movieTitle,
+                                        description = "Offline downloaded movie",
+                                        genres = emptyList(),
+                                        coverUrl = item.coverUrl,
+                                        videoKey = "",
+                                        videoStreamUrl = item.localFilePath,
+                                        durationMinutes = 120,
+                                        fileSizeMb = (item.totalBytes / (1024 * 1024L)).coerceAtLeast(100L),
+                                        releaseYear = 2025,
+                                        rating = 8.5,
+                                        cast = emptyList(),
+                                        isFeatured = false
+                                    )
+                                }
+
+                                if (effectiveMovie != null) {
+                                    VideoPlayerScreen(
+                                        movie = effectiveMovie,
+                                        initialPositionMs = startPos,
+                                        episodeId = episodeId,
+                                        playerViewModel = playerViewModel,
+                                        onBackClick = { navController.popBackStack() }
+                                    )
+                                }
+                            }
+                        }
+
+                        // Admin Dashboard
+                        composable(Screen.AdminDashboard.route) {
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
+                                AdminDashboardScreen(
+                                    adminViewModel = adminViewModel,
+                                    onBackClick = { navController.popBackStack() },
+                                    onAddMovieClick = { navController.navigate(Screen.AdminAddMovie.route) },
+                                    onEditMovieClick = { movie ->
+                                        navController.navigate(Screen.AdminEditMovie.createRoute(movie.id))
+                                    }
+                                )
+                            }
+                        }
+
+                        // Admin Add Movie
+                        composable(Screen.AdminAddMovie.route) {
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
+                                AdminAddEditMovieScreen(
+                                    adminViewModel = adminViewModel,
+                                    existingMovie = null,
+                                    onBackClick = { navController.popBackStack() }
+                                )
+                            }
+                        }
+
+                        // Admin Edit Movie
+                        composable(
+                            route = Screen.AdminEditMovie.route,
+                            arguments = listOf(navArgument("movieId") { type = NavType.StringType })
+                        ) { backStackEntry ->
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
+                                val movieId = backStackEntry.arguments?.getString("movieId")
+                                val adminMovies by adminViewModel.movies.collectAsState()
+                                val movie = adminMovies.find { it.id == movieId }
+                                AdminAddEditMovieScreen(
+                                    adminViewModel = adminViewModel,
+                                    existingMovie = movie,
+                                    onBackClick = { navController.popBackStack() }
+                                )
+                            }
+                        }
                     }
-                )
-            ) { backStackEntry ->
-                val movieId = backStackEntry.arguments?.getString("movieId")
-                val startPos = backStackEntry.arguments?.getLong("startPos") ?: 0L
-                val episodeId = backStackEntry.arguments?.getString("episodeId")
-                val movieUiState by movieViewModel.uiState.collectAsState()
-                val downloadList by downloadViewModel.downloads.collectAsState()
-
-                val foundMovie = movieUiState.allMovies.find { it.id == movieId }
-                val downloadItem = downloadList.find { it.movieId == movieId }
-
-                val effectiveMovie = foundMovie ?: downloadItem?.let { item ->
-                    Movie(
-                        id = item.movieId,
-                        title = item.movieTitle,
-                        description = "Offline downloaded movie",
-                        genres = emptyList(),
-                        coverUrl = item.coverUrl,
-                        videoKey = "",
-                        videoStreamUrl = item.localFilePath,
-                        durationMinutes = 120,
-                        fileSizeMb = (item.totalBytes / (1024 * 1024L)).coerceAtLeast(100L),
-                        releaseYear = 2025,
-                        rating = 8.5,
-                        cast = emptyList(),
-                        isFeatured = false
-                    )
                 }
-
-                if (effectiveMovie != null) {
-                    VideoPlayerScreen(
-                        movie = effectiveMovie,
-                        initialPositionMs = startPos,
-                        episodeId = episodeId,
-                        playerViewModel = playerViewModel,
-                        onBackClick = { navController.popBackStack() }
-                    )
-                }
-            }
-
-            // Admin Dashboard
-            composable(Screen.AdminDashboard.route) {
-                AdminDashboardScreen(
-                    adminViewModel = adminViewModel,
-                    onBackClick = { navController.popBackStack() },
-                    onAddMovieClick = { navController.navigate(Screen.AdminAddMovie.route) },
-                    onEditMovieClick = { movie ->
-                        navController.navigate(Screen.AdminEditMovie.createRoute(movie.id))
-                    }
-                )
-            }
-
-            // Admin Add Movie
-            composable(Screen.AdminAddMovie.route) {
-                AdminAddEditMovieScreen(
-                    adminViewModel = adminViewModel,
-                    existingMovie = null,
-                    onBackClick = { navController.popBackStack() }
-                )
-            }
-
-            // Admin Edit Movie
-            composable(
-                route = Screen.AdminEditMovie.route,
-                arguments = listOf(navArgument("movieId") { type = NavType.StringType })
-            ) { backStackEntry ->
-                val movieId = backStackEntry.arguments?.getString("movieId")
-                val adminMovies by adminViewModel.movies.collectAsState()
-                val movie = adminMovies.find { it.id == movieId }
-                AdminAddEditMovieScreen(
-                    adminViewModel = adminViewModel,
-                    existingMovie = movie,
-                    onBackClick = { navController.popBackStack() }
-                )
             }
         }
-    }
 
         // Bottom Animated Update Alert (Floats smoothly above content/nav bar)
         BottomUpdateAlert(
