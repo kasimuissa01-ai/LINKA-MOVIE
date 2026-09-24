@@ -506,6 +506,29 @@ class MovieRepository(
         }
     }
 
+    suspend fun clearAllDownloads(context: Context) = withContext(Dispatchers.IO) {
+        runCatching {
+            com.example.data.download.EpisodeDownloadProgressManager.getInstance(context).cancelAllEpisodeDownloads()
+        }
+        getDownloadManager(context).clearAllDownloads()
+        downloadDao.deleteAllDownloads()
+        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+        destDir.listFiles()?.forEach { file: File ->
+            if (file.name.startsWith("movie_") || file.name.endsWith(".download") || file.name.endsWith(".mp4")) {
+                runCatching { file.delete() }
+            }
+        }
+        val internalDir = context.filesDir
+        if (internalDir != destDir) {
+            internalDir.listFiles()?.forEach { file: File ->
+                if (file.name.startsWith("movie_") || file.name.endsWith(".download") || file.name.endsWith(".mp4")) {
+                    runCatching { file.delete() }
+                }
+            }
+        }
+        com.example.util.VideoCacheManager.clearCache(context)
+    }
+
     /**
      * Resolves playback URI for movie or specific episode:
      * 1. Checks OfflineDownloadManager for a verified complete offline download (>1MB).

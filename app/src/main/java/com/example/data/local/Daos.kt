@@ -96,6 +96,9 @@ interface DownloadDao {
 
     @Query("DELETE FROM downloads WHERE movieId = :movieId")
     suspend fun deleteByMovieId(movieId: String)
+
+    @Query("DELETE FROM downloads")
+    suspend fun deleteAllDownloads()
 }
 
 @Dao

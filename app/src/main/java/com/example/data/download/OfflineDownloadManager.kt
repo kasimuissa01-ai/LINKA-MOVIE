@@ -245,6 +245,32 @@ class OfflineDownloadManager(
     }
 
     /**
+     * Cancels all downloads and purges all offline movie/episode video files.
+     */
+    suspend fun clearAllDownloads() = withContext(Dispatchers.IO) {
+        activeDownloadJobs.values.forEach { it.cancel() }
+        activeDownloadJobs.clear()
+
+        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+        destDir.listFiles { file ->
+            file.name.startsWith("movie_") || file.name.endsWith(".download") || file.name.endsWith(".mp4")
+        }?.forEach { file ->
+            runCatching { file.delete() }
+        }
+
+        val internalDir = context.filesDir
+        if (internalDir != destDir) {
+            internalDir.listFiles { file ->
+                file.name.startsWith("movie_") || file.name.endsWith(".download") || file.name.endsWith(".mp4")
+            }?.forEach { file ->
+                runCatching { file.delete() }
+            }
+        }
+
+        checkAndStopForegroundService()
+    }
+
+    /**
      * Core download execution pipeline.
      */
     private suspend fun executeDownloadPipeline(movie: Movie, episode: Episode? = null) = withContext(Dispatchers.IO) {

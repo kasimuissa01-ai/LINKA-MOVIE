@@ -285,6 +285,7 @@ fun AppNavigation(
                             CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this) {
                                 ProfileScreen(
                                     authViewModel = authViewModel,
+                                    downloadViewModel = downloadViewModel,
                                     onNavigateToAdmin = {
                                         navController.navigate(Screen.AdminDashboard.route)
                                     },

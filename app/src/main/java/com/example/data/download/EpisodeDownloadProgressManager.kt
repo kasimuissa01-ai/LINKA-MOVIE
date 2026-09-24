@@ -142,6 +142,14 @@ class EpisodeDownloadProgressManager(
     }
 
     /**
+     * Cancels all ongoing WorkManager episode downloads.
+     */
+    fun cancelAllEpisodeDownloads() {
+        Log.d(TAG, "Cancelling all WorkManager episode downloads")
+        workManager.cancelAllWorkByTag(TAG_ALL_EPISODES)
+    }
+
+    /**
      * Pauses the active WorkManager job.
      */
     fun pauseEpisodeDownload(movieId: String, episodeId: String) {

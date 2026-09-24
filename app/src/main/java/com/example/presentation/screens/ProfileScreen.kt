@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Lock
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PlayCircleFilled
+import androidx.compose.material.icons.filled.SdStorage
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.Wifi
@@ -42,6 +44,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -72,8 +75,11 @@ import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.example.MainActivity
 import com.example.data.repository.AuthRepository
+import com.example.domain.model.DownloadStatus
 import com.example.domain.model.UserRole
 import com.example.presentation.viewmodel.AuthViewModel
+import com.example.presentation.viewmodel.DownloadViewModel
+import kotlinx.coroutines.flow.flowOf
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
 import com.example.ui.theme.ElectricBlue
@@ -92,12 +98,25 @@ import com.example.presentation.viewmodel.AppUpdateViewModel
 @Composable
 fun ProfileScreen(
     authViewModel: AuthViewModel,
+    downloadViewModel: DownloadViewModel? = null,
     onNavigateToAdmin: () -> Unit,
     onNavigateToOnboarding: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val session by authViewModel.userSession.collectAsState()
+    val downloads by (downloadViewModel?.downloads ?: remember { flowOf(emptyList()) }).collectAsState(initial = emptyList())
     val context = LocalContext.current
+
+    val totalStorageBytes = remember(downloads) {
+        downloadViewModel?.getTotalStorageUsedBytes(context, downloads) ?: 0L
+    }
+    val formattedStorage = remember(totalStorageBytes) {
+        downloadViewModel?.formatStorageSize(totalStorageBytes) ?: "0 MB"
+    }
+    val completedCount = remember(downloads) {
+        downloads.count { it.status == DownloadStatus.COMPLETED }
+    }
+    var showClearStorageDialog by remember { mutableStateOf(false) }
 
     // Settings state
     var wifiOnlyDownload by remember { mutableStateOf(true) }
@@ -269,7 +288,7 @@ fun ProfileScreen(
             ProfileStatCard(
                 icon = Icons.Default.Download,
                 iconColor = ElectricBlue,
-                count = "3",
+                count = "$completedCount",
                 label = "Offline",
                 modifier = Modifier.weight(1f)
             )
@@ -425,6 +444,125 @@ fun ProfileScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
+        // Offline Storage & Cache Settings
+        Text(
+            text = "Offline Storage & Cache",
+            color = TextPrimary,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("offline_storage_settings_card")
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(ElectricBlue.copy(alpha = 0.18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SdStorage,
+                                contentDescription = "Storage",
+                                tint = ElectricBlue,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Downloaded Movies Storage",
+                                color = TextPrimary,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = if (completedCount > 0) "$completedCount movie files cached locally" else "No offline downloads stored",
+                                color = TextSecondary,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+
+                    Surface(
+                        color = SurfaceElevated,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = formattedStorage,
+                            color = if (totalStorageBytes > 0) AmberGold else TextSecondary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Storage progress indicator
+                LinearProgressIndicator(
+                    progress = { if (totalStorageBytes > 0L) 1.0f else 0.0f },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = if (totalStorageBytes > 0L) AmberGold else SurfaceElevated,
+                    trackColor = SurfaceElevated
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // One-tap Button to Clear All Offline Content
+                Button(
+                    onClick = { showClearStorageDialog = true },
+                    enabled = totalStorageBytes > 0L || downloads.isNotEmpty(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (totalStorageBytes > 0L) CinematicRed.copy(alpha = 0.18f) else SurfaceElevated,
+                        contentColor = if (totalStorageBytes > 0L) CinematicRed else TextTertiary,
+                        disabledContainerColor = SurfaceElevated.copy(alpha = 0.4f),
+                        disabledContentColor = TextTertiary
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp)
+                        .testTag("clear_all_offline_content_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DeleteSweep,
+                        contentDescription = "Clear",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (totalStorageBytes > 0L) "Clear All Offline Content ($formattedStorage)" else "No Offline Content to Clear",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
         // Account Actions
         Text(
             text = "Account",
@@ -502,6 +640,54 @@ fun ProfileScreen(
         }
 
         Spacer(modifier = Modifier.height(80.dp))
+    }
+
+    if (showClearStorageDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearStorageDialog = false },
+            title = {
+                Text(
+                    text = "Clear All Offline Content?",
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "This will delete all $completedCount downloaded movies and episodes ($formattedStorage) from your local device storage. You can download them again at any time.",
+                    color = TextSecondary,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        downloadViewModel?.clearAllDownloads(context)
+                        showClearStorageDialog = false
+                        android.widget.Toast.makeText(context, "All offline downloads cleared ($formattedStorage freed)", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CinematicRed,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.testTag("confirm_clear_offline_content_button")
+                ) {
+                    Text("Clear All", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showClearStorageDialog = false }
+                ) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = SurfaceDark,
+            shape = RoundedCornerShape(16.dp)
+        )
     }
 }
 

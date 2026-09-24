@@ -316,4 +316,16 @@ object VideoCacheManager {
             }
         }
     }
+
+    /**
+     * Clears prefetched header cache files.
+     */
+    fun clearCache(context: Context) {
+        runCatching {
+            val prefetchDir = File(context.applicationContext.cacheDir, "prefetched_headers")
+            if (prefetchDir.exists()) {
+                prefetchDir.deleteRecursively()
+            }
+        }
+    }
 }
