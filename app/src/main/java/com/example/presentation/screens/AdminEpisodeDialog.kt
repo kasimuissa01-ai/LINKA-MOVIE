@@ -2,6 +2,7 @@ package com.example.presentation.screens
 
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.example.util.R2UrlUtils
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -346,6 +347,18 @@ fun AdminEpisodeEditDialog(
                             val size = fileSizeMb.toLongOrNull() ?: 250L
                             val epId = initialEpisode?.id ?: "${movieId}_s${sNum}_e${eNum}_${UUID.randomUUID().toString().take(4)}"
 
+                            val cleanInput = streamUrl.trim()
+                            val resolvedKey = when {
+                                selectedVideoUri != null -> initialEpisode?.videoKey ?: ""
+                                cleanInput.isNotBlank() -> R2UrlUtils.extractCleanVideoKey(cleanInput)
+                                else -> initialEpisode?.videoKey ?: ""
+                            }
+                            val resolvedStreamUrl = when {
+                                selectedVideoUri != null -> ""
+                                cleanInput.isNotBlank() -> if (resolvedKey.isNotBlank()) R2UrlUtils.buildUrl(resolvedKey) else cleanInput
+                                else -> initialEpisode?.videoStreamUrl ?: ""
+                            }
+
                             val createdEpisode = Episode(
                                 id = epId,
                                 movieId = movieId,
@@ -353,8 +366,8 @@ fun AdminEpisodeEditDialog(
                                 seasonNumber = sNum,
                                 title = title.ifBlank { "Episode $eNum" },
                                 description = description,
-                                videoKey = if (selectedVideoUri == null && !streamUrl.startsWith("http")) streamUrl else initialEpisode?.videoKey ?: "",
-                                videoStreamUrl = if (selectedVideoUri == null) streamUrl else "",
+                                videoKey = resolvedKey,
+                                videoStreamUrl = resolvedStreamUrl,
                                 durationMinutes = dur,
                                 fileSizeMb = size
                             )

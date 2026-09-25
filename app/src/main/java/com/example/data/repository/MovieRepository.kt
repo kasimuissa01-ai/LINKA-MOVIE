@@ -379,10 +379,10 @@ class MovieRepository(
                                 seasonNumber = 1,
                                 title = "Episode 1 - Sacrificial Soldiers",
                                 description = "Things go awry for Joe and her team during a mission out in the field; Joe is left devastated. Upon her return home, Joe's family life presents its own challenges. Meanwhile, Cruz is enlisted as an undercover operative in the Lioness Program.",
-                                videoKey = canonicalKey.ifBlank { "videos/1790172628150-videos_1790172626872-special_ops_lioness.mp4" },
-                                videoStreamUrl = canonicalStream.ifBlank { "https://movie-cdn.grapherkidd0.workers.dev/videos/1790172628150-videos_1790172626872-special_ops_lioness.mp4" },
+                                videoKey = "videos/1790172628150-videos_1790172626872-special_ops_lioness.mp4",
+                                videoStreamUrl = "https://movie-cdn.grapherkidd0.workers.dev/videos/1790172628150-videos_1790172626872-special_ops_lioness.mp4",
                                 durationMinutes = 45,
-                                fileSizeMb = 179L
+                                fileSizeMb = 171L
                             ),
                             Episode(
                                 id = "${movie.id}_s1e2",
@@ -391,10 +391,10 @@ class MovieRepository(
                                 seasonNumber = 1,
                                 title = "Episode 2 - The Beating",
                                 description = "Joe continues training Cruz, whose methods are put to the test during an evaluation. Stephanie and Westfield question Joe's leadership after a compromised operation.",
-                                videoKey = canonicalKey.ifBlank { "videos/1790172628150-videos_1790172626872-special_ops_lioness.mp4" },
-                                videoStreamUrl = canonicalStream.ifBlank { "https://movie-cdn.grapherkidd0.workers.dev/videos/1790172628150-videos_1790172626872-special_ops_lioness.mp4" },
+                                videoKey = "videos/1790347977231-videos_1790347977035-special_ops___lioness_s1e2.mp4",
+                                videoStreamUrl = "https://movie-cdn.grapherkidd0.workers.dev/videos/1790347977231-videos_1790347977035-special_ops___lioness_s1e2.mp4",
                                 durationMinutes = 42,
-                                fileSizeMb = 64L
+                                fileSizeMb = 133L
                             ),
                             Episode(
                                 id = "${movie.id}_s1e3",
@@ -403,10 +403,10 @@ class MovieRepository(
                                 seasonNumber = 1,
                                 title = "Episode 3 - Bruise Like a Fist",
                                 description = "Cruz begins to bond with Aaliyah during a lavish shopping excursion. Joe receives shocking news regarding Kate, and Kaitlyn Meade works to secure funding for the Lioness program.",
-                                videoKey = canonicalKey.ifBlank { "videos/1790172628150-videos_1790172626872-special_ops_lioness.mp4" },
-                                videoStreamUrl = canonicalStream.ifBlank { "https://movie-cdn.grapherkidd0.workers.dev/videos/1790172628150-videos_1790172626872-special_ops_lioness.mp4" },
+                                videoKey = "",
+                                videoStreamUrl = "",
                                 durationMinutes = 44,
-                                fileSizeMb = 64L
+                                fileSizeMb = 0L
                             )
                         )
                     } else effectiveEpisodes
@@ -621,11 +621,23 @@ class MovieRepository(
     }
 
     suspend fun resolveEpisodeOnlineStreamUri(movie: Movie, episode: Episode, excludeUrl: String = ""): String = withContext(Dispatchers.IO) {
-        val rawKey = episode.videoKey.takeIf { it.isNotBlank() } ?: movie.videoKey
-        val rawStreamUrl = episode.videoStreamUrl.takeIf { it.isNotBlank() } ?: movie.videoStreamUrl
-        val cleanKey = R2UrlUtils.extractCleanVideoKey(rawKey, rawStreamUrl)
+        val rawKey = episode.videoKey
+        val rawStreamUrl = episode.videoStreamUrl
 
+        // If this is episode 2, 3, etc. and it has no unique key or stream URL, do NOT fall back to Episode 1
+        if (rawKey.isBlank() && rawStreamUrl.isBlank()) {
+            if (episode.episodeNumber == 1) {
+                val primaryKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
+                val primaryStream = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+                if (primaryKey.isNotBlank()) return@withContext R2UrlUtils.buildUrl(primaryKey)
+                if (primaryStream.isNotBlank()) return@withContext primaryStream
+            }
+            return@withContext ""
+        }
+
+        val cleanKey = R2UrlUtils.extractCleanVideoKey(rawKey, rawStreamUrl)
         val canonicalDirect = R2UrlUtils.canonicalizeStreamUrl(rawStreamUrl, rawKey)
+
         if (canonicalDirect.isNotBlank() && canonicalDirect != excludeUrl) {
             if (canonicalDirect.startsWith("content://") || canonicalDirect.startsWith("file://") || canonicalDirect.startsWith("/")) {
                 return@withContext canonicalDirect
@@ -645,7 +657,7 @@ class MovieRepository(
             return@withContext canonicalDirect
         }
 
-        return@withContext resolveOnlineStreamUri(movie, excludeUrl)
+        return@withContext ""
     }
 
     /**

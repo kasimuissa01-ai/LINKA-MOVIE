@@ -331,9 +331,15 @@ class PlayerViewModel(
         } else if (internalFile.exists() && internalFile.length() >= 1024 * 1024L) {
             internalFile.toURI().toString()
         } else if (targetEpisode != null) {
-            val epKey = targetEpisode.videoKey.takeIf { it.isNotBlank() } ?: movie.videoKey
-            val epStream = targetEpisode.videoStreamUrl.takeIf { it.isNotBlank() } ?: movie.videoStreamUrl
-            R2UrlUtils.canonicalizeStreamUrl(epStream, epKey)
+            val epKey = targetEpisode.videoKey
+            val epStream = targetEpisode.videoStreamUrl
+            if (epKey.isNotBlank() || epStream.isNotBlank()) {
+                R2UrlUtils.canonicalizeStreamUrl(epStream, epKey)
+            } else if (targetEpisode.episodeNumber == 1) {
+                R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+            } else {
+                "" // Never fall back to movie stream for Episode 2, 3+
+            }
         } else {
             R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
         }

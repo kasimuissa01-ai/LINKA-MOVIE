@@ -608,19 +608,6 @@ fun MovieDetailScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Tabbed & Dropdown Episode Selector UI for Series
-                    if (movie.episodes.isNotEmpty()) {
-                        TabbedDropdownEpisodeSelector(
-                            movie = movie,
-                            selectedEpisodeId = selectedEpisodeId,
-                            episodeProgressMap = episodeProgressMap,
-                            onSelectEpisode = { ep ->
-                                selectedEpisodeId = ep.id
-                            }
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                    }
-
                     // Action Area: Download Movie Button
                     Button(
                         onClick = {
@@ -2085,40 +2072,6 @@ fun MovieEpisodesSection(
                         )
                     }
                 }
-            }
-        }
-
-        // Horizontal Quick-Scroll Carousel with 16:9 Thumbnail Previews
-        Spacer(modifier = Modifier.height(14.dp))
-        Text(
-            text = "Quick Carousel Previews",
-            color = TextSecondary,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            items(episodesInSeason) { ep ->
-                val epDownload = downloads.find {
-                    (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.movieId == movie.id
-                }
-                val epWorkProgress = episodeProgressMap[ep.id]
-                val isSelected = (ep.id == selectedEpisodeId)
-
-                EpisodeCarouselThumbnailCard(
-                    episode = ep,
-                    movie = movie,
-                    isSelected = isSelected,
-                    downloadItem = epDownload,
-                    workProgress = epWorkProgress,
-                    onPlay = {
-                        onSelectEpisode?.invoke(ep)
-                        onPlayEpisode(ep)
-                    }
-                )
             }
         }
 
