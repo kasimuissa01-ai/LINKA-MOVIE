@@ -23,6 +23,7 @@ import com.example.domain.model.UploadPart
 import com.example.domain.model.UploadSession
 import com.example.domain.model.UserRole
 import com.example.domain.model.UserSession
+import com.example.util.MovieCoverUtils
 import com.example.util.R2UrlUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -327,38 +328,56 @@ class MovieRepository(
             movieDao.deleteMoviesByIds(legacyMockIds)
 
             // 2. Fetch real verified movies directly from Supabase PostgreSQL table
-            val remoteSupabaseMovies = supabaseDbClient.getMovies()
-            if (remoteSupabaseMovies.isNotEmpty()) {
-                val remoteIds = remoteSupabaseMovies.map { it.id }.toSet()
-                
-                // Clear any local movies that no longer exist in Supabase
-                val currentLocalList = movieDao.getAllMoviesList()
-                val staleIds = currentLocalList.filter { it.id !in remoteIds }.map { it.id }
-                if (staleIds.isNotEmpty()) {
-                    movieDao.deleteMoviesByIds(staleIds)
-                }
+            val remoteSupabaseMovies = try { supabaseDbClient.getMovies() } catch (e: Exception) { emptyList() }
+            val firestoreMovies = try { firestoreService.fetchMovies() } catch (e: Exception) { emptyList() }
 
-                // Insert / update verified movies with resolved CDN URLs
-                remoteSupabaseMovies.forEach { movie ->
-                    val canonicalKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
-                    val canonicalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
-                    val canonicalStream = if (canonicalKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalKey) else movie.videoStreamUrl
-                    val canonicalCover = if (canonicalCoverKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalCoverKey) else movie.coverUrl
+            val combinedRemote = (remoteSupabaseMovies + firestoreMovies)
+                .distinctBy { it.id }
+
+            if (combinedRemote.isNotEmpty()) {
+                val remoteIds = combinedRemote.map { it.id }.toSet()
+
+                // Insert / update verified movies with smart preservation of existing local episodes and covers
+                combinedRemote.forEach { movie ->
+                    val existingLocal = movieDao.getMovieById(movie.id)?.toDomain()
+
+                    val canonicalKey = R2UrlUtils.extractCleanVideoKey(
+                        if (movie.videoKey.isNotBlank()) movie.videoKey else existingLocal?.videoKey,
+                        if (movie.videoStreamUrl.isNotBlank()) movie.videoStreamUrl else existingLocal?.videoStreamUrl
+                    )
+                    val rawCoverCandidate = when {
+                        movie.coverKey.isNotBlank() -> movie.coverKey
+                        movie.coverUrl.isNotBlank() -> movie.coverUrl
+                        existingLocal?.coverKey?.isNotBlank() == true -> existingLocal.coverKey
+                        existingLocal?.coverUrl?.isNotBlank() == true -> existingLocal.coverUrl
+                        else -> MovieCoverUtils.resolveCoverUrl(movie.title, "", movie.genres)
+                    }
+                    val canonicalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(rawCoverCandidate)
+                    val canonicalStream = if (canonicalKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalKey) else movie.videoStreamUrl.ifBlank { existingLocal?.videoStreamUrl.orEmpty() }
+                    val canonicalCover = if (canonicalCoverKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalCoverKey) else rawCoverCandidate
+
+                    // Preserve episodes if local has episodes but remote returned empty
+                    val effectiveEpisodes = when {
+                        movie.episodes.isNotEmpty() -> movie.episodes
+                        existingLocal?.episodes?.isNotEmpty() == true -> existingLocal.episodes
+                        else -> emptyList()
+                    }
 
                     val verifiedMovie = movie.copy(
                         videoKey = canonicalKey,
                         coverKey = canonicalCoverKey,
                         videoStreamUrl = canonicalStream,
                         coverUrl = canonicalCover,
-                        uploadStatus = "completed"
+                        uploadStatus = "completed",
+                        episodes = effectiveEpisodes
                     )
                     movieDao.insertMovie(MovieEntity.fromDomain(verifiedMovie))
                 }
-                Log.d(TAG, "Successfully synced ${remoteSupabaseMovies.size} real movies from Supabase")
-                return@withContext remoteSupabaseMovies
+                Log.d(TAG, "Successfully synced ${combinedRemote.size} real movies from database")
+                return@withContext combinedRemote
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error syncing catalog from Supabase: ${e.message}", e)
+            Log.e(TAG, "Error syncing catalog: ${e.message}", e)
         }
         emptyList()
     }

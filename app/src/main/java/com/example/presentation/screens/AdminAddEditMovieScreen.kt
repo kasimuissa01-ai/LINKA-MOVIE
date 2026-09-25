@@ -151,7 +151,10 @@ fun AdminAddEditMovieScreen(
     }
     var coverUrl by remember {
         mutableStateOf(
-            existingMovie?.coverUrl ?: ""
+            existingMovie?.coverUrl?.ifBlank {
+                if (existingMovie.coverKey.isNotBlank()) R2UrlUtils.buildUrl(existingMovie.coverKey)
+                else com.example.util.MovieCoverUtils.resolveCoverUrl(existingMovie.title, "", existingMovie.genres)
+            } ?: ""
         )
     }
     var streamUrl by remember {
@@ -1709,7 +1712,11 @@ fun AdminAddEditMovieScreen(
                 val size = fileSizeMb.toLongOrNull() ?: 450L
                 val year = releaseYear.toIntOrNull() ?: 2024
                 val rate = rating.toDoubleOrNull() ?: 8.0
-                val finalCover = coverUrl.trim()
+                val effectiveExistingCover = existingMovie?.coverUrl?.ifBlank {
+                    if (existingMovie.coverKey.isNotBlank()) R2UrlUtils.buildUrl(existingMovie.coverKey)
+                    else com.example.util.MovieCoverUtils.resolveCoverUrl(existingMovie.title, "", existingMovie.genres)
+                } ?: ""
+                val finalCover = if (coverUrl.isNotBlank()) coverUrl.trim() else effectiveExistingCover
 
                 if (existingMovie != null) {
                     val isNewLocalVideo = streamUrl.isNotBlank() && (streamUrl.startsWith("content://") || streamUrl.startsWith("file://"))
@@ -1863,11 +1870,6 @@ fun AdminAddEditMovieScreen(
                 showEpisodeDialog = false
                 episodeBeingEdited = null
 
-                if (existingMovie != null && videoUri != null) {
-                    // Upload episode directly to R2 and save in movie
-                    adminViewModel.addOrUpdateEpisode(context, existingMovie, ep, videoUri)
-                }
-
                 val current = episodesList.toMutableList()
                 val idx = current.indexOfFirst { it.id == ep.id }
                 if (idx >= 0) {
@@ -1875,7 +1877,12 @@ fun AdminAddEditMovieScreen(
                 } else {
                     current.add(ep)
                 }
-                episodesList = current.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+                val sorted = current.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+                episodesList = sorted
+
+                if (existingMovie != null) {
+                    adminViewModel.addOrUpdateEpisode(context, existingMovie, ep, videoUri)
+                }
             }
         )
     }

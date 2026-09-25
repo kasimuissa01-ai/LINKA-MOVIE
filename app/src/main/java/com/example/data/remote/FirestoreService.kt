@@ -100,19 +100,73 @@ class FirestoreService {
                 val rating = doc.getDouble("rating") ?: 4.5
                 val releaseYear = doc.getLong("releaseYear")?.toInt() ?: 2026
 
+                val coverKey = doc.getString("coverKey") ?: ""
+                val videoStreamUrl = doc.getString("videoStreamUrl") ?: ""
+                
+                // Read episodes from native Firestore Map list or fallback to episodesJson
+                val episodesList: List<com.example.domain.model.Episode> = run {
+                    val nativeList = doc.get("episodes") as? List<Map<String, Any>>
+                    if (!nativeList.isNullOrEmpty()) {
+                        nativeList.mapIndexed { i, map ->
+                            com.example.domain.model.Episode(
+                                id = (map["id"] as? String) ?: "${id}_ep_${i + 1}",
+                                movieId = (map["movieId"] as? String) ?: id,
+                                episodeNumber = (map["episodeNumber"] as? Number)?.toInt() ?: (i + 1),
+                                seasonNumber = (map["seasonNumber"] as? Number)?.toInt() ?: 1,
+                                title = (map["title"] as? String) ?: "Episode ${i + 1}",
+                                description = (map["description"] as? String) ?: "",
+                                videoKey = (map["videoKey"] as? String) ?: "",
+                                videoStreamUrl = (map["videoStreamUrl"] as? String) ?: "",
+                                durationMinutes = (map["durationMinutes"] as? Number)?.toInt() ?: 45,
+                                fileSizeMb = (map["fileSizeMb"] as? Number)?.toLong() ?: 250L
+                            )
+                        }
+                    } else {
+                        val episodesJson = doc.getString("episodesJson") ?: ""
+                        if (episodesJson.isNotBlank()) {
+                            try {
+                                val arr = org.json.JSONArray(episodesJson)
+                                val eps = mutableListOf<com.example.domain.model.Episode>()
+                                for (i in 0 until arr.length()) {
+                                    val obj = arr.getJSONObject(i)
+                                    eps.add(
+                                        com.example.domain.model.Episode(
+                                            id = obj.optString("id", "${id}_ep_${i + 1}"),
+                                            movieId = obj.optString("movieId", id),
+                                            episodeNumber = obj.optInt("episodeNumber", i + 1),
+                                            seasonNumber = obj.optInt("seasonNumber", 1),
+                                            title = obj.optString("title", "Episode ${i + 1}"),
+                                            description = obj.optString("description", ""),
+                                            videoKey = obj.optString("videoKey", ""),
+                                            videoStreamUrl = obj.optString("videoStreamUrl", ""),
+                                            durationMinutes = obj.optInt("durationMinutes", 45),
+                                            fileSizeMb = obj.optLong("fileSizeMb", 250L)
+                                        )
+                                    )
+                                }
+                                eps
+                            } catch (e: Exception) {
+                                emptyList()
+                            }
+                        } else emptyList()
+                    }
+                }
+
                 Movie(
                     id = id,
                     title = title,
                     description = description,
                     genres = genres,
                     coverUrl = coverUrl,
+                    coverKey = coverKey,
                     videoKey = r2ObjectKey,
-                    videoStreamUrl = "", // Stream URL obtained via Supabase Edge Function get-download-url
+                    videoStreamUrl = videoStreamUrl,
                     durationMinutes = durationSec / 60,
                     fileSizeMb = sizeBytes / (1024 * 1024),
                     releaseYear = releaseYear,
                     rating = rating,
-                    uploadDate = uploadedAt
+                    uploadDate = uploadedAt,
+                    episodes = episodesList
                 )
             }
         } catch (e: Exception) {
@@ -127,17 +181,57 @@ class FirestoreService {
     suspend fun saveMovie(movie: Movie): Boolean = withContext(Dispatchers.IO) {
         try {
             val db = firestore ?: return@withContext false
+            val epJson = if (movie.episodes.isNotEmpty()) {
+                val arr = org.json.JSONArray()
+                for (ep in movie.episodes) {
+                    val obj = org.json.JSONObject().apply {
+                        put("id", ep.id)
+                        put("movieId", ep.movieId)
+                        put("episodeNumber", ep.episodeNumber)
+                        put("seasonNumber", ep.seasonNumber)
+                        put("title", ep.title)
+                        put("description", ep.description)
+                        put("videoKey", ep.videoKey)
+                        put("videoStreamUrl", ep.videoStreamUrl)
+                        put("durationMinutes", ep.durationMinutes)
+                        put("fileSizeMb", ep.fileSizeMb)
+                    }
+                    arr.put(obj)
+                }
+                arr.toString()
+            } else ""
+
+            val epMapList = movie.episodes.map { ep ->
+                hashMapOf(
+                    "id" to ep.id,
+                    "movieId" to ep.movieId,
+                    "episodeNumber" to ep.episodeNumber,
+                    "seasonNumber" to ep.seasonNumber,
+                    "title" to ep.title,
+                    "description" to ep.description,
+                    "videoKey" to ep.videoKey,
+                    "videoStreamUrl" to ep.videoStreamUrl,
+                    "durationMinutes" to ep.durationMinutes,
+                    "fileSizeMb" to ep.fileSizeMb
+                )
+            }
+
             val data = hashMapOf(
                 "title" to movie.title,
                 "description" to movie.description,
                 "genre" to movie.genres,
+                "genres" to movie.genres,
                 "coverUrl" to movie.coverUrl,
+                "coverKey" to movie.coverKey,
                 "r2ObjectKey" to movie.videoKey,
+                "videoStreamUrl" to movie.videoStreamUrl,
                 "durationSec" to movie.durationMinutes * 60,
                 "sizeBytes" to movie.fileSizeMb * 1024 * 1024,
                 "uploadedAt" to movie.uploadDate,
                 "rating" to movie.rating,
-                "releaseYear" to movie.releaseYear
+                "releaseYear" to movie.releaseYear,
+                "episodes" to epMapList,
+                "episodesJson" to epJson
             )
             db.collection(COLLECTION_MOVIES).document(movie.id).set(data, SetOptions.merge()).await()
             return@withContext true

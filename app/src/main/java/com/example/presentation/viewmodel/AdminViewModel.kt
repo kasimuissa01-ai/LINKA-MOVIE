@@ -377,8 +377,15 @@ class AdminViewModel(
         val effectiveStream = if (canonicalVideoKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalVideoKey) else movie.videoStreamUrl
 
         viewModelScope.launch {
+            val latestMovie = repository.getMovieById(movie.id)
+            val effectiveEpisodes = if (movie.episodes.isNotEmpty()) movie.episodes else (latestMovie?.episodes ?: emptyList())
+
             var finalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
             var finalCoverUrl = movie.coverUrl
+            if (finalCoverUrl.isBlank() && latestMovie?.coverUrl?.isNotBlank() == true) {
+                finalCoverUrl = latestMovie.coverUrl
+                finalCoverKey = latestMovie.coverKey
+            }
             val isLocalCover = finalCoverUrl.startsWith("content://") || finalCoverUrl.startsWith("file://") || finalCoverUrl.startsWith("file:/") || finalCoverUrl.startsWith("/")
             if (isLocalCover && context != null) {
                 try {
@@ -408,13 +415,14 @@ class AdminViewModel(
                 coverKey = finalCoverKey,
                 coverUrl = finalCoverUrl,
                 videoKey = canonicalVideoKey,
-                videoStreamUrl = effectiveStream
+                videoStreamUrl = effectiveStream,
+                episodes = effectiveEpisodes
             )
             repository.updateMovie(updatedMovie)
             _uploadState.value = UploadProgressState(
                 isUploading = false,
                 isCompleted = true,
-                statusMessage = "Movie '${updatedMovie.title}' updated with verified R2 cover in Supabase!"
+                statusMessage = "Movie '${updatedMovie.title}' updated with ${updatedMovie.episodes.size} episodes in catalog!"
             )
         }
     }
@@ -492,7 +500,9 @@ class AdminViewModel(
                 fileSizeMb = finalFileSizeMb
             )
 
-            val currentEpisodes = movie.episodes.toMutableList()
+            // Get latest movie state from Room database to avoid overwriting existing episodes
+            val latestMovie = repository.getMovieById(movie.id) ?: movie
+            val currentEpisodes = latestMovie.episodes.toMutableList()
             val existingIndex = currentEpisodes.indexOfFirst { it.id == updatedEpisode.id }
             if (existingIndex >= 0) {
                 currentEpisodes[existingIndex] = updatedEpisode
@@ -502,7 +512,7 @@ class AdminViewModel(
 
             // Sort by season and episode number
             val sortedEpisodes = currentEpisodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
-            val updatedMovie = movie.copy(episodes = sortedEpisodes)
+            val updatedMovie = latestMovie.copy(episodes = sortedEpisodes)
 
             try {
                 repository.updateMovie(updatedMovie)
@@ -510,7 +520,7 @@ class AdminViewModel(
                     isUploading = false,
                     isCompleted = true,
                     overallProgress = 1.0f,
-                    statusMessage = "Successfully saved Season ${updatedEpisode.seasonNumber} Episode ${updatedEpisode.episodeNumber} to '${movie.title}'!"
+                    statusMessage = "Successfully saved Season ${updatedEpisode.seasonNumber} Episode ${updatedEpisode.episodeNumber} to '${updatedMovie.title}'!"
                 )
                 onResult(true, "Episode saved successfully")
             } catch (e: Exception) {

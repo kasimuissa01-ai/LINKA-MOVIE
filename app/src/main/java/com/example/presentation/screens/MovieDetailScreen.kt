@@ -64,6 +64,8 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Replay10
@@ -71,6 +73,7 @@ import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.VolumeMute
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
@@ -114,6 +117,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -125,6 +129,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
+import coil.request.ImageRequest
 import com.example.data.repository.MovieRepository
 import com.example.domain.model.DownloadItem
 import com.example.data.download.EpisodeDownloadProgress
@@ -134,6 +140,7 @@ import com.example.domain.model.Movie
 import com.example.presentation.components.MoviePosterCard
 import com.example.presentation.viewmodel.DownloadViewModel
 import com.example.presentation.viewmodel.PlayerViewModel
+import com.example.util.MovieCoverUtils
 import com.example.util.R2UrlUtils
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
@@ -445,10 +452,66 @@ fun MovieDetailScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.Top
                     ) {
-                        AsyncImage(
-                            model = detailCover,
+                        SubcomposeAsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(detailCover)
+                                .crossfade(true)
+                                .build(),
                             contentDescription = movie.title,
                             contentScale = ContentScale.Crop,
+                            loading = {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(
+                                            Brush.verticalGradient(
+                                                listOf(Color(0xFF1E1E28), Color(0xFF121218))
+                                            )
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = CinematicRed,
+                                        strokeWidth = 2.dp,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            },
+                            error = {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(
+                                            Brush.verticalGradient(
+                                                listOf(Color(0xFF281C26), Color(0xFF16101A))
+                                            )
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center,
+                                        modifier = Modifier.padding(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Movie,
+                                            contentDescription = null,
+                                            tint = CinematicRed.copy(alpha = 0.8f),
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = movie.title,
+                                            color = TextPrimary,
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                }
+                            },
                             modifier = Modifier
                                 .width(85.dp)
                                 .height(125.dp)
@@ -816,10 +879,19 @@ fun MovieDetailScreen(
                 )
 
                 // Cover preview backdrop beneath shimmering layer
-                AsyncImage(
-                    model = detailCover,
+                SubcomposeAsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(detailCover)
+                        .crossfade(true)
+                        .build(),
                     contentDescription = movie.title,
                     contentScale = ContentScale.Crop,
+                    loading = {
+                        Box(modifier = Modifier.fillMaxSize().background(Color(0xFF15151E)))
+                    },
+                    error = {
+                        Box(modifier = Modifier.fillMaxSize().background(Color(0xFF15151E)))
+                    },
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color.Black.copy(alpha = 0.4f))
@@ -1897,7 +1969,11 @@ fun MovieEpisodesSection(
         movie.episodes.filter { it.seasonNumber == selectedSeason }.sortedBy { it.episodeNumber }
     }
 
+    // View mode toggle: Grid (default & recommended) or List
+    var isGridView by rememberSaveable { mutableStateOf(true) }
+
     Column(modifier = modifier.fillMaxWidth()) {
+        // Section Header with Title, Count, and Layout Mode Switcher
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1918,13 +1994,72 @@ fun MovieEpisodesSection(
                     fontWeight = FontWeight.Bold
                 )
             }
-            Text(
-                text = "${movie.episodes.size} Total Episodes",
-                color = TextSecondary,
-                fontSize = 12.sp
-            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    color = CinematicRed.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text(
+                        text = "${movie.episodes.size} Episodes",
+                        color = CinematicRed,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                // Grid / List View Toggle Pills
+                Surface(
+                    color = SurfaceDark,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            color = if (isGridView) CinematicRed else Color.Transparent,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier
+                                .clickable { isGridView = true }
+                                .testTag("toggle_grid_episodes_view")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.GridView,
+                                contentDescription = "Grid Layout",
+                                tint = if (isGridView) Color.White else TextSecondary,
+                                modifier = Modifier
+                                    .padding(5.dp)
+                                    .size(16.dp)
+                            )
+                        }
+                        Surface(
+                            color = if (!isGridView) CinematicRed else Color.Transparent,
+                            shape = RoundedCornerShape(6.dp),
+                            modifier = Modifier
+                                .clickable { isGridView = false }
+                                .testTag("toggle_list_episodes_view")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ViewList,
+                                contentDescription = "List Layout",
+                                tint = if (!isGridView) Color.White else TextSecondary,
+                                modifier = Modifier
+                                    .padding(5.dp)
+                                    .size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
 
+        // Season selector tabs
         if (seasons.size > 1) {
             Spacer(modifier = Modifier.height(12.dp))
             LazyRow(
@@ -1936,7 +2071,10 @@ fun MovieEpisodesSection(
                     Surface(
                         color = if (isSelected) CinematicRed else SurfaceDark,
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.clickable { selectedSeason = season }
+                        border = BorderStroke(1.dp, if (isSelected) CinematicRed else Color.White.copy(alpha = 0.08f)),
+                        modifier = Modifier
+                            .clickable { selectedSeason = season }
+                            .testTag("season_tab_$season")
                     ) {
                         Text(
                             text = "Season $season",
@@ -1950,31 +2088,602 @@ fun MovieEpisodesSection(
             }
         }
 
+        // Horizontal Quick-Scroll Carousel with 16:9 Thumbnail Previews
         Spacer(modifier = Modifier.height(14.dp))
-
-        Column(
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+        Text(
+            text = "Quick Carousel Previews",
+            color = TextSecondary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            episodesInSeason.forEach { ep ->
+            items(episodesInSeason) { ep ->
                 val epDownload = downloads.find {
                     (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.movieId == movie.id
                 }
                 val epWorkProgress = episodeProgressMap[ep.id]
+                val isSelected = (ep.id == selectedEpisodeId)
 
-                EpisodeDetailCard(
+                EpisodeCarouselThumbnailCard(
                     episode = ep,
                     movie = movie,
-                    isSelected = (ep.id == selectedEpisodeId),
+                    isSelected = isSelected,
                     downloadItem = epDownload,
                     workProgress = epWorkProgress,
                     onPlay = {
                         onSelectEpisode?.invoke(ep)
                         onPlayEpisode(ep)
-                    },
-                    onDownload = { onDownloadEpisode(ep) },
-                    onCancelDownload = { onCancelDownloadEpisode?.invoke(ep) }
+                    }
                 )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Main Episodes Container (Scrollable 2-Column Grid or Rich List)
+        if (isGridView) {
+            val chunkedEpisodes = remember(episodesInSeason) {
+                episodesInSeason.chunked(2)
+            }
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                chunkedEpisodes.forEach { rowEpisodes ->
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        rowEpisodes.forEach { ep ->
+                            val epDownload = downloads.find {
+                                (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.movieId == movie.id
+                            }
+                            val epWorkProgress = episodeProgressMap[ep.id]
+
+                            Box(modifier = Modifier.weight(1f)) {
+                                EpisodeGridCard(
+                                    episode = ep,
+                                    movie = movie,
+                                    isSelected = (ep.id == selectedEpisodeId),
+                                    downloadItem = epDownload,
+                                    workProgress = epWorkProgress,
+                                    onPlay = {
+                                        onSelectEpisode?.invoke(ep)
+                                        onPlayEpisode(ep)
+                                    },
+                                    onDownload = { onDownloadEpisode(ep) },
+                                    onCancelDownload = { onCancelDownloadEpisode?.invoke(ep) }
+                                )
+                            }
+                        }
+                        if (rowEpisodes.size == 1) {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        } else {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                episodesInSeason.forEach { ep ->
+                    val epDownload = downloads.find {
+                        (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.movieId == movie.id
+                    }
+                    val epWorkProgress = episodeProgressMap[ep.id]
+
+                    EpisodeDetailCard(
+                        episode = ep,
+                        movie = movie,
+                        isSelected = (ep.id == selectedEpisodeId),
+                        downloadItem = epDownload,
+                        workProgress = epWorkProgress,
+                        onPlay = {
+                            onSelectEpisode?.invoke(ep)
+                            onPlayEpisode(ep)
+                        },
+                        onDownload = { onDownloadEpisode(ep) },
+                        onCancelDownload = { onCancelDownloadEpisode?.invoke(ep) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Compact horizontal carousel preview card with 16:9 thumbnail and quick play action.
+ */
+@Composable
+fun EpisodeCarouselThumbnailCard(
+    episode: Episode,
+    movie: Movie,
+    isSelected: Boolean,
+    downloadItem: DownloadItem?,
+    workProgress: EpisodeDownloadProgress? = null,
+    onPlay: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val coverUrl = movie.coverUrl
+    val isDownloading = workProgress?.isDownloading == true || downloadItem?.status == DownloadStatus.DOWNLOADING
+    val isCompleted = workProgress?.isCompleted == true || downloadItem?.status == DownloadStatus.COMPLETED
+
+    Surface(
+        color = if (isSelected) SurfaceElevated else SurfaceDark,
+        shape = RoundedCornerShape(12.dp),
+        border = when {
+            isSelected -> BorderStroke(1.5.dp, CinematicRed)
+            isDownloading -> BorderStroke(1.dp, CinematicRed.copy(alpha = 0.6f))
+            isCompleted -> BorderStroke(1.dp, Color(0xFF4CAF50).copy(alpha = 0.5f))
+            else -> BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+        },
+        modifier = modifier
+            .width(140.dp)
+            .clickable { onPlay() }
+            .testTag("carousel_ep_${episode.episodeNumber}")
+    ) {
+        Column(modifier = Modifier.padding(6.dp)) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(SurfaceElevated),
+                contentAlignment = Alignment.Center
+            ) {
+                val epCover = com.example.util.MovieCoverUtils.resolveCoverUrl(movie.title, coverUrl, movie.genres)
+                SubcomposeAsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(epCover)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = episode.title,
+                    contentScale = ContentScale.Crop,
+                    loading = {
+                        Box(
+                            modifier = Modifier.fillMaxSize().background(SurfaceElevated),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                color = CinematicRed,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    },
+                    error = {
+                        Box(
+                            modifier = Modifier.fillMaxSize().background(SurfaceElevated),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Movie,
+                                contentDescription = null,
+                                tint = CinematicRed.copy(alpha = 0.6f),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Dark gradient scrim
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.7f))
+                            )
+                        )
+                )
+
+                // Center Play Icon
+                Surface(
+                    color = if (isSelected) CinematicRed else Color.Black.copy(alpha = 0.6f),
+                    shape = CircleShape,
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Play",
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+
+                // Top Episode Number Badge
+                Surface(
+                    color = if (isSelected) CinematicRed else Color.Black.copy(alpha = 0.75f),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(4.dp)
+                ) {
+                    Text(
+                        text = "EP ${episode.episodeNumber}",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                }
+
+                // Bottom Duration Badge
+                Surface(
+                    color = Color.Black.copy(alpha = 0.75f),
+                    shape = RoundedCornerShape(3.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                ) {
+                    Text(
+                        text = "${episode.durationMinutes}m",
+                        color = Color.White,
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = if (episode.title.startsWith("Episode", ignoreCase = true)) {
+                    episode.title
+                } else {
+                    "Ep ${episode.episodeNumber}: ${episode.title}"
+                },
+                color = if (isSelected) CinematicRed else TextPrimary,
+                fontSize = 11.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+/**
+ * Clean, modern 2-Column Grid Episode Card with large 16:9 thumbnail preview,
+ * rich badges, offline status, and intuitive action controls.
+ */
+@Composable
+fun EpisodeGridCard(
+    episode: Episode,
+    movie: Movie,
+    isSelected: Boolean = false,
+    downloadItem: DownloadItem?,
+    workProgress: EpisodeDownloadProgress? = null,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+    onCancelDownload: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val coverUrl = movie.coverUrl
+    val isDownloading = workProgress?.isDownloading == true || downloadItem?.status == DownloadStatus.DOWNLOADING
+    val isCompleted = workProgress?.isCompleted == true || downloadItem?.status == DownloadStatus.COMPLETED
+
+    val progressFraction = when {
+        isCompleted -> 1.0f
+        workProgress?.isDownloading == true -> workProgress.progressFraction
+        downloadItem?.status == DownloadStatus.DOWNLOADING -> downloadItem.progress
+        else -> 0f
+    }.coerceIn(0f, 1f)
+
+    val progressPercent = when {
+        isCompleted -> 100
+        workProgress?.isDownloading == true -> workProgress.progressPercent
+        downloadItem?.status == DownloadStatus.DOWNLOADING -> (downloadItem.progress * 100).toInt()
+        else -> 0
+    }.coerceIn(0, 100)
+
+    Surface(
+        color = if (isSelected) SurfaceElevated else SurfaceDark,
+        shape = RoundedCornerShape(14.dp),
+        border = when {
+            isSelected -> BorderStroke(1.8.dp, CinematicRed)
+            isDownloading -> BorderStroke(1.2.dp, CinematicRed.copy(alpha = 0.65f))
+            isCompleted -> BorderStroke(1.dp, Color(0xFF4CAF50).copy(alpha = 0.45f))
+            else -> BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+        },
+        shadowElevation = if (isSelected) 6.dp else 2.dp,
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { onPlay() }
+            .testTag("grid_episode_card_${episode.episodeNumber}")
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            // 1. 16:9 Thumbnail Preview with Scrim & Badges
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(SurfaceElevated),
+                contentAlignment = Alignment.Center
+            ) {
+                val epCover = com.example.util.MovieCoverUtils.resolveCoverUrl(movie.title, coverUrl, movie.genres)
+                SubcomposeAsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(epCover)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = episode.title,
+                    contentScale = ContentScale.Crop,
+                    loading = {
+                        Box(
+                            modifier = Modifier.fillMaxSize().background(SurfaceElevated),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                color = CinematicRed,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    },
+                    error = {
+                        Box(
+                            modifier = Modifier.fillMaxSize().background(SurfaceElevated),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Movie,
+                                contentDescription = null,
+                                tint = CinematicRed.copy(alpha = 0.6f),
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Dark Scrim Overlay
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.Black.copy(alpha = 0.35f),
+                                    Color.Black.copy(alpha = 0.65f)
+                                )
+                            )
+                        )
+                )
+
+                // Big Centered Play Trigger
+                Surface(
+                    color = if (isSelected) CinematicRed else Color.Black.copy(alpha = 0.65f),
+                    shape = CircleShape,
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.3f)),
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Play Episode",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+
+                // Top-Left Episode Number Badge
+                Surface(
+                    color = if (isSelected) CinematicRed else Color.Black.copy(alpha = 0.85f),
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(0.8.dp, if (isSelected) Color.White.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.15f)),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                ) {
+                    Text(
+                        text = "EP ${episode.episodeNumber}",
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
+                    )
+                }
+
+                // Top-Right Status Badge (Playing / Cached / Download %)
+                if (isDownloading) {
+                    Surface(
+                        color = CinematicRed.copy(alpha = 0.9f),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                    ) {
+                        Text(
+                            text = "$progressPercent% ⬇",
+                            color = Color.White,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.5.dp)
+                        )
+                    }
+                } else if (isCompleted) {
+                    Surface(
+                        color = Color(0xFF4CAF50).copy(alpha = 0.9f),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                    ) {
+                        Text(
+                            text = "✓ CACHED",
+                            color = Color.White,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.5.dp)
+                        )
+                    }
+                } else if (isSelected) {
+                    Surface(
+                        color = CinematicRed,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                    ) {
+                        Text(
+                            text = "PLAYING",
+                            color = Color.White,
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.5.dp)
+                        )
+                    }
+                }
+
+                // Bottom-Right Duration Badge
+                Surface(
+                    color = Color.Black.copy(alpha = 0.8f),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(6.dp)
+                ) {
+                    Text(
+                        text = "${episode.durationMinutes} min",
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 2. Episode Title
+            Text(
+                text = if (episode.title.startsWith("Episode", ignoreCase = true)) {
+                    episode.title
+                } else {
+                    "Episode ${episode.episodeNumber}: ${episode.title}"
+                },
+                color = if (isSelected) CinematicRed else TextPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 17.sp
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Episode Metadata (Size & Season)
+            Text(
+                text = "Season ${episode.seasonNumber} • ${episode.fileSizeMb} MB",
+                color = TextSecondary,
+                fontSize = 11.sp
+            )
+
+            // Live Download Progress Bar if Downloading
+            if (isDownloading) {
+                Spacer(modifier = Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = { progressFraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = CinematicRed,
+                    trackColor = SurfaceDark
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 3. Action Buttons Row (Play & Download)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Quick Play Action Pill
+                Surface(
+                    color = if (isSelected) CinematicRed else CinematicRed.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(6.dp),
+                    border = BorderStroke(1.dp, CinematicRed.copy(alpha = 0.4f)),
+                    modifier = Modifier
+                        .clickable { onPlay() }
+                        .weight(1f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 5.dp, horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = if (isSelected) Color.White else CinematicRed,
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = if (isSelected) "Playing" else "Play",
+                            color = if (isSelected) Color.White else CinematicRed,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // Download Button / Status Icon
+                if (isDownloading) {
+                    IconButton(
+                        onClick = { onCancelDownload?.invoke() },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cancel Download",
+                            tint = CinematicRed,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                } else if (isCompleted) {
+                    IconButton(
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = "Cached",
+                            tint = Color(0xFF4CAF50),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                } else {
+                    IconButton(
+                        onClick = onDownload,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = "Download Episode",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
             }
         }
     }
@@ -2049,16 +2758,45 @@ fun EpisodeDetailCard(
                 // Thumbnail with overlay Play icon
                 Box(
                     modifier = Modifier
-                        .width(100.dp)
-                        .height(60.dp)
+                        .width(110.dp)
+                        .height(65.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(SurfaceElevated),
                     contentAlignment = Alignment.Center
                 ) {
-                    AsyncImage(
-                        model = com.example.util.MovieCoverUtils.resolveCoverUrl(movie.title, coverUrl, movie.genres),
+                    val epCover = com.example.util.MovieCoverUtils.resolveCoverUrl(movie.title, coverUrl, movie.genres)
+                    SubcomposeAsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(epCover)
+                            .crossfade(true)
+                            .build(),
                         contentDescription = episode.title,
                         contentScale = ContentScale.Crop,
+                        loading = {
+                            Box(
+                                modifier = Modifier.fillMaxSize().background(SurfaceElevated),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    color = CinematicRed,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        },
+                        error = {
+                            Box(
+                                modifier = Modifier.fillMaxSize().background(SurfaceElevated),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Movie,
+                                    contentDescription = null,
+                                    tint = CinematicRed.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                     Box(
