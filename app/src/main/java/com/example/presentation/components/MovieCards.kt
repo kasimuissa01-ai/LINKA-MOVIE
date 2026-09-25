@@ -1,5 +1,3 @@
-@file:OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
-
 package com.example.presentation.components
 
 import androidx.compose.animation.core.animateFloatAsState
@@ -42,8 +40,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.domain.model.Movie
-import com.example.presentation.navigation.movieSharedBounds
-import com.example.presentation.navigation.movieSharedElement
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
 import com.example.ui.theme.SurfaceDark
@@ -86,9 +82,7 @@ fun MoviePosterCard(
                 model = effectiveCover,
                 contentDescription = movie.title,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .movieSharedElement(key = "movie_poster_${movie.id}")
+                modifier = Modifier.fillMaxSize()
             )
 
             // Subtle gradient overlay at bottom
@@ -108,9 +102,7 @@ fun MoviePosterCard(
             Surface(
                 color = Color(0xCC09090C),
                 shape = RoundedCornerShape(bottomStart = 8.dp),
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .movieSharedBounds(key = "movie_rating_${movie.id}")
+                modifier = Modifier.align(Alignment.TopEnd)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -156,8 +148,7 @@ fun MoviePosterCard(
             fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.movieSharedBounds(key = "movie_title_${movie.id}")
+            overflow = TextOverflow.Ellipsis
         )
 
         Row(

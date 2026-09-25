@@ -1,5 +1,3 @@
-@file:kotlin.OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
-
 package com.example.presentation.screens
 
 import android.app.Activity
@@ -136,8 +134,6 @@ import com.example.domain.model.Movie
 import com.example.presentation.components.MoviePosterCard
 import com.example.presentation.viewmodel.DownloadViewModel
 import com.example.presentation.viewmodel.PlayerViewModel
-import com.example.presentation.navigation.movieSharedBounds
-import com.example.presentation.navigation.movieSharedElement
 import com.example.util.R2UrlUtils
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
@@ -456,7 +452,6 @@ fun MovieDetailScreen(
                             modifier = Modifier
                                 .width(85.dp)
                                 .height(125.dp)
-                                .movieSharedElement(key = "movie_poster_${movie.id}")
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(SurfaceElevated)
                         )
@@ -469,8 +464,7 @@ fun MovieDetailScreen(
                                 color = TextPrimary,
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.Black,
-                                lineHeight = 28.sp,
-                                modifier = Modifier.movieSharedBounds(key = "movie_title_${movie.id}")
+                                lineHeight = 28.sp
                             )
 
                             Spacer(modifier = Modifier.height(10.dp))
@@ -483,8 +477,7 @@ fun MovieDetailScreen(
                                 // Rating
                                 Surface(
                                     color = SurfaceDark,
-                                    shape = RoundedCornerShape(6.dp),
-                                    modifier = Modifier.movieSharedBounds(key = "movie_rating_${movie.id}")
+                                    shape = RoundedCornerShape(6.dp)
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
