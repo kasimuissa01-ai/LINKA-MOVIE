@@ -6,6 +6,7 @@ const {
   UploadPartCommand,
   CompleteMultipartUploadCommand,
   AbortMultipartUploadCommand,
+  ListObjectsV2Command,
 } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 require("dotenv").config();
@@ -189,6 +190,35 @@ app.post("/abort", async (req, res) => {
   } catch (error) {
     console.error("Error in /abort:", error);
     res.status(500).json({ error: error.message || "Failed to abort multipart upload" });
+  }
+});
+
+/**
+ * 4. GET /list
+ * Query: prefix (optional, e.g. "videos/" or "covers/")
+ * Returns: { objects: [{ key, size, lastModified }] }
+ */
+app.get("/list", async (req, res) => {
+  try {
+    const prefix = req.query.prefix || "";
+    const listCommand = new ListObjectsV2Command({
+      Bucket: R2_BUCKET,
+      Prefix: prefix,
+      MaxKeys: 100,
+    });
+    const listResponse = await s3.send(listCommand);
+    const objects = (listResponse.Contents || []).map((item) => ({
+      key: item.Key,
+      size: item.Size,
+      lastModified: item.LastModified,
+      url: process.env.R2_PUBLIC_DOMAIN
+        ? `https://${process.env.R2_PUBLIC_DOMAIN}/${item.Key}`
+        : `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${R2_BUCKET}/${item.Key}`,
+    }));
+    res.json({ count: objects.length, objects });
+  } catch (error) {
+    console.error("Error in /list:", error);
+    res.status(500).json({ error: error.message || "Failed to list bucket objects" });
   }
 });
 

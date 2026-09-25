@@ -11,6 +11,7 @@ import com.example.data.repository.MovieRepository
 import com.example.domain.model.Episode
 import com.example.domain.model.Movie
 import com.example.domain.model.UploadSession
+import com.example.util.MovieCoverUtils
 import com.example.util.R2UrlUtils
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -512,7 +513,23 @@ class AdminViewModel(
 
             // Sort by season and episode number
             val sortedEpisodes = currentEpisodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
-            val updatedMovie = latestMovie.copy(episodes = sortedEpisodes)
+
+            val preservedCoverKey = when {
+                latestMovie.coverKey.isNotBlank() -> latestMovie.coverKey
+                movie.coverKey.isNotBlank() -> movie.coverKey
+                else -> R2UrlUtils.extractKeyFromAnyUrl(latestMovie.coverUrl.ifBlank { movie.coverUrl })
+            }
+            val preservedCoverUrl = when {
+                latestMovie.coverUrl.isNotBlank() && !latestMovie.coverUrl.contains("rDe0c5XW4Y9k33W6v60V9l7fEee.jpg") -> latestMovie.coverUrl
+                movie.coverUrl.isNotBlank() && !movie.coverUrl.contains("rDe0c5XW4Y9k33W6v60V9l7fEee.jpg") -> movie.coverUrl
+                else -> MovieCoverUtils.resolveCoverUrl(latestMovie.title, "", latestMovie.genres)
+            }
+
+            val updatedMovie = latestMovie.copy(
+                coverKey = preservedCoverKey,
+                coverUrl = preservedCoverUrl,
+                episodes = sortedEpisodes
+            )
 
             try {
                 repository.updateMovie(updatedMovie)
@@ -544,8 +561,17 @@ class AdminViewModel(
         onResult: (Boolean, String) -> Unit = { _, _ -> }
     ) {
         viewModelScope.launch {
-            val filteredEpisodes = movie.episodes.filterNot { it.id == episodeId }
-            val updatedMovie = movie.copy(episodes = filteredEpisodes)
+            val latestMovie = repository.getMovieById(movie.id) ?: movie
+            val filteredEpisodes = latestMovie.episodes.filterNot { it.id == episodeId }
+            val preservedCoverUrl = when {
+                latestMovie.coverUrl.isNotBlank() && !latestMovie.coverUrl.contains("rDe0c5XW4Y9k33W6v60V9l7fEee.jpg") -> latestMovie.coverUrl
+                movie.coverUrl.isNotBlank() && !movie.coverUrl.contains("rDe0c5XW4Y9k33W6v60V9l7fEee.jpg") -> movie.coverUrl
+                else -> MovieCoverUtils.resolveCoverUrl(latestMovie.title, "", latestMovie.genres)
+            }
+            val updatedMovie = latestMovie.copy(
+                coverUrl = preservedCoverUrl,
+                episodes = filteredEpisodes
+            )
             try {
                 repository.updateMovie(updatedMovie)
                 _uploadState.value = UploadProgressState(

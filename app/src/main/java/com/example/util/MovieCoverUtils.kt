@@ -18,13 +18,18 @@ object MovieCoverUtils {
     ): String {
         val cleanUrl = rawUrl?.trim().orEmpty()
 
+        // Filter out legacy known dead 404 URLs
+        val isDeadUrl = cleanUrl.contains("rDe0c5XW4Y9k33W6v60V9l7fEee.jpg") ||
+            cleanUrl.contains("fiVW06jE7z9YBoOCpVe4B9I8P3n.jpg") ||
+            cleanUrl.contains("6wL9jQ8aV5w9G4L6eMhGq6V7Z6D.jpg")
+
         // 1. Direct Content or File URI
-        if (cleanUrl.startsWith("content://") || cleanUrl.startsWith("file://") || cleanUrl.startsWith("file:/") || (cleanUrl.startsWith("/") && !cleanUrl.startsWith("//"))) {
+        if (!isDeadUrl && (cleanUrl.startsWith("content://") || cleanUrl.startsWith("file://") || cleanUrl.startsWith("file:/") || (cleanUrl.startsWith("/") && !cleanUrl.startsWith("//")))) {
             return cleanUrl
         }
 
         // 2. Direct HTTP / HTTPS link
-        if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://")) {
+        if (!isDeadUrl && (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://"))) {
             // If it's an R2 storage endpoint or worker URL, canonicalize
             if (cleanUrl.contains(".r2.cloudflarestorage.com") || cleanUrl.contains(".r2.dev/")) {
                 val key = R2UrlUtils.extractKeyFromAnyUrl(cleanUrl)
@@ -36,7 +41,7 @@ object MovieCoverUtils {
         }
 
         // 3. R2 Key (e.g., "covers/image.jpg" or "videos/...")
-        if (cleanUrl.isNotBlank()) {
+        if (!isDeadUrl && cleanUrl.isNotBlank()) {
             return R2UrlUtils.buildUrl(cleanUrl)
         }
 
@@ -45,13 +50,16 @@ object MovieCoverUtils {
         if (normalizedTitle.isNotBlank()) {
             when {
                 normalizedTitle.contains("lioness") || normalizedTitle.contains("special ops") ->
-                    return "https://image.tmdb.org/t/p/w500/rDe0c5XW4Y9k33W6v60V9l7fEee.jpg"
+                    return "https://movie-cdn.grapherkidd0.workers.dev/videos/1790365380885-covers_special_ops_lioness_poster.jpg"
 
                 normalizedTitle.contains("furious") ->
-                    return "https://image.tmdb.org/t/p/w500/fiVW06jE7z9YBoOCpVe4B9I8P3n.jpg"
+                    return "https://movie-cdn.grapherkidd0.workers.dev/videos/1789931865716-covers_1789931865611_the_furious_poster.jpg"
 
                 normalizedTitle.contains("speed") ->
-                    return "https://image.tmdb.org/t/p/w500/6wL9jQ8aV5w9G4L6eMhGq6V7Z6D.jpg"
+                    return "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/videos/1789931938687-covers_1789931938209_speed_demon_poster.jpg"
+
+                normalizedTitle.contains("sniper") ->
+                    return "https://pub-5399f62037f94260b0f54c88a9297134.r2.dev/videos/1789931818842-covers_1789931818725_sniper_fierce_battle__poster.jpg"
 
                 normalizedTitle.contains("dune") ->
                     return "https://image.tmdb.org/t/p/w500/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg"

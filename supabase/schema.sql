@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS public.movies (
     description TEXT,
     genres TEXT[] DEFAULT '{}',
     cover_url TEXT,
+    cover_key TEXT DEFAULT '',
     video_key TEXT NOT NULL,
     video_stream_url TEXT,
     duration_minutes INTEGER DEFAULT 120,
@@ -16,9 +17,21 @@ CREATE TABLE IF NOT EXISTS public.movies (
     rating NUMERIC(3, 1) DEFAULT 8.0,
     cast_members TEXT[] DEFAULT '{}',
     is_featured BOOLEAN DEFAULT false,
+    view_count BIGINT DEFAULT 0,
+    upload_status TEXT DEFAULT 'completed',
+    episodes_json TEXT DEFAULT '[]',
+    episodes JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- MIGRATION: Run this block in Supabase SQL Editor if your public.movies table already exists:
+-- https://supabase.com/dashboard/project/vqgnxqabvmmpfoiceass/sql
+ALTER TABLE public.movies ADD COLUMN IF NOT EXISTS episodes_json TEXT DEFAULT '[]';
+ALTER TABLE public.movies ADD COLUMN IF NOT EXISTS episodes JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE public.movies ADD COLUMN IF NOT EXISTS cover_key TEXT DEFAULT '';
+ALTER TABLE public.movies ADD COLUMN IF NOT EXISTS upload_status TEXT DEFAULT 'completed';
+ALTER TABLE public.movies ADD COLUMN IF NOT EXISTS view_count BIGINT DEFAULT 0;
 
 -- 2. User Profiles Table
 CREATE TABLE IF NOT EXISTS public.profiles (

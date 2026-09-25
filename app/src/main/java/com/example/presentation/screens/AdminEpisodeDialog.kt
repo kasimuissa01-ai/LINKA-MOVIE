@@ -385,21 +385,25 @@ fun AdminManageEpisodesModal(
 ) {
     val context = LocalContext.current
     val uploadState by adminViewModel.uploadState.collectAsState()
+    val allMovies by adminViewModel.movies.collectAsState()
+    val liveMovie = remember(allMovies, movie.id) {
+        allMovies.find { it.id == movie.id } ?: movie
+    }
 
     var episodeToEdit by remember { mutableStateOf<Episode?>(null) }
     var showAddDialog by remember { mutableStateOf(false) }
     var episodeToDelete by remember { mutableStateOf<Episode?>(null) }
 
-    val seasons = remember(movie.episodes) {
-        val list = movie.episodes.map { it.seasonNumber }.distinct().sorted()
+    val seasons = remember(liveMovie.episodes) {
+        val list = liveMovie.episodes.map { it.seasonNumber }.distinct().sorted()
         if (list.isEmpty()) listOf(1) else list
     }
-    var selectedSeason by remember(movie.episodes) {
+    var selectedSeason by remember(liveMovie.id) {
         mutableStateOf(seasons.firstOrNull() ?: 1)
     }
 
-    val episodesInSeason = remember(movie.episodes, selectedSeason) {
-        movie.episodes.filter { it.seasonNumber == selectedSeason }.sortedBy { it.episodeNumber }
+    val episodesInSeason = remember(liveMovie.episodes, selectedSeason) {
+        liveMovie.episodes.filter { it.seasonNumber == selectedSeason }.sortedBy { it.episodeNumber }
     }
 
     Dialog(
@@ -432,7 +436,7 @@ fun AdminManageEpisodesModal(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "${movie.title} • ${movie.episodes.size} Total Episodes",
+                            text = "${liveMovie.title} • ${liveMovie.episodes.size} Total Episodes",
                             color = TextSecondary,
                             fontSize = 12.sp,
                             maxLines = 1,
@@ -661,13 +665,13 @@ fun AdminManageEpisodesModal(
         val nextEpNum = (episodesInSeason.maxOfOrNull { it.episodeNumber } ?: 0) + 1
         AdminEpisodeEditDialog(
             initialEpisode = null,
-            movieId = movie.id,
+            movieId = liveMovie.id,
             nextDefaultSeason = selectedSeason,
             nextDefaultEpisodeNumber = nextEpNum,
             onDismiss = { showAddDialog = false },
             onSave = { ep, videoUri ->
                 showAddDialog = false
-                adminViewModel.addOrUpdateEpisode(context, movie, ep, videoUri)
+                adminViewModel.addOrUpdateEpisode(context, liveMovie, ep, videoUri)
             }
         )
     }
@@ -676,11 +680,11 @@ fun AdminManageEpisodesModal(
     episodeToEdit?.let { ep ->
         AdminEpisodeEditDialog(
             initialEpisode = ep,
-            movieId = movie.id,
+            movieId = liveMovie.id,
             onDismiss = { episodeToEdit = null },
             onSave = { updatedEp, videoUri ->
                 episodeToEdit = null
-                adminViewModel.addOrUpdateEpisode(context, movie, updatedEp, videoUri)
+                adminViewModel.addOrUpdateEpisode(context, liveMovie, updatedEp, videoUri)
             }
         )
     }
@@ -692,7 +696,7 @@ fun AdminManageEpisodesModal(
             title = { Text("Delete Episode", color = TextPrimary) },
             text = {
                 Text(
-                    "Are you sure you want to delete Season ${ep.seasonNumber} Episode ${ep.episodeNumber} ('${ep.title}') from '${movie.title}'?",
+                    "Are you sure you want to delete Season ${ep.seasonNumber} Episode ${ep.episodeNumber} ('${ep.title}') from '${liveMovie.title}'?",
                     color = TextSecondary,
                     fontSize = 13.sp
                 )
@@ -700,7 +704,7 @@ fun AdminManageEpisodesModal(
             confirmButton = {
                 Button(
                     onClick = {
-                        adminViewModel.deleteEpisode(movie, ep.id)
+                        adminViewModel.deleteEpisode(liveMovie, ep.id)
                         episodeToDelete = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = CinematicRed)
