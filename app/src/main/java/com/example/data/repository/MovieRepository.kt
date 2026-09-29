@@ -365,8 +365,8 @@ class MovieRepository(
                             }
                             epMap.values.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
                         }
-                        movie.episodes.isNotEmpty() -> movie.episodes
-                        existingLocal?.episodes?.isNotEmpty() == true -> existingLocal.episodes
+                        movie.episodes.isNotEmpty() -> movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+                        existingLocal?.episodes?.isNotEmpty() == true -> existingLocal.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
                         else -> emptyList()
                     }
 
@@ -457,7 +457,8 @@ class MovieRepository(
             coverKey = canonicalCoverKey,
             videoStreamUrl = canonicalStream,
             coverUrl = canonicalCover,
-            uploadStatus = movie.uploadStatus.ifBlank { "completed" }
+            uploadStatus = movie.uploadStatus.ifBlank { "completed" },
+            episodes = movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
         )
 
         movieDao.insertMovie(MovieEntity.fromDomain(canonicalMovie))
@@ -480,7 +481,8 @@ class MovieRepository(
             coverKey = canonicalCoverKey,
             videoStreamUrl = canonicalStream,
             coverUrl = canonicalCover,
-            uploadStatus = movie.uploadStatus.ifBlank { "completed" }
+            uploadStatus = movie.uploadStatus.ifBlank { "completed" },
+            episodes = movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
         )
 
         movieDao.updateMovie(MovieEntity.fromDomain(canonicalMovie))

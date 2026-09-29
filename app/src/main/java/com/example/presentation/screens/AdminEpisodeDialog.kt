@@ -88,19 +88,19 @@ fun AdminEpisodeEditDialog(
     onSave: (Episode, Uri?) -> Unit
 ) {
     val context = LocalContext.current
-    var seasonNumber by remember {
+    var seasonNumber by remember(initialEpisode, nextDefaultSeason) {
         mutableStateOf(initialEpisode?.seasonNumber?.toString() ?: nextDefaultSeason.toString())
     }
-    var episodeNumber by remember {
+    var episodeNumber by remember(initialEpisode, nextDefaultEpisodeNumber) {
         mutableStateOf(initialEpisode?.episodeNumber?.toString() ?: nextDefaultEpisodeNumber.toString())
     }
-    var title by remember {
+    var title by remember(initialEpisode, nextDefaultEpisodeNumber) {
         mutableStateOf(initialEpisode?.title ?: "Episode $nextDefaultEpisodeNumber")
     }
-    var description by remember {
+    var description by remember(initialEpisode) {
         mutableStateOf(initialEpisode?.description ?: "")
     }
-    var streamUrl by remember {
+    var streamUrl by remember(initialEpisode) {
         mutableStateOf(initialEpisode?.videoStreamUrl ?: initialEpisode?.videoKey ?: "")
     }
     var durationMinutes by remember {

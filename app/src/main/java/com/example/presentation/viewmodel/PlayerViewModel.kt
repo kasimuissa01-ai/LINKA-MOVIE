@@ -356,7 +356,12 @@ class PlayerViewModel(
             else -> null
         }
 
-        val targetEpisode = if (episodeId != null) movie.episodes.firstOrNull { it.id == episodeId } else null
+        val sortedEpisodes = movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+        val targetEpisode = if (episodeId != null) {
+            movie.episodes.firstOrNull { it.id == episodeId }
+        } else {
+            sortedEpisodes.firstOrNull()
+        }
         val directUrl = if (offlineUri != null) {
             offlineUri
         } else if (targetEpisode != null) {

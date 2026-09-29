@@ -64,7 +64,7 @@ data class MovieEntity(
                         )
                     )
                 }
-                list
+                list.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
             } catch (e: Exception) {
                 emptyList()
             }
@@ -97,7 +97,7 @@ data class MovieEntity(
             val cleanCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
             val episodesJsonString = if (movie.episodes.isNotEmpty()) {
                 val array = JSONArray()
-                for (ep in movie.episodes) {
+                for (ep in movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))) {
                     val epObj = JSONObject().apply {
                         put("id", ep.id)
                         put("movieId", ep.movieId)

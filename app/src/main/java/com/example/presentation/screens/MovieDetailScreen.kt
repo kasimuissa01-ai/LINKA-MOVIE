@@ -261,12 +261,28 @@ fun MovieDetailScreen(
         }
     }
 
-    // Selected Episode state for series
-    var selectedEpisodeId by remember(movie.id) {
-        mutableStateOf(movie.episodes.firstOrNull()?.id)
+    // Sort all episodes deterministically by Season, then Episode number
+    val sortedEpisodes = remember(movie.episodes) {
+        movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
     }
-    val activeEpisode = remember(movie.id, selectedEpisodeId) {
-        movie.episodes.firstOrNull { it.id == selectedEpisodeId }
+
+    // Selected Episode state for series - always defaults to the first chronological episode
+    var selectedEpisodeId by remember(movie.id) {
+        mutableStateOf(sortedEpisodes.firstOrNull()?.id)
+    }
+
+    // Auto-align selected episode if currently selected ID is missing or invalid
+    LaunchedEffect(sortedEpisodes) {
+        if (sortedEpisodes.isNotEmpty()) {
+            val exists = sortedEpisodes.any { it.id == selectedEpisodeId }
+            if (!exists || selectedEpisodeId == null) {
+                selectedEpisodeId = sortedEpisodes.firstOrNull()?.id
+            }
+        }
+    }
+
+    val activeEpisode = remember(movie.id, selectedEpisodeId, sortedEpisodes) {
+        sortedEpisodes.firstOrNull { it.id == selectedEpisodeId } ?: sortedEpisodes.firstOrNull()
     }
 
     // Auto-hide player controls overlay after 3 seconds
@@ -290,7 +306,7 @@ fun MovieDetailScreen(
 
     // Dynamic stream loading whenever selectedEpisodeId or movie changes
     LaunchedEffect(movie.id, selectedEpisodeId) {
-        val targetEpisode = movie.episodes.firstOrNull { it.id == selectedEpisodeId }
+        val targetEpisode = sortedEpisodes.firstOrNull { it.id == selectedEpisodeId } ?: sortedEpisodes.firstOrNull()
         val epDownload = if (targetEpisode != null) {
             downloads.find { (it.episodeId == targetEpisode.id || it.id == "${movie.id}_ep_${targetEpisode.id}") && it.movieId == movie.id }
         } else downloadItem
@@ -2190,16 +2206,19 @@ fun MovieEpisodesSection(
     onCancelDownloadEpisode: ((Episode) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val seasons = remember(movie.episodes) {
-        val list = movie.episodes.map { it.seasonNumber }.distinct().sorted()
+    val sortedEpisodes = remember(movie.episodes) {
+        movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+    }
+    val seasons = remember(sortedEpisodes) {
+        val list = sortedEpisodes.map { it.seasonNumber }.distinct().sorted()
         if (list.isEmpty()) listOf(1) else list
     }
     var selectedSeason by remember(movie.id) {
         mutableStateOf(seasons.firstOrNull() ?: 1)
     }
 
-    val episodesInSeason = remember(movie.episodes, selectedSeason) {
-        movie.episodes.filter { it.seasonNumber == selectedSeason }.sortedBy { it.episodeNumber }
+    val episodesInSeason = remember(sortedEpisodes, selectedSeason) {
+        sortedEpisodes.filter { it.seasonNumber == selectedSeason }.sortedBy { it.episodeNumber }
     }
 
     Column(modifier = modifier.fillMaxWidth()) {

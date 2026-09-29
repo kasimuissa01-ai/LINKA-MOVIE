@@ -359,7 +359,7 @@ data class SupabaseMovieEntity(
                 castMembers = castList,
                 isFeatured = obj.optBoolean("is_featured", false),
                 viewCount = obj.optLong("view_count", 0L),
-                episodes = parsedEpisodes,
+                episodes = parsedEpisodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
                 createdAt = obj.optString("created_at").takeIf { it.isNotBlank() },
                 updatedAt = obj.optString("updated_at").takeIf { it.isNotBlank() }
             )

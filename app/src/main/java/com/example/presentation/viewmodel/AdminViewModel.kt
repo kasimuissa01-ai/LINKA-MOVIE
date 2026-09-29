@@ -153,7 +153,7 @@ class AdminViewModel(
             cast = listOf("Movie Cast"),
             isFeatured = isFeatured,
             uploadStatus = "completed",
-            episodes = episodes.map { it.copy(movieId = movieId) }
+            episodes = episodes.map { it.copy(movieId = movieId) }.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
         )
 
         activeUploadJob?.cancel()
@@ -387,7 +387,7 @@ class AdminViewModel(
                 cast = listOf("Movie Cast"),
                 isFeatured = isFeatured,
                 uploadStatus = "completed",
-                episodes = episodes.map { it.copy(movieId = movieId) }
+                episodes = episodes.map { it.copy(movieId = movieId) }.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
             )
 
             try {
@@ -617,7 +617,9 @@ class AdminViewModel(
             // Get latest movie state from Room database to avoid overwriting existing episodes
             val latestMovie = repository.getMovieById(movie.id) ?: movie
             val currentEpisodes = latestMovie.episodes.toMutableList()
-            val existingIndex = currentEpisodes.indexOfFirst { it.id == updatedEpisode.id }
+            val existingIndex = currentEpisodes.indexOfFirst {
+                it.id == updatedEpisode.id || (it.seasonNumber == updatedEpisode.seasonNumber && it.episodeNumber == updatedEpisode.episodeNumber)
+            }
             if (existingIndex >= 0) {
                 currentEpisodes[existingIndex] = updatedEpisode
             } else {

@@ -172,7 +172,9 @@ fun AdminAddEditMovieScreen(
     var rating by remember { mutableStateOf(existingMovie?.rating?.toString() ?: "8.2") }
 
     // Episodes & TV Series State
-    var episodesList by remember { mutableStateOf(existingMovie?.episodes ?: emptyList()) }
+    var episodesList by remember(existingMovie?.id) {
+        mutableStateOf(existingMovie?.episodes?.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })) ?: emptyList())
+    }
     var showEpisodeDialog by remember { mutableStateOf(false) }
     var episodeBeingEdited by remember { mutableStateOf<Episode?>(null) }
     var activeSeasonTab by remember { mutableStateOf(1) }
