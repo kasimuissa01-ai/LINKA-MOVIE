@@ -127,7 +127,8 @@ class AdminViewModel(
         releaseYear: Int = 2026,
         rating: Double = 4.8,
         isFeatured: Boolean = false,
-        episodes: List<Episode> = emptyList()
+        episodes: List<Episode> = emptyList(),
+        episodeUris: Map<String, android.net.Uri> = emptyMap()
     ) {
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
         val sanitizedTitle = title.lowercase().replace(Regex("[^a-z0-9]"), "_").replace(Regex("_+"), "_")
@@ -190,6 +191,51 @@ class AdminViewModel(
                 coverKey = effectiveCoverKey,
                 coverUrl = effectiveCoverUrl
             )
+
+            // Upload any local episode video files attached to episodes
+            var processedEpisodes = movieWithCover.episodes
+            if (episodeUris.isNotEmpty()) {
+                val totalEpUploads = episodeUris.size
+                var epIndex = 0
+                val mutableEps = processedEpisodes.toMutableList()
+                for (i in mutableEps.indices) {
+                    val ep = mutableEps[i]
+                    val uri = episodeUris[ep.id]
+                    if (uri != null) {
+                        epIndex++
+                        try {
+                            _uploadState.value = UploadProgressState(
+                                isUploading = true,
+                                overallProgress = 0.1f + (epIndex.toFloat() / (totalEpUploads + 1)) * 0.7f,
+                                statusMessage = "Uploading Episode ${ep.episodeNumber} ($epIndex/$totalEpUploads) to Cloudflare R2..."
+                            )
+                            val customFilename = "${sanitizedTitle}_s${ep.seasonNumber}e${ep.episodeNumber}.mp4"
+                            val uploadResult = repository.uploadMovieVideoWithRender(
+                                context = context,
+                                videoUri = uri,
+                                customFilename = customFilename
+                            ) { progressPct, statusMsg ->
+                                val fraction = (progressPct / 100f).coerceIn(0f, 1f)
+                                _uploadState.value = _uploadState.value.copy(
+                                    statusMessage = "S${ep.seasonNumber}E${ep.episodeNumber}: $statusMsg"
+                                )
+                            }
+                            val cleanKey = R2UrlUtils.extractCleanVideoKey(uploadResult.key, uploadResult.url)
+                            val publicUrl = R2UrlUtils.buildUrl(cleanKey)
+                            mutableEps[i] = ep.copy(
+                                videoKey = cleanKey,
+                                videoStreamUrl = publicUrl
+                            )
+                            Log.i("AdminViewModel", "Episode ${ep.episodeNumber} uploaded to R2: $cleanKey")
+                        } catch (e: Exception) {
+                            Log.e("AdminViewModel", "Failed uploading episode ${ep.episodeNumber}: ${e.message}")
+                        }
+                    }
+                }
+                processedEpisodes = mutableEps
+            }
+
+            val movieWithEpisodes = movieWithCover.copy(episodes = processedEpisodes)
             val isLocalVideoUri = streamUrl.startsWith("content://") || streamUrl.startsWith("file://")
 
             if (isLocalVideoUri) {
@@ -220,7 +266,7 @@ class AdminViewModel(
                     val cleanKey = R2UrlUtils.extractCleanVideoKey(uploadResult.key, uploadResult.url)
                     val publicR2Url = R2UrlUtils.buildUrl(cleanKey)
 
-                    val movieToSave = movieWithCover.copy(
+                    val movieToSave = movieWithEpisodes.copy(
                         videoKey = cleanKey,
                         videoStreamUrl = publicR2Url,
                         uploadStatus = "completed"
@@ -246,10 +292,10 @@ class AdminViewModel(
             } else {
                 // Direct stream URL / R2 link / catalog entry
                 try {
-                    val canonicalKey = R2UrlUtils.extractCleanVideoKey(movieWithCover.videoKey, cleanStream)
+                    val canonicalKey = R2UrlUtils.extractCleanVideoKey(movieWithEpisodes.videoKey, cleanStream)
                     val canonicalStream = if (canonicalKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalKey) else cleanStream
 
-                    val movieToSave = movieWithCover.copy(
+                    val movieToSave = movieWithEpisodes.copy(
                         videoKey = canonicalKey,
                         videoStreamUrl = canonicalStream,
                         uploadStatus = "completed"
@@ -372,14 +418,81 @@ class AdminViewModel(
 
     fun updateMovie(
         movie: Movie,
-        context: android.content.Context? = null
+        context: android.content.Context? = null,
+        episodeUris: Map<String, android.net.Uri> = emptyMap()
     ) {
         val canonicalVideoKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
         val effectiveStream = if (canonicalVideoKey.isNotBlank()) R2UrlUtils.buildUrl(canonicalVideoKey) else movie.videoStreamUrl
 
         viewModelScope.launch {
             val latestMovie = repository.getMovieById(movie.id)
-            val effectiveEpisodes = if (movie.episodes.isNotEmpty()) movie.episodes else (latestMovie?.episodes ?: emptyList())
+            
+            // Safely merge episodes to prevent overwriting already uploaded R2 keys
+            val mergedEpisodesMap = mutableMapOf<String, Episode>()
+            latestMovie?.episodes?.forEach { ep ->
+                mergedEpisodesMap["${ep.seasonNumber}_${ep.episodeNumber}"] = ep
+            }
+            movie.episodes.forEach { newEp ->
+                val key = "${newEp.seasonNumber}_${newEp.episodeNumber}"
+                val existingEp = mergedEpisodesMap[key]
+                if (existingEp != null) {
+                    mergedEpisodesMap[key] = newEp.copy(
+                        videoKey = if (newEp.videoKey.isNotBlank()) newEp.videoKey else existingEp.videoKey,
+                        videoStreamUrl = if (newEp.videoStreamUrl.isNotBlank()) newEp.videoStreamUrl else existingEp.videoStreamUrl,
+                        fileSizeMb = if (newEp.fileSizeMb > 0) newEp.fileSizeMb else existingEp.fileSizeMb
+                    )
+                } else {
+                    mergedEpisodesMap[key] = newEp
+                }
+            }
+            var effectiveEpisodes = if (mergedEpisodesMap.isNotEmpty()) {
+                mergedEpisodesMap.values.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+            } else {
+                latestMovie?.episodes ?: movie.episodes
+            }
+
+            // Upload any pending episode videos to Cloudflare R2
+            if (episodeUris.isNotEmpty() && context != null) {
+                val sanitizedTitle = movie.title.lowercase().replace(Regex("[^a-z0-9]"), "_")
+                val mutableEps = effectiveEpisodes.toMutableList()
+                val totalUploads = episodeUris.size
+                var uploadIdx = 0
+                for (i in mutableEps.indices) {
+                    val ep = mutableEps[i]
+                    val uri = episodeUris[ep.id]
+                    if (uri != null) {
+                        uploadIdx++
+                        try {
+                            _uploadState.value = UploadProgressState(
+                                isUploading = true,
+                                overallProgress = 0.1f + (uploadIdx.toFloat() / (totalUploads + 1)) * 0.8f,
+                                statusMessage = "Uploading S${ep.seasonNumber}E${ep.episodeNumber} to Cloudflare R2 ($uploadIdx/$totalUploads)..."
+                            )
+                            val customFilename = "${sanitizedTitle}_s${ep.seasonNumber}e${ep.episodeNumber}.mp4"
+                            val uploadResult = repository.uploadMovieVideoWithRender(
+                                context = context,
+                                videoUri = uri,
+                                customFilename = customFilename
+                            ) { progressPct, statusMsg ->
+                                val fraction = (progressPct / 100f).coerceIn(0f, 1f)
+                                _uploadState.value = _uploadState.value.copy(
+                                    statusMessage = "S${ep.seasonNumber}E${ep.episodeNumber}: $statusMsg"
+                                )
+                            }
+                            val cleanKey = R2UrlUtils.extractCleanVideoKey(uploadResult.key, uploadResult.url)
+                            val publicUrl = R2UrlUtils.buildUrl(cleanKey)
+                            mutableEps[i] = ep.copy(
+                                videoKey = cleanKey,
+                                videoStreamUrl = publicUrl
+                            )
+                            Log.i("AdminViewModel", "Updated movie episode ${ep.episodeNumber} uploaded to R2: $cleanKey")
+                        } catch (e: Exception) {
+                            Log.e("AdminViewModel", "Episode upload failed: ${e.message}")
+                        }
+                    }
+                }
+                effectiveEpisodes = mutableEps
+            }
 
             var finalCoverKey = R2UrlUtils.extractKeyFromAnyUrl(if (movie.coverKey.isNotBlank()) movie.coverKey else movie.coverUrl)
             var finalCoverUrl = movie.coverUrl

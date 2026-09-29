@@ -168,7 +168,7 @@ fun MovieDetailScreen(
 ) {
     val downloads by downloadViewModel.downloads.collectAsState()
     val episodeProgressMap by downloadViewModel.episodeProgressMap.collectAsState()
-    val downloadItem = downloads.find { it.movieId == movie.id }
+    val downloadItem = downloads.find { it.movieId == movie.id && it.episodeId.isNullOrBlank() }
     val context = LocalContext.current
     val activity = context as? Activity
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
@@ -659,13 +659,46 @@ fun MovieDetailScreen(
                     if (downloadItem?.status == DownloadStatus.DOWNLOADING) {
                         Spacer(modifier = Modifier.height(10.dp))
                         LinearProgressIndicator(
-                            progress = downloadItem.progress,
+                            progress = { downloadItem.progress },
                             color = CinematicRed,
                             trackColor = SurfaceElevated,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(4.dp)
                                 .clip(RoundedCornerShape(2.dp))
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        val dBytes = downloadItem.downloadedBytes
+                        val tBytes = downloadItem.totalBytes
+                        val pct = (downloadItem.progress * 100).toInt()
+                        Text(
+                            text = if (tBytes > 0) "${formatBytes(dBytes)} / ${formatBytes(tBytes)} ($pct%)" else "${formatBytes(dBytes)} downloaded ($pct%)",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    // Episodes Section right under the download button for series
+                    if (movie.episodes.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(20.dp))
+                        MovieEpisodesSection(
+                            movie = movie,
+                            downloads = downloads,
+                            episodeProgressMap = episodeProgressMap,
+                            selectedEpisodeId = selectedEpisodeId,
+                            onSelectEpisode = { ep ->
+                                selectedEpisodeId = ep.id
+                            },
+                            onPlayEpisode = { ep ->
+                                selectedEpisodeId = ep.id
+                                onPlayFullscreenClick(movie, 0L, ep.id)
+                            },
+                            onDownloadEpisode = { ep ->
+                                downloadViewModel.startDownload(movie, context, ep)
+                            },
+                            onCancelDownloadEpisode = { ep ->
+                                downloadViewModel.cancelEpisodeDownload(movie.id, ep.id, context)
+                            }
                         )
                     }
 
@@ -721,30 +754,6 @@ fun MovieDetailScreen(
                         originalDescription = movie.description,
                         movieTitle = movie.title
                     )
-
-                    // Episodes & Seasons Section (for Series)
-                    if (movie.episodes.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(24.dp))
-                        MovieEpisodesSection(
-                            movie = movie,
-                            downloads = downloads,
-                            episodeProgressMap = episodeProgressMap,
-                            selectedEpisodeId = selectedEpisodeId,
-                            onSelectEpisode = { ep ->
-                                selectedEpisodeId = ep.id
-                            },
-                            onPlayEpisode = { ep ->
-                                selectedEpisodeId = ep.id
-                                onPlayFullscreenClick(movie, 0L, ep.id)
-                            },
-                            onDownloadEpisode = { ep ->
-                                downloadViewModel.startDownload(movie, context, ep)
-                            },
-                            onCancelDownloadEpisode = { ep ->
-                                downloadViewModel.cancelEpisodeDownload(movie.id, ep.id, context)
-                            }
-                        )
-                    }
 
                     // Cast Section
                     if (movie.cast.isNotEmpty()) {
@@ -1933,6 +1942,242 @@ fun TabbedDropdownEpisodeSelector(
     }
 }
 
+/**
+ * Clean, compact box card with episode number (no cover image),
+ * duration, size, offline status, play action, and real-time download status.
+ */
+@Composable
+fun EpisodeBoxCard(
+    episode: Episode,
+    movie: Movie,
+    isSelected: Boolean = false,
+    downloadItem: DownloadItem?,
+    workProgress: EpisodeDownloadProgress? = null,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+    onCancelDownload: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val isDownloading = workProgress?.isDownloading == true || downloadItem?.status == DownloadStatus.DOWNLOADING
+    val isCompleted = workProgress?.isCompleted == true || downloadItem?.status == DownloadStatus.COMPLETED
+
+    val progressFraction = when {
+        isCompleted -> 1.0f
+        workProgress?.isDownloading == true -> workProgress.progressFraction
+        downloadItem?.status == DownloadStatus.DOWNLOADING -> downloadItem.progress
+        else -> 0f
+    }.coerceIn(0f, 1f)
+
+    val progressPercent = (progressFraction * 100).toInt()
+
+    val bytesDownloaded = when {
+        workProgress != null && workProgress.bytesDownloaded > 0L -> workProgress.bytesDownloaded
+        downloadItem != null && downloadItem.downloadedBytes > 0L -> downloadItem.downloadedBytes
+        else -> (progressFraction * episode.fileSizeMb * 1024L * 1024L).toLong()
+    }
+
+    val totalBytes = when {
+        workProgress != null && workProgress.totalBytes > 0L -> workProgress.totalBytes
+        downloadItem != null && downloadItem.totalBytes > 0L -> downloadItem.totalBytes
+        episode.fileSizeMb > 0 -> episode.fileSizeMb * 1024L * 1024L
+        else -> 0L
+    }
+
+    Surface(
+        color = if (isSelected) SurfaceElevated else SurfaceDark,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(
+            1.dp,
+            when {
+                isSelected -> CinematicRed
+                isDownloading -> CinematicRed.copy(alpha = 0.6f)
+                isCompleted -> Color(0xFF4CAF50).copy(alpha = 0.5f)
+                else -> Color.White.copy(alpha = 0.08f)
+            }
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { onPlay() }
+            .testTag("detail_episode_box_card_${episode.episodeNumber}")
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Little box card with number episode
+                Surface(
+                    color = if (isSelected) CinematicRed else if (isCompleted) Color(0xFF1B5E20) else SurfaceElevated,
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isSelected) CinematicRed else if (isCompleted) Color(0xFF4CAF50) else Color.White.copy(alpha = 0.12f)
+                    ),
+                    modifier = Modifier.size(46.dp)
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "EP",
+                                color = if (isSelected || isCompleted) Color.White.copy(alpha = 0.7f) else TextSecondary,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "${episode.episodeNumber}",
+                                color = if (isSelected || isCompleted) Color.White else TextPrimary,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                // Episode Title and details
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = episode.title.ifBlank { "Episode ${episode.episodeNumber}" },
+                        color = TextPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "${episode.durationMinutes} min • ${episode.fileSizeMb} MB",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                        if (isCompleted) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                color = Color(0xFF4CAF50).copy(alpha = 0.18f),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = "Offline Ready",
+                                    color = Color(0xFF81C784),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
+                        } else if (isDownloading) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                color = CinematicRed.copy(alpha = 0.18f),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = "Downloading $progressPercent%",
+                                    color = CinematicRed,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Action buttons: Download status / Play
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isDownloading) {
+                        IconButton(
+                            onClick = { onCancelDownload?.invoke() },
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancel Download",
+                                tint = CinematicRed,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    } else if (isCompleted) {
+                        IconButton(
+                            onClick = {},
+                            enabled = false,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Downloaded Offline",
+                                tint = Color(0xFF4CAF50),
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    } else {
+                        IconButton(
+                            onClick = onDownload,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = "Download Episode",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        onClick = onPlay,
+                        modifier = Modifier.size(40.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Play Episode",
+                            tint = if (isSelected) CinematicRed else Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+            }
+
+            // Real-time download progress bar and detailed byte status
+            if (isDownloading) {
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { progressFraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = CinematicRed,
+                    trackColor = SurfaceElevated
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (totalBytes > 0) "${formatBytes(bytesDownloaded)} / ${formatBytes(totalBytes)} ($progressPercent%)" else "${formatBytes(bytesDownloaded)} downloaded ($progressPercent%)",
+                        color = TextSecondary,
+                        fontSize = 10.sp
+                    )
+                    val speed = workProgress?.speedText.orEmpty()
+                    Text(
+                        text = if (speed.isNotBlank()) speed else "Downloading...",
+                        color = AmberGold,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun MovieEpisodesSection(
     movie: Movie,
@@ -1946,7 +2191,8 @@ fun MovieEpisodesSection(
     modifier: Modifier = Modifier
 ) {
     val seasons = remember(movie.episodes) {
-        movie.episodes.map { it.seasonNumber }.distinct().sorted()
+        val list = movie.episodes.map { it.seasonNumber }.distinct().sorted()
+        if (list.isEmpty()) listOf(1) else list
     }
     var selectedSeason by remember(movie.id) {
         mutableStateOf(seasons.firstOrNull() ?: 1)
@@ -1956,11 +2202,8 @@ fun MovieEpisodesSection(
         movie.episodes.filter { it.seasonNumber == selectedSeason }.sortedBy { it.episodeNumber }
     }
 
-    // View mode toggle: Grid (default & recommended) or List
-    var isGridView by rememberSaveable { mutableStateOf(true) }
-
     Column(modifier = modifier.fillMaxWidth()) {
-        // Section Header with Title, Count, and Layout Mode Switcher
+        // Section Header with Title and Count
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1975,74 +2218,24 @@ fun MovieEpisodesSection(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Episodes & Seasons",
+                    text = "Episodes",
                     color = TextPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Surface(
+                color = CinematicRed.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(6.dp)
             ) {
-                Surface(
-                    color = CinematicRed.copy(alpha = 0.15f),
-                    shape = RoundedCornerShape(6.dp)
-                ) {
-                    Text(
-                        text = "${movie.episodes.size} Episodes",
-                        color = CinematicRed,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
-
-                // Grid / List View Toggle Pills
-                Surface(
-                    color = SurfaceDark,
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
-                ) {
-                    Row(
-                        modifier = Modifier.padding(2.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            color = if (isGridView) CinematicRed else Color.Transparent,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier
-                                .clickable { isGridView = true }
-                                .testTag("toggle_grid_episodes_view")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.GridView,
-                                contentDescription = "Grid Layout",
-                                tint = if (isGridView) Color.White else TextSecondary,
-                                modifier = Modifier
-                                    .padding(5.dp)
-                                    .size(16.dp)
-                            )
-                        }
-                        Surface(
-                            color = if (!isGridView) CinematicRed else Color.Transparent,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier
-                                .clickable { isGridView = false }
-                                .testTag("toggle_list_episodes_view")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ViewList,
-                                contentDescription = "List Layout",
-                                tint = if (!isGridView) Color.White else TextSecondary,
-                                modifier = Modifier
-                                    .padding(5.dp)
-                                    .size(16.dp)
-                            )
-                        }
-                    }
-                }
+                Text(
+                    text = "${movie.episodes.size} Total",
+                    color = CinematicRed,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
             }
         }
 
@@ -2075,75 +2268,32 @@ fun MovieEpisodesSection(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        // Main Episodes Container (Scrollable 2-Column Grid or Rich List)
-        if (isGridView) {
-            val chunkedEpisodes = remember(episodesInSeason) {
-                episodesInSeason.chunked(2)
-            }
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                chunkedEpisodes.forEach { rowEpisodes ->
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        rowEpisodes.forEach { ep ->
-                            val epDownload = downloads.find {
-                                (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.movieId == movie.id
-                            }
-                            val epWorkProgress = episodeProgressMap[ep.id]
-
-                            Box(modifier = Modifier.weight(1f)) {
-                                EpisodeGridCard(
-                                    episode = ep,
-                                    movie = movie,
-                                    isSelected = (ep.id == selectedEpisodeId),
-                                    downloadItem = epDownload,
-                                    workProgress = epWorkProgress,
-                                    onPlay = {
-                                        onSelectEpisode?.invoke(ep)
-                                        onPlayEpisode(ep)
-                                    },
-                                    onDownload = { onDownloadEpisode(ep) },
-                                    onCancelDownload = { onCancelDownloadEpisode?.invoke(ep) }
-                                )
-                            }
-                        }
-                        if (rowEpisodes.size == 1) {
-                            Spacer(modifier = Modifier.weight(1f))
-                        }
-                    }
+        // Main Episodes Container: Clean Vertical Scrolled List of Little Box Cards
+        Column(
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            episodesInSeason.forEach { ep ->
+                val epDownload = downloads.find {
+                    (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.movieId == movie.id
                 }
-            }
-        } else {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                episodesInSeason.forEach { ep ->
-                    val epDownload = downloads.find {
-                        (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.movieId == movie.id
-                    }
-                    val epWorkProgress = episodeProgressMap[ep.id]
+                val epWorkProgress = episodeProgressMap[ep.id]
 
-                    EpisodeDetailCard(
-                        episode = ep,
-                        movie = movie,
-                        isSelected = (ep.id == selectedEpisodeId),
-                        downloadItem = epDownload,
-                        workProgress = epWorkProgress,
-                        onPlay = {
-                            onSelectEpisode?.invoke(ep)
-                            onPlayEpisode(ep)
-                        },
-                        onDownload = { onDownloadEpisode(ep) },
-                        onCancelDownload = { onCancelDownloadEpisode?.invoke(ep) }
-                    )
-                }
+                EpisodeBoxCard(
+                    episode = ep,
+                    movie = movie,
+                    isSelected = (ep.id == selectedEpisodeId),
+                    downloadItem = epDownload,
+                    workProgress = epWorkProgress,
+                    onPlay = {
+                        onSelectEpisode?.invoke(ep)
+                        onPlayEpisode(ep)
+                    },
+                    onDownload = { onDownloadEpisode(ep) },
+                    onCancelDownload = { onCancelDownloadEpisode?.invoke(ep) }
+                )
             }
         }
     }

@@ -176,6 +176,7 @@ fun AdminAddEditMovieScreen(
     var showEpisodeDialog by remember { mutableStateOf(false) }
     var episodeBeingEdited by remember { mutableStateOf<Episode?>(null) }
     var activeSeasonTab by remember { mutableStateOf(1) }
+    var pendingEpisodeUris by remember { mutableStateOf<Map<String, Uri>>(emptyMap()) }
 
     // Video Gallery Picker State
     var selectedVideoUri by remember { mutableStateOf<Uri?>(null) }
@@ -1769,8 +1770,7 @@ fun AdminAddEditMovieScreen(
                             isFeatured = isFeaturedOnCarousel,
                             episodes = episodesList
                         )
-                        adminViewModel.updateMovie(updated, context = context)
-                        onBackClick()
+                        adminViewModel.updateMovie(updated, context = context, episodeUris = pendingEpisodeUris)
                     }
                 } else {
                     adminViewModel.addMovieWithMultipartUpload(
@@ -1784,7 +1784,8 @@ fun AdminAddEditMovieScreen(
                         releaseYear = year,
                         rating = rate,
                         isFeatured = isFeaturedOnCarousel,
-                        episodes = episodesList
+                        episodes = episodesList,
+                        episodeUris = pendingEpisodeUris
                     )
                 }
             },
@@ -1880,8 +1881,8 @@ fun AdminAddEditMovieScreen(
                 val sorted = current.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
                 episodesList = sorted
 
-                if (existingMovie != null) {
-                    adminViewModel.addOrUpdateEpisode(context, existingMovie, ep, videoUri)
+                if (videoUri != null) {
+                    pendingEpisodeUris = pendingEpisodeUris + (ep.id to videoUri)
                 }
             }
         )

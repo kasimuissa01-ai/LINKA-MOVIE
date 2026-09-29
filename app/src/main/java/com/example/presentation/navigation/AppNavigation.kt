@@ -314,9 +314,31 @@ fun AppNavigation(
                     val downloadList by downloadViewModel.downloads.collectAsState()
 
                     val foundMovie = movieUiState.allMovies.find { it.id == movieId }
-                    val downloadItem = downloadList.find { it.movieId == movieId }
+                    val downloadItem = downloadList.find {
+                        if (!episodeId.isNullOrBlank()) {
+                            (it.episodeId == episodeId || it.id == "${movieId}_ep_${episodeId}") && it.movieId == movieId
+                        } else {
+                            it.movieId == movieId
+                        }
+                    }
 
                     val effectiveMovie = foundMovie ?: downloadItem?.let { item ->
+                        val offlineEpisodes = if (!episodeId.isNullOrBlank()) {
+                            listOf(
+                                com.example.domain.model.Episode(
+                                    id = episodeId,
+                                    movieId = item.movieId,
+                                    title = item.episodeTitle ?: "Episode ${item.episodeNumber ?: 1}",
+                                    episodeNumber = item.episodeNumber ?: 1,
+                                    seasonNumber = item.seasonNumber ?: 1,
+                                    videoKey = "",
+                                    videoStreamUrl = item.localFilePath,
+                                    durationMinutes = 45,
+                                    fileSizeMb = (item.totalBytes / (1024 * 1024L)).coerceAtLeast(1L)
+                                )
+                            )
+                        } else emptyList()
+
                         Movie(
                             id = item.movieId,
                             title = item.movieTitle,
@@ -330,7 +352,8 @@ fun AppNavigation(
                             releaseYear = 2025,
                             rating = 8.5,
                             cast = emptyList(),
-                            isFeatured = false
+                            isFeatured = false,
+                            episodes = offlineEpisodes
                         )
                     }
 

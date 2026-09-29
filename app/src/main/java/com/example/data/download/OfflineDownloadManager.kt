@@ -144,7 +144,7 @@ class OfflineDownloadManager(
 
                     if (belongsToItem) {
                         Log.d(TAG, "Verified stored filePath from Room for movie $movieId (ep=$episodeId): ${storedFile.absolutePath} ($fileSize bytes)")
-                        return@withContext storedFile.toURI().toString()
+                        return@withContext android.net.Uri.fromFile(storedFile).toString()
                     }
                 }
             }
@@ -158,7 +158,7 @@ class OfflineDownloadManager(
 
             if (candidateFile != null) {
                 val fileSize = candidateFile.length()
-                if (entity.localFilePath != candidateFile.absolutePath) {
+                if (entity != null && entity.localFilePath != candidateFile.absolutePath) {
                     downloadDao.updateDownloadProgressAndPath(
                         id = entity.id,
                         progress = 1.0f,
@@ -168,17 +168,39 @@ class OfflineDownloadManager(
                     )
                 }
                 Log.d(TAG, "Verified canonical file available for movie $movieId (ep=$episodeId): ${candidateFile.length()} bytes")
-                return@withContext candidateFile.toURI().toString()
+                return@withContext android.net.Uri.fromFile(candidateFile).toString()
             }
 
-            Log.w(TAG, "Movie $movieId (ep=$episodeId) marked COMPLETED in Room but local file missing or corrupt.")
-            downloadDao.updateStatus(entity.id, DownloadStatus.FAILED.name)
+            if (entity != null) {
+                Log.w(TAG, "Movie $movieId (ep=$episodeId) marked COMPLETED in Room but local file missing or corrupt.")
+                downloadDao.updateStatus(entity.id, DownloadStatus.FAILED.name)
+            }
         }
 
-        // Clean up unverified or corrupt partial file only if not actively downloading
+        // 3. Fallback: even if Room record is missing or not marked COMPLETED, if valid offline file exists on disk, use it!
+        val fallbackCandidate = when {
+            finalFile.exists() && finalFile.length() >= 1024 * 1024L -> finalFile
+            internalFile.exists() && internalFile.length() >= 1024 * 1024L -> internalFile
+            else -> null
+        }
+        if (fallbackCandidate != null) {
+            val fileSize = fallbackCandidate.length()
+            val downloadId = if (!episodeId.isNullOrBlank()) "${movieId}_ep_${episodeId}" else movieId
+            downloadDao.updateDownloadProgressAndPath(
+                id = downloadId,
+                progress = 1.0f,
+                status = DownloadStatus.COMPLETED.name,
+                bytes = fileSize,
+                localPath = fallbackCandidate.absolutePath
+            )
+            Log.d(TAG, "Recovered offline playback from disk for $downloadId: ${fallbackCandidate.absolutePath} ($fileSize bytes)")
+            return@withContext android.net.Uri.fromFile(fallbackCandidate).toString()
+        }
+
+        // Clean up only if file is a tiny corrupt stub (< 1MB) and not actively downloading
         val activeKey = if (!episodeId.isNullOrBlank()) "${movieId}_ep_${episodeId}" else movieId
-        if (finalFile.exists() && !isMarkedCompleted && activeDownloadJobs[activeKey]?.isActive != true) {
-            Log.w(TAG, "Found corrupt or partial file for $activeKey. Cleaning up...")
+        if (finalFile.exists() && finalFile.length() < 1024 * 1024L && activeDownloadJobs[activeKey]?.isActive != true) {
+            Log.w(TAG, "Found incomplete stub (<1MB) for $activeKey. Cleaning up...")
             runCatching { finalFile.delete() }
         }
 
@@ -740,8 +762,8 @@ class OfflineDownloadManager(
     private suspend fun buildCandidateUrls(movie: Movie, episode: Episode? = null): List<String> = withContext(Dispatchers.IO) {
         val list = mutableListOf<String>()
 
-        val rawKey = episode?.videoKey?.takeIf { it.isNotBlank() } ?: movie.videoKey
-        val rawStreamUrl = episode?.videoStreamUrl?.takeIf { it.isNotBlank() } ?: movie.videoStreamUrl
+        val rawKey = episode?.videoKey?.takeIf { it.isNotBlank() } ?: if (episode == null || episode.episodeNumber == 1) movie.videoKey else ""
+        val rawStreamUrl = episode?.videoStreamUrl?.takeIf { it.isNotBlank() } ?: if (episode == null || episode.episodeNumber == 1) movie.videoStreamUrl else ""
 
         // 1. Cloudflare R2 Public CDN URL if videoKey is present
         val cleanKey = R2UrlUtils.extractCleanVideoKey(rawKey, rawStreamUrl)

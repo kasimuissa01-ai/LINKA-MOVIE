@@ -292,8 +292,27 @@ class PlayerViewModel(
                     }
                 }
 
-                // 2. If it was playing an online stream, attempt failover via repository (excluding failed currentUrl):
+                // 2. If it was playing an online stream, attempt offline failover or alternative stream:
                 viewModelScope.launch {
+                    val fallbackOffline = try {
+                        repository.getDownloadManager(context).getVerifiedOfflinePlaybackUri(movie.id, episodeId)
+                    } catch (_: Exception) { null }
+                    if (fallbackOffline != null && fallbackOffline != currentUrl) {
+                        android.util.Log.i("PlayerViewModel", "Switching to verified offline video: $fallbackOffline")
+                        _uiState.value = _uiState.value.copy(
+                            isOfflinePlayback = true,
+                            currentPlaybackUrl = fallbackOffline,
+                            errorMessage = null,
+                            streamDiagnostic = null,
+                            isLoading = true,
+                            loadingStage = "Playing offline video..."
+                        )
+                        player.setMediaItem(MediaItem.fromUri(fallbackOffline))
+                        player.prepare()
+                        player.playWhenReady = true
+                        return@launch
+                    }
+
                     val fallbackUrl = repository.resolveOnlineStreamUri(movie, excludeUrl = currentUrl)
                     if (fallbackUrl.isNotBlank() && fallbackUrl != currentUrl) {
                         android.util.Log.w("PlayerViewModel", "Switching to verified stream source: $fallbackUrl")
@@ -319,17 +338,27 @@ class PlayerViewModel(
             }
         })
 
-        // Check if verified offline file exists or direct stream is available for zero-delay start
+        // 1. Check if verified offline file exists for zero-delay offline playback
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
         val filename = if (episodeId != null) "movie_${movie.id}_ep_${episodeId}.mp4" else "movie_${movie.id}.mp4"
         val localFile = java.io.File(destDir, filename)
         val internalFile = java.io.File(context.filesDir, filename)
 
+        val localCandidate = when {
+            localFile.exists() && localFile.length() >= 1024 * 1024L -> localFile
+            internalFile.exists() && internalFile.length() >= 1024 * 1024L -> internalFile
+            else -> null
+        }
+
+        val offlineUri: String? = when {
+            localCandidate != null -> android.net.Uri.fromFile(localCandidate).toString()
+            movie.videoStreamUrl.startsWith("file:") || movie.videoStreamUrl.startsWith("/") || movie.videoStreamUrl.startsWith("content:") -> movie.videoStreamUrl
+            else -> null
+        }
+
         val targetEpisode = if (episodeId != null) movie.episodes.firstOrNull { it.id == episodeId } else null
-        val directUrl = if (localFile.exists() && localFile.length() >= 1024 * 1024L) {
-            localFile.toURI().toString()
-        } else if (internalFile.exists() && internalFile.length() >= 1024 * 1024L) {
-            internalFile.toURI().toString()
+        val directUrl = if (offlineUri != null) {
+            offlineUri
         } else if (targetEpisode != null) {
             val epKey = targetEpisode.videoKey
             val epStream = targetEpisode.videoStreamUrl
@@ -344,8 +373,13 @@ class PlayerViewModel(
             R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
         }
 
-        if (directUrl.isNotBlank() && (directUrl.startsWith("http://") || directUrl.startsWith("https://") || directUrl.startsWith("file://") || directUrl.startsWith("content://"))) {
-            val isOffline = directUrl.startsWith("file://") || directUrl.startsWith("content://") || directUrl.startsWith("/")
+        if (directUrl.isNotBlank() && (directUrl.startsWith("http://") || directUrl.startsWith("https://") || directUrl.startsWith("file:") || directUrl.startsWith("content:") || directUrl.startsWith("/"))) {
+            val isOffline = directUrl.startsWith("file:") || directUrl.startsWith("content:") || directUrl.startsWith("/")
+            val parsedMediaUri = if (directUrl.startsWith("/")) {
+                android.net.Uri.fromFile(java.io.File(directUrl))
+            } else {
+                android.net.Uri.parse(directUrl)
+            }
             _uiState.value = _uiState.value.copy(
                 isOfflinePlayback = isOffline,
                 currentPlaybackUrl = directUrl,
@@ -354,7 +388,7 @@ class PlayerViewModel(
                 loadingStage = if (isOffline) "Preparing offline playback..." else "Buffering cinema stream...",
                 errorMessage = null
             )
-            player.setMediaItem(MediaItem.fromUri(directUrl))
+            player.setMediaItem(MediaItem.fromUri(parsedMediaUri))
             if (targetStartPos > 0L) {
                 player.seekTo(targetStartPos)
                 _uiState.value = _uiState.value.copy(currentPositionMs = targetStartPos)
@@ -380,7 +414,7 @@ class PlayerViewModel(
                     )
                     return@launch
                 }
-                val isOffline = playbackUrl.startsWith("file://") || playbackUrl.startsWith("/")
+                val isOffline = playbackUrl.startsWith("file:") || playbackUrl.startsWith("/") || playbackUrl.startsWith("content:")
                 _uiState.value = _uiState.value.copy(
                     isOfflinePlayback = isOffline,
                     currentPlaybackUrl = playbackUrl,
@@ -389,7 +423,12 @@ class PlayerViewModel(
                     errorMessage = null
                 )
 
-                val mediaItem = MediaItem.fromUri(playbackUrl)
+                val mediaUri = if (playbackUrl.startsWith("/")) {
+                    android.net.Uri.fromFile(java.io.File(playbackUrl))
+                } else {
+                    android.net.Uri.parse(playbackUrl)
+                }
+                val mediaItem = MediaItem.fromUri(mediaUri)
                 player.setMediaItem(mediaItem)
                 if (targetStartPos > 0L) {
                     player.seekTo(targetStartPos)
@@ -417,7 +456,7 @@ class PlayerViewModel(
                     loadingStage = "Buffering cinema stream..."
                 )
                 val playbackUrl = repository.resolvePlaybackUri(movie, context, episodeId)
-                val isOffline = playbackUrl.startsWith("file://") || playbackUrl.startsWith("/")
+                val isOffline = playbackUrl.startsWith("file:") || playbackUrl.startsWith("/") || playbackUrl.startsWith("content:")
                 val positionKey = if (episodeId != null) "${movie.id}_ep_${episodeId}" else movie.id
                 val resumePos = getMovieLastPosition(positionKey)
                 _uiState.value = _uiState.value.copy(
@@ -427,7 +466,12 @@ class PlayerViewModel(
                     loadingStage = if (isOffline) "Preparing offline playback..." else "Buffering cinema stream...",
                     errorMessage = null
                 )
-                player.setMediaItem(MediaItem.fromUri(playbackUrl))
+                val mediaUri = if (playbackUrl.startsWith("/")) {
+                    android.net.Uri.fromFile(java.io.File(playbackUrl))
+                } else {
+                    android.net.Uri.parse(playbackUrl)
+                }
+                player.setMediaItem(MediaItem.fromUri(mediaUri))
                 if (resumePos > 0L) {
                     player.seekTo(resumePos)
                 }
