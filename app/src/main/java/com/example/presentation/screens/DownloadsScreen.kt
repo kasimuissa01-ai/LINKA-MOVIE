@@ -315,7 +315,7 @@ fun DownloadsScreen(
                             downloadViewModel.retryDownload(item, context)
                         },
                         onDeleteClick = {
-                            downloadViewModel.deleteDownload(item.id)
+                            downloadViewModel.deleteDownload(item.id, item.movieId, item.episodeId, context)
                         }
                     )
                 }

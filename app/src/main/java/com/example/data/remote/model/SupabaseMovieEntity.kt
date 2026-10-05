@@ -71,6 +71,9 @@ data class SupabaseMovieEntity(
     @Json(name = "episodes")
     val episodes: List<Episode> = emptyList(),
 
+    @Json(name = "is_swahili_translated")
+    val isSwahiliTranslated: Boolean = true,
+
     @Json(name = "created_at")
     val createdAt: String? = null,
 
@@ -110,7 +113,8 @@ data class SupabaseMovieEntity(
             isFeatured = isFeatured,
             uploadStatus = uploadStatus,
             uploadDate = System.currentTimeMillis(),
-            episodes = episodes
+            episodes = episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
+            isSwahiliTranslated = isSwahiliTranslated
         )
     }
 
@@ -149,9 +153,11 @@ data class SupabaseMovieEntity(
             put("cast_members", JSONArray(castMembers))
             put("is_featured", isFeatured)
             put("view_count", viewCount)
+            put("is_swahili_translated", isSwahiliTranslated)
             if (episodes.isNotEmpty()) {
+                val sortedEpisodes = episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
                 val epArray = JSONArray()
-                for (ep in episodes) {
+                for (ep in sortedEpisodes) {
                     val epObj = JSONObject().apply {
                         put("id", ep.id)
                         put("movieId", ep.movieId)
@@ -197,7 +203,8 @@ data class SupabaseMovieEntity(
                 rating = movie.rating,
                 castMembers = movie.cast,
                 isFeatured = movie.isFeatured,
-                episodes = movie.episodes
+                episodes = movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
+                isSwahiliTranslated = movie.isSwahiliTranslated
             )
         }
 
@@ -360,6 +367,7 @@ data class SupabaseMovieEntity(
                 isFeatured = obj.optBoolean("is_featured", false),
                 viewCount = obj.optLong("view_count", 0L),
                 episodes = parsedEpisodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
+                isSwahiliTranslated = obj.optBoolean("is_swahili_translated", true),
                 createdAt = obj.optString("created_at").takeIf { it.isNotBlank() },
                 updatedAt = obj.optString("updated_at").takeIf { it.isNotBlank() }
             )

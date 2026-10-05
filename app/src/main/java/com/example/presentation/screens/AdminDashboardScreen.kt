@@ -380,6 +380,21 @@ fun AdminDashboardScreen(
                                             )
                                         }
                                     }
+                                    if (movie.isSwahiliTranslated) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            color = Color(0x33FFB300),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "Imetafsiriwa",
+                                                color = Color(0xFFFFB300),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
 

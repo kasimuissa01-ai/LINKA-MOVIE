@@ -128,7 +128,8 @@ class AdminViewModel(
         rating: Double = 4.8,
         isFeatured: Boolean = false,
         episodes: List<Episode> = emptyList(),
-        episodeUris: Map<String, android.net.Uri> = emptyMap()
+        episodeUris: Map<String, android.net.Uri> = emptyMap(),
+        isSwahiliTranslated: Boolean = true
     ) {
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
         val sanitizedTitle = title.lowercase().replace(Regex("[^a-z0-9]"), "_").replace(Regex("_+"), "_")
@@ -153,7 +154,8 @@ class AdminViewModel(
             cast = listOf("Movie Cast"),
             isFeatured = isFeatured,
             uploadStatus = "completed",
-            episodes = episodes.map { it.copy(movieId = movieId) }.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+            episodes = episodes.map { it.copy(movieId = movieId) }.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
+            isSwahiliTranslated = isSwahiliTranslated
         )
 
         activeUploadJob?.cancel()
@@ -331,7 +333,8 @@ class AdminViewModel(
         releaseYear: Int = 2026,
         rating: Double = 4.8,
         isFeatured: Boolean = false,
-        episodes: List<Episode> = emptyList()
+        episodes: List<Episode> = emptyList(),
+        isSwahiliTranslated: Boolean = true
     ) {
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
         val sanitizedTitle = title.lowercase().replace(" ", "_")
@@ -387,7 +390,8 @@ class AdminViewModel(
                 cast = listOf("Movie Cast"),
                 isFeatured = isFeatured,
                 uploadStatus = "completed",
-                episodes = episodes.map { it.copy(movieId = movieId) }.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+                episodes = episodes.map { it.copy(movieId = movieId) }.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
+                isSwahiliTranslated = isSwahiliTranslated
             )
 
             try {

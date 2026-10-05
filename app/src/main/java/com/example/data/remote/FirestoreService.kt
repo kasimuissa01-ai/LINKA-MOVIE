@@ -166,7 +166,8 @@ class FirestoreService {
                     releaseYear = releaseYear,
                     rating = rating,
                     uploadDate = uploadedAt,
-                    episodes = episodesList
+                    episodes = episodesList.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
+                    isSwahiliTranslated = doc.getBoolean("isSwahiliTranslated") ?: true
                 )
             }
         } catch (e: Exception) {
@@ -181,9 +182,10 @@ class FirestoreService {
     suspend fun saveMovie(movie: Movie): Boolean = withContext(Dispatchers.IO) {
         try {
             val db = firestore ?: return@withContext false
-            val epJson = if (movie.episodes.isNotEmpty()) {
+            val sortedEpisodes = movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+            val epJson = if (sortedEpisodes.isNotEmpty()) {
                 val arr = org.json.JSONArray()
-                for (ep in movie.episodes) {
+                for (ep in sortedEpisodes) {
                     val obj = org.json.JSONObject().apply {
                         put("id", ep.id)
                         put("movieId", ep.movieId)
@@ -201,7 +203,7 @@ class FirestoreService {
                 arr.toString()
             } else ""
 
-            val epMapList = movie.episodes.map { ep ->
+            val epMapList = sortedEpisodes.map { ep ->
                 hashMapOf(
                     "id" to ep.id,
                     "movieId" to ep.movieId,
@@ -231,7 +233,8 @@ class FirestoreService {
                 "rating" to movie.rating,
                 "releaseYear" to movie.releaseYear,
                 "episodes" to epMapList,
-                "episodesJson" to epJson
+                "episodesJson" to epJson,
+                "isSwahiliTranslated" to movie.isSwahiliTranslated
             )
             db.collection(COLLECTION_MOVIES).document(movie.id).set(data, SetOptions.merge()).await()
             return@withContext true

@@ -187,18 +187,20 @@ fun MoviePosterCard(
                 }
             }
 
-            // Quality tag top left
+            // Translation badge top left (Imetafsiriwa)
             Surface(
-                color = CinematicRed,
+                color = if (movie.isSwahiliTranslated) CinematicRed else Color(0xFF282834),
                 shape = RoundedCornerShape(topStart = 12.dp, bottomEnd = 8.dp),
-                modifier = Modifier.align(Alignment.TopStart)
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .testTag("tag_imetafsiriwa_${movie.id}")
             ) {
                 Text(
-                    text = "4K HDR",
+                    text = if (movie.isSwahiliTranslated) "Imetafsiriwa" else "English",
                     color = Color.White,
-                    fontSize = 9.sp,
+                    fontSize = 8.5.sp,
                     fontWeight = FontWeight.Black,
-                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
                 )
             }
         }

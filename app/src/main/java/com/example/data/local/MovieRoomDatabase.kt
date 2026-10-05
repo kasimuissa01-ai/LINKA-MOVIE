@@ -11,7 +11,7 @@ import androidx.room.RoomDatabase
         DownloadEntity::class,
         UploadStateEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class MovieRoomDatabase : RoomDatabase() {

@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Movie
 import com.example.domain.model.Episode
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.VideoFile
@@ -166,6 +167,9 @@ fun AdminAddEditMovieScreen(
     }
     var isFeaturedOnCarousel by remember {
         mutableStateOf(existingMovie?.isFeatured ?: true)
+    }
+    var isSwahiliTranslated by remember(existingMovie?.id) {
+        mutableStateOf(existingMovie?.isSwahiliTranslated ?: true)
     }
     var fileSizeMb by remember { mutableStateOf(existingMovie?.fileSizeMb?.toString() ?: "480") }
     var releaseYear by remember { mutableStateOf(existingMovie?.releaseYear?.toString() ?: "2024") }
@@ -1238,6 +1242,59 @@ fun AdminAddEditMovieScreen(
             }
         }
 
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Swahili Translation Feature Toggle
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Translate,
+                        contentDescription = null,
+                        tint = AmberGold,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Imetafsiriwa Kiswahili",
+                            color = TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (isSwahiliTranslated) "Movie imetafsiriwa kwa Kiswahili (DJ Afro / Ma DJ)" else "Lugha ya asili (Haijatafsiriwa)",
+                            color = if (isSwahiliTranslated) AmberGold else TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+                Switch(
+                    checked = isSwahiliTranslated,
+                    onCheckedChange = { isSwahiliTranslated = it },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = AmberGold,
+                        uncheckedTrackColor = SurfaceElevated
+                    ),
+                    modifier = Modifier.testTag("toggle_swahili_translated")
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(14.dp))
 
         // Year, Rating & File Size Row
@@ -1669,7 +1726,8 @@ fun AdminAddEditMovieScreen(
                                     streamUrl = streamUrl,
                                     releaseYear = year,
                                     rating = rate,
-                                    isFeatured = isFeaturedOnCarousel
+                                    isFeatured = isFeaturedOnCarousel,
+                                    isSwahiliTranslated = isSwahiliTranslated
                                 )
                             },
                             modifier = Modifier.weight(1f),
@@ -1694,7 +1752,8 @@ fun AdminAddEditMovieScreen(
                                     streamUrl = streamUrl,
                                     releaseYear = year,
                                     rating = rate,
-                                    isFeatured = isFeaturedOnCarousel
+                                    isFeatured = isFeaturedOnCarousel,
+                                    isSwahiliTranslated = isSwahiliTranslated
                                 )
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = CinematicRed),
@@ -1737,7 +1796,8 @@ fun AdminAddEditMovieScreen(
                             releaseYear = year,
                             rating = rate,
                             isFeatured = isFeaturedOnCarousel,
-                            episodes = episodesList
+                            episodes = episodesList,
+                            isSwahiliTranslated = isSwahiliTranslated
                         )
                     } else {
                         // Updating metadata or direct stream URL
@@ -1770,7 +1830,8 @@ fun AdminAddEditMovieScreen(
                             releaseYear = year,
                             rating = rate,
                             isFeatured = isFeaturedOnCarousel,
-                            episodes = episodesList
+                            episodes = episodesList,
+                            isSwahiliTranslated = isSwahiliTranslated
                         )
                         adminViewModel.updateMovie(updated, context = context, episodeUris = pendingEpisodeUris)
                     }
@@ -1787,7 +1848,8 @@ fun AdminAddEditMovieScreen(
                         rating = rate,
                         isFeatured = isFeaturedOnCarousel,
                         episodes = episodesList,
-                        episodeUris = pendingEpisodeUris
+                        episodeUris = pendingEpisodeUris,
+                        isSwahiliTranslated = isSwahiliTranslated
                     )
                 }
             },
@@ -1834,7 +1896,8 @@ fun AdminAddEditMovieScreen(
                         releaseYear = year,
                         rating = rate,
                         isFeatured = isFeaturedOnCarousel,
-                        episodes = episodesList
+                        episodes = episodesList,
+                        isSwahiliTranslated = isSwahiliTranslated
                     )
                 },
                 shape = RoundedCornerShape(12.dp),

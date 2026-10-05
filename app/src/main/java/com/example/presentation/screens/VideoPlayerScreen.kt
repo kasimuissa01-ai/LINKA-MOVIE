@@ -153,9 +153,14 @@ fun VideoPlayerScreen(
     val coroutineScope = rememberCoroutineScope()
     val uiState by playerViewModel.uiState.collectAsState()
 
-    var activeEpisodeId by remember(movie.id, episodeId) { mutableStateOf(episodeId) }
-    val currentEpisode = remember(movie, activeEpisodeId) {
-        if (!activeEpisodeId.isNullOrBlank()) movie.episodes.firstOrNull { it.id == activeEpisodeId } else null
+    val sortedEpisodes = remember(movie.episodes) {
+        movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+    }
+    var activeEpisodeId by remember(movie.id, episodeId) {
+        mutableStateOf(episodeId ?: sortedEpisodes.firstOrNull()?.id)
+    }
+    val currentEpisode = remember(movie, activeEpisodeId, sortedEpisodes) {
+        if (!activeEpisodeId.isNullOrBlank()) sortedEpisodes.firstOrNull { it.id == activeEpisodeId } else sortedEpisodes.firstOrNull()
     }
 
     var showSubtitleSheet by remember { mutableStateOf(false) }
@@ -942,7 +947,7 @@ fun VideoPlayerScreen(
                         .fillMaxWidth()
                         .heightIn(max = 300.dp)
                 ) {
-                    items(movie.episodes.sortedBy { it.episodeNumber }) { ep ->
+                    items(sortedEpisodes) { ep ->
                         val isCurrent = (ep.id == activeEpisodeId)
                         Surface(
                             color = if (isCurrent) CinematicRed.copy(alpha = 0.25f) else SurfaceDark,

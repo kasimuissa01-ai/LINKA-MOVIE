@@ -72,6 +72,7 @@ import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.VolumeMute
@@ -314,9 +315,20 @@ fun MovieDetailScreen(
         val isEpOffline = epDownload?.status == DownloadStatus.COMPLETED
         val storedEpPath = epDownload?.localFilePath?.trim().orEmpty()
 
+        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+        val baseFileName = if (targetEpisode != null) "movie_${movie.id}_ep_${targetEpisode.id}.mp4" else "movie_${movie.id}.mp4"
+        val directLocalFile = java.io.File(destDir, baseFileName)
+        val internalLocalFile = java.io.File(context.filesDir, baseFileName)
+        val directOfflineCandidate = when {
+            directLocalFile.exists() && directLocalFile.length() >= 1024 * 1024L -> directLocalFile.absolutePath
+            internalLocalFile.exists() && internalLocalFile.length() >= 1024 * 1024L -> internalLocalFile.absolutePath
+            else -> null
+        }
+
         val mediaUri = when {
             isEpOffline && storedEpPath.startsWith("content://") -> storedEpPath
             isEpOffline && storedEpPath.isNotBlank() && java.io.File(storedEpPath.removePrefix("file://")).exists() -> storedEpPath
+            directOfflineCandidate != null -> directOfflineCandidate
             targetEpisode != null -> {
                 val epKey = R2UrlUtils.extractCleanVideoKey(targetEpisode.videoKey, targetEpisode.videoStreamUrl)
                 if (epKey.isNotBlank()) R2UrlUtils.buildUrl(epKey) else targetEpisode.videoStreamUrl
@@ -604,6 +616,33 @@ fun MovieDetailScreen(
                                             Text(
                                                 text = "${movie.episodes.size} Episodes",
                                                 color = CinematicRed,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (movie.isSwahiliTranslated) {
+                                    Surface(
+                                        color = AmberGold.copy(alpha = 0.18f),
+                                        shape = RoundedCornerShape(6.dp),
+                                        border = BorderStroke(1.dp, AmberGold.copy(alpha = 0.5f))
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Translate,
+                                                contentDescription = null,
+                                                tint = AmberGold,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "Imetafsiriwa Kiswahili",
+                                                color = AmberGold,
                                                 fontSize = 11.sp,
                                                 fontWeight = FontWeight.Bold
                                             )
@@ -1554,20 +1593,24 @@ fun TabbedDropdownEpisodeSelector(
 ) {
     if (movie.episodes.isEmpty()) return
 
-    val seasons = remember(movie.episodes) {
-        movie.episodes.map { it.seasonNumber }.distinct().sorted()
+    val sortedEpisodes = remember(movie.episodes) {
+        movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+    }
+    val seasons = remember(sortedEpisodes) {
+        val list = sortedEpisodes.map { it.seasonNumber }.distinct().sorted()
+        if (list.isEmpty()) listOf(1) else list
     }
     var selectedSeason by remember(movie.id) {
         mutableStateOf(seasons.firstOrNull() ?: 1)
     }
 
-    val episodesInCurrentSeason = remember(movie.episodes, selectedSeason) {
-        movie.episodes.filter { it.seasonNumber == selectedSeason }.sortedBy { it.episodeNumber }
+    val episodesInCurrentSeason = remember(sortedEpisodes, selectedSeason) {
+        sortedEpisodes.filter { it.seasonNumber == selectedSeason }.sortedBy { it.episodeNumber }
     }
 
-    val activeEpisode = remember(movie.episodes, selectedEpisodeId) {
-        movie.episodes.firstOrNull { it.id == selectedEpisodeId }
-            ?: episodesInCurrentSeason.firstOrNull()
+    val activeEpisode = remember(sortedEpisodes, selectedEpisodeId) {
+        sortedEpisodes.firstOrNull { it.id == selectedEpisodeId }
+            ?: episodesInCurrentSeason.firstOrNull() ?: sortedEpisodes.firstOrNull()
     }
 
     var isEpisodeDropdownExpanded by remember { mutableStateOf(false) }

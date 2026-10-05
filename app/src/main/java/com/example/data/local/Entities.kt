@@ -30,7 +30,8 @@ data class MovieEntity(
     val isFeatured: Boolean = false,
     val uploadStatus: String = "completed",
     val uploadDate: Long = System.currentTimeMillis(),
-    val episodesJson: String = "" // Serialized episodes list
+    val episodesJson: String = "", // Serialized episodes list
+    val isSwahiliTranslated: Boolean = true
 ) {
     fun toDomain(): Movie {
         val parsedGenres = if (genres.isBlank()) emptyList() else genres.split(",").map { it.trim() }
@@ -87,7 +88,8 @@ data class MovieEntity(
             isFeatured = isFeatured,
             uploadStatus = uploadStatus,
             uploadDate = uploadDate,
-            episodes = parsedEpisodes
+            episodes = parsedEpisodes,
+            isSwahiliTranslated = isSwahiliTranslated
         )
     }
 
@@ -132,7 +134,8 @@ data class MovieEntity(
                 isFeatured = movie.isFeatured,
                 uploadStatus = movie.uploadStatus,
                 uploadDate = movie.uploadDate,
-                episodesJson = episodesJsonString
+                episodesJson = episodesJsonString,
+                isSwahiliTranslated = movie.isSwahiliTranslated
             )
         }
     }

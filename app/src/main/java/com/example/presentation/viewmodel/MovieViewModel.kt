@@ -64,7 +64,18 @@ class MovieViewModel(
         _searchQuery,
         _selectedGenre,
         _selectedYear
-    ) { allMovies, featured, query, genre, year ->
+    ) { rawAllMovies, rawFeatured, query, genre, year ->
+        val allMovies = rawAllMovies.map { movie ->
+            if (movie.episodes.isNotEmpty()) {
+                movie.copy(episodes = movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })))
+            } else movie
+        }
+        val featured = rawFeatured.map { movie ->
+            if (movie.episodes.isNotEmpty()) {
+                movie.copy(episodes = movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })))
+            } else movie
+        }
+
         val filteredForSearch = allMovies.filter { movie ->
             val matchesQuery = query.isBlank() ||
                     movie.title.contains(query, ignoreCase = true) ||

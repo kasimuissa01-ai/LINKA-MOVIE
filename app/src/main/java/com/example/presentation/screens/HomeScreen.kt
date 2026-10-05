@@ -2,6 +2,7 @@ package com.example.presentation.screens
 
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -489,16 +491,36 @@ fun HeroCarousel(
                             overflow = TextOverflow.Ellipsis
                         )
 
-                        Spacer(modifier = Modifier.height(if (isSmall) 3.dp else 6.dp))
-
-                        Text(
-                            text = movie.description,
-                            color = TextSecondary,
-                            fontSize = if (isSmall) 12.sp else 13.sp,
-                            maxLines = if (isSmall) 1 else 2,
-                            overflow = TextOverflow.Ellipsis,
-                            lineHeight = if (isSmall) 16.sp else 18.sp
-                        )
+                        // Attractive rounded glass label for Swahili Translation (description remains on Movie Detail screen only)
+                        if (movie.isSwahiliTranslated) {
+                            Spacer(modifier = Modifier.height(if (isSmall) 6.dp else 8.dp))
+                            Surface(
+                                color = Color.White.copy(alpha = 0.14f),
+                                shape = RoundedCornerShape(20.dp),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.38f)),
+                                modifier = Modifier.testTag("carousel_swahili_label_${movie.id}")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Translate,
+                                        contentDescription = null,
+                                        tint = AmberGold,
+                                        modifier = Modifier.size(if (isSmall) 13.dp else 15.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Imetafsiriwa Kiswahili",
+                                        color = Color.White,
+                                        fontSize = if (isSmall) 11.sp else 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        letterSpacing = 0.3.sp
+                                    )
+                                }
+                            }
+                        }
 
                         Spacer(modifier = Modifier.height(if (isSmall) 10.dp else 16.dp))
 
