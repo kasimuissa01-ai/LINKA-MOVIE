@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -78,6 +79,7 @@ fun AdminDashboardScreen(
     onBackClick: () -> Unit,
     onAddMovieClick: () -> Unit,
     onEditMovieClick: (Movie) -> Unit,
+    onAnalyticsClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val movies by adminViewModel.movies.collectAsState()
@@ -161,33 +163,62 @@ fun AdminDashboardScreen(
                     }
                 }
 
-                // Sync & Repair R2 URLs button
-                Button(
-                    onClick = {
-                        adminViewModel.repairAndSyncAllMoviesToR2 { count ->
-                            syncBannerMessage = "Successfully repaired and updated $count movies with R2 URLs in your Supabase table!"
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (uploadState.isUploading) SurfaceElevated else CinematicRed
-                    ),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    enabled = !uploadState.isUploading,
-                    modifier = Modifier.testTag("admin_sync_r2_button")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (uploadState.isUploading) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            strokeWidth = 2.dp,
+                    // Analytics Button
+                    Button(
+                        onClick = onAnalyticsClick,
+                        colors = ButtonDefaults.buttonColors(containerColor = SurfaceDark),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFFFFF)),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier.testTag("admin_analytics_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Analytics,
+                            contentDescription = null,
+                            tint = com.example.ui.theme.AmberGold,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Syncing...", color = Color.White, fontSize = 12.sp)
-                    } else {
-                        Icon(Icons.Default.Sync, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Sync R2 URLs", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "Analytics",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // Sync & Repair R2 URLs button
+                    Button(
+                        onClick = {
+                            adminViewModel.repairAndSyncAllMoviesToR2 { count ->
+                                syncBannerMessage = "Successfully repaired and updated $count movies with R2 URLs in your Supabase table!"
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (uploadState.isUploading) SurfaceElevated else CinematicRed
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        enabled = !uploadState.isUploading,
+                        modifier = Modifier.testTag("admin_sync_r2_button")
+                    ) {
+                        if (uploadState.isUploading) {
+                            CircularProgressIndicator(
+                                color = Color.White,
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Syncing...", color = Color.White, fontSize = 12.sp)
+                        } else {
+                            Icon(Icons.Default.Sync, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Sync R2 URLs", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }

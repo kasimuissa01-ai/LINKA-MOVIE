@@ -24,6 +24,7 @@ import com.example.presentation.viewmodel.AuthViewModel
 import com.example.presentation.viewmodel.DownloadViewModel
 import com.example.presentation.viewmodel.MovieViewModel
 import com.example.presentation.viewmodel.PlayerViewModel
+import com.example.data.analytics.AppAnalyticsManager
 import com.example.ui.theme.MovieRoomTheme
 import com.example.ui.theme.ObsidianBlack
 import kotlinx.coroutines.Dispatchers
@@ -135,6 +136,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        AppAnalyticsManager.getInstance(applicationContext).onAppForegrounded()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        AppAnalyticsManager.getInstance(applicationContext).onAppBackgrounded()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

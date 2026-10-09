@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -47,6 +48,7 @@ import com.example.presentation.components.AppUpdateDialog
 import com.example.presentation.components.BottomUpdateAlert
 import com.example.presentation.components.MovieDetailSkeletonScreen
 import com.example.presentation.screens.AdminAddEditMovieScreen
+import com.example.presentation.screens.AdminAnalyticsScreen
 import com.example.presentation.screens.AdminDashboardScreen
 import com.example.presentation.screens.DownloadsScreen
 import com.example.presentation.screens.HomeScreen
@@ -55,7 +57,9 @@ import com.example.presentation.screens.OnboardingAuthScreen
 import com.example.presentation.screens.ProfileScreen
 import com.example.presentation.screens.SearchScreen
 import com.example.presentation.screens.VideoPlayerScreen
+import com.example.presentation.viewmodel.AdminAnalyticsViewModel
 import com.example.presentation.viewmodel.AdminViewModel
+import com.example.data.analytics.AppAnalyticsManager
 import com.example.presentation.viewmodel.AppUpdateViewModel
 import com.example.presentation.viewmodel.AuthViewModel
 import com.example.presentation.viewmodel.DownloadViewModel
@@ -83,6 +87,7 @@ sealed class Screen(val route: String) {
         }
     }
     object AdminDashboard : Screen("admin_dashboard")
+    object AdminAnalytics : Screen("admin_analytics")
     object AdminAddMovie : Screen("admin_add_movie")
     object AdminEditMovie : Screen("admin_edit_movie/{movieId}") {
         fun createRoute(movieId: String) = "admin_edit_movie/$movieId"
@@ -109,6 +114,8 @@ fun AppNavigation(
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val adminAnalyticsViewModel = remember { AdminAnalyticsViewModel(AppAnalyticsManager.getInstance(context)) }
 
     val bottomNavItems = listOf(
         BottomNavItem("Home", Screen.Home.route, Icons.Filled.Home, Icons.Outlined.Home),
@@ -376,7 +383,19 @@ fun AppNavigation(
                         onAddMovieClick = { navController.navigate(Screen.AdminAddMovie.route) },
                         onEditMovieClick = { movie ->
                             navController.navigate(Screen.AdminEditMovie.createRoute(movie.id))
+                        },
+                        onAnalyticsClick = {
+                            navController.navigate(Screen.AdminAnalytics.route)
                         }
+                    )
+                }
+
+                // Admin Analytics Screen (Protected by Admin Auth)
+                composable(Screen.AdminAnalytics.route) {
+                    AdminAnalyticsScreen(
+                        analyticsViewModel = adminAnalyticsViewModel,
+                        authViewModel = authViewModel,
+                        onBackClick = { navController.popBackStack() }
                     )
                 }
 

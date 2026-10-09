@@ -14,6 +14,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import com.example.data.repository.MovieRepository
+import com.example.data.analytics.AppAnalyticsManager
+import com.example.data.analytics.PlaybackWatchTracker
 import com.example.domain.model.Movie
 import com.example.util.R2UrlUtils
 import com.example.util.VideoCacheManager
@@ -116,6 +118,7 @@ class PlayerViewModel(
     }
 
     private var currentEpisodeId: String? = null
+    private var watchTracker: PlaybackWatchTracker? = null
 
     fun initializePlayer(context: Context, movie: Movie, initialPositionMs: Long = 0L, episodeId: String? = null) {
         val isSameMovie = (currentMovieId == movie.id && currentEpisodeId == episodeId)
@@ -127,6 +130,15 @@ class PlayerViewModel(
             initialPositionMs
         } else {
             getMovieLastPosition(positionKey)
+        }
+
+        // Initialize or update PlaybackWatchTracker for genuine watch time analytics
+        val analyticsMgr = AppAnalyticsManager.getInstance(context)
+        if (watchTracker == null || !isSameMovie) {
+            watchTracker?.onRelease(exoPlayer)
+            watchTracker = PlaybackWatchTracker(analyticsMgr).apply {
+                startSession(movie.id, targetStartPos)
+            }
         }
 
         // If player already exists for THIS SAME movie, seek to target and ensure playback is active
@@ -185,8 +197,19 @@ class PlayerViewModel(
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _uiState.value = _uiState.value.copy(isPlaying = isPlaying)
                 if (isPlaying) {
+                    watchTracker?.onPlay(player)
                     startControlsHideTimer()
+                } else {
+                    watchTracker?.onPause(player)
                 }
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                watchTracker?.onSeekDiscontinuity(newPosition.positionMs)
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -208,6 +231,7 @@ class PlayerViewModel(
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 val currentUrl = _uiState.value.currentPlaybackUrl
                 android.util.Log.e("PlayerViewModel", "Playback error on $currentUrl: ${error.message} (code: ${error.errorCodeName})")
+                watchTracker?.onError(error.errorCodeName, error.message)
 
                 // 1. If it was playing a local offline file (file://) and failed:
                 // The local file on disk is corrupted, partial, or unreadable.
@@ -492,6 +516,7 @@ class PlayerViewModel(
             while (true) {
                 exoPlayer?.let { player ->
                     val pos = player.currentPosition.coerceAtLeast(0L)
+                    watchTracker?.onProgressTick(player)
                     _uiState.value = _uiState.value.copy(
                         currentPositionMs = pos,
                         bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L),
@@ -508,12 +533,14 @@ class PlayerViewModel(
 
     fun pause() {
         exoPlayer?.pause()
+        exoPlayer?.let { watchTracker?.onPause(it) }
         _uiState.value = _uiState.value.copy(isPlaying = false)
         showControls(keepVisible = true)
     }
 
     fun play() {
         exoPlayer?.play()
+        exoPlayer?.let { watchTracker?.onPlay(it) }
         _uiState.value = _uiState.value.copy(isPlaying = true)
         startControlsHideTimer()
     }
@@ -819,6 +846,8 @@ class PlayerViewModel(
                 currentMovieId?.let { id -> moviePositions[id] = pos }
             }
         }
+        watchTracker?.onRelease(exoPlayer)
+        watchTracker = null
         progressTrackerJob?.cancel()
         controlsTimeoutJob?.cancel()
         hudDismissJob?.cancel()
