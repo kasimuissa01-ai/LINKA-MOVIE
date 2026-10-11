@@ -68,6 +68,7 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Share
@@ -664,9 +665,15 @@ fun MovieDetailScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // Action Area: Download Movie Button
+                    val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+                    val movieBaseFileName = "movie_${movie.id}.mp4"
+                    val movieLocalFile = java.io.File(destDir, movieBaseFileName)
+                    val isMovieActuallyDownloaded = downloadItem?.status == DownloadStatus.COMPLETED &&
+                            movieLocalFile.exists() && movieLocalFile.length() >= 1024 * 1024L
+
                     Button(
                         onClick = {
-                            if (downloadItem?.status != DownloadStatus.COMPLETED) {
+                            if (!isMovieActuallyDownloaded) {
                                 downloadViewModel.startDownload(movie, context)
                             }
                         },
@@ -680,8 +687,8 @@ fun MovieDetailScreen(
                             .height(50.dp)
                             .testTag("detail_download_button")
                     ) {
-                        when (downloadItem?.status) {
-                            DownloadStatus.DOWNLOADING -> {
+                        when {
+                            downloadItem?.status == DownloadStatus.DOWNLOADING -> {
                                 CircularProgressIndicator(
                                     progress = downloadItem.progress,
                                     color = CinematicRed,
@@ -694,7 +701,7 @@ fun MovieDetailScreen(
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
-                            DownloadStatus.COMPLETED -> {
+                            isMovieActuallyDownloaded -> {
                                 Icon(
                                     Icons.Default.Check,
                                     contentDescription = "Downloaded",
@@ -702,6 +709,16 @@ fun MovieDetailScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Downloaded", fontWeight = FontWeight.SemiBold)
+                            }
+                            downloadItem?.status == DownloadStatus.PAUSED -> {
+                                Icon(Icons.Default.Download, contentDescription = "Resume Download")
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Resume Download", fontWeight = FontWeight.SemiBold)
+                            }
+                            downloadItem?.status == DownloadStatus.FAILED -> {
+                                Icon(Icons.Default.Refresh, contentDescription = "Retry Download")
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Retry Download", fontWeight = FontWeight.SemiBold)
                             }
                             else -> {
                                 Icon(Icons.Default.Download, contentDescription = "Download")

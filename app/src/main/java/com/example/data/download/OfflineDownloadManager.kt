@@ -61,6 +61,10 @@ class OfflineDownloadManager(
         .build()
 
     init {
+        managerScope.launch {
+            sanitizeCorruptDownloads()
+        }
+
         // Register listener for user actions (Pause / Cancel) directly from persistent notification shade
         OfflineDownloadService.registerActionListener { action, movieId ->
             if (movieId != null) {
@@ -73,6 +77,35 @@ class OfflineDownloadManager(
                     }
                 }
             }
+        }
+    }
+
+    private suspend fun sanitizeCorruptDownloads() = withContext(Dispatchers.IO) {
+        try {
+            val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+            val downloads = downloadDao.getAllDownloadsList()
+            for (item in downloads) {
+                val candidateFile = File(item.localFilePath)
+                val canonicalFile = File(destDir, if (!item.episodeId.isNullOrBlank()) "movie_${item.movieId}_ep_${item.episodeId}.mp4" else "movie_${item.movieId}.mp4")
+
+                if (candidateFile.exists() && candidateFile.length() < 1024 * 1024L) {
+                    runCatching { candidateFile.delete() }
+                }
+                if (canonicalFile.exists() && canonicalFile.length() < 1024 * 1024L) {
+                    runCatching { canonicalFile.delete() }
+                }
+
+                if (item.status == DownloadStatus.COMPLETED.name) {
+                    val hasValidFile = (candidateFile.exists() && candidateFile.length() >= 1024 * 1024L) ||
+                                       (canonicalFile.exists() && canonicalFile.length() >= 1024 * 1024L)
+                    if (!hasValidFile) {
+                        Log.w(TAG, "Sanitizing fake completed download for ${item.id} (${item.movieTitle}). Resetting to FAILED so user can re-download.")
+                        downloadDao.updateStatus(item.id, DownloadStatus.FAILED.name)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error sanitizing corrupt downloads: ${e.message}")
         }
     }
 
@@ -304,8 +337,8 @@ class OfflineDownloadManager(
 
         destDir.mkdirs()
 
-        // Check if already completed and valid
-        if (finalFile.exists() && finalFile.length() > 5 * 1024 * 1024L) {
+        // Check if already completed and valid (>= 1MB)
+        if (finalFile.exists() && finalFile.length() >= 1024 * 1024L) {
             val existing = if (episode != null) {
                 downloadDao.getDownloadByEpisode(movie.id, episode.id)
             } else {
@@ -315,12 +348,24 @@ class OfflineDownloadManager(
                 Log.d(TAG, "Item '${episode?.title ?: movie.title}' is already fully downloaded.")
                 return@withContext
             }
+        } else if (finalFile.exists() && finalFile.length() < 1024 * 1024L) {
+            Log.w(TAG, "Cleaning corrupt stub for $downloadId (${finalFile.length()} bytes)")
+            runCatching { finalFile.delete() }
+        }
+
+        // Clean corrupt/tiny temp files (< 1KB) left by previous broken attempts
+        if (tempFile.exists() && tempFile.length() < 1024L) {
+            runCatching { tempFile.delete() }
         }
 
         // Initialize or update Room record
         val initialExistingBytes = if (tempFile.exists()) tempFile.length() else 0L
         val effectiveSizeMb = episode?.fileSizeMb ?: movie.fileSizeMb
-        val estimatedTotalBytes: Long = (effectiveSizeMb * 1024L * 1024L).coerceAtLeast(10L * 1024L * 1024L)
+        val estimatedTotalBytes: Long = if (effectiveSizeMb > 0) {
+            effectiveSizeMb * 1024L * 1024L
+        } else {
+            50L * 1024L * 1024L
+        }
 
         val displayTitle = if (episode != null) {
             "${movie.title} • S${episode.seasonNumber}E${episode.episodeNumber}: ${episode.title}"
@@ -351,7 +396,7 @@ class OfflineDownloadManager(
             movieId = movie.id,
             title = displayTitle,
             progress = (downloadEntity.progress * 100).toInt(),
-            text = "Starting chunked download..."
+            text = "Starting download..."
         )
 
         // Resolve download candidate URLs
@@ -372,28 +417,38 @@ class OfflineDownloadManager(
                 try {
                     Log.d(TAG, "Probing source candidate for $displayTitle: $candidateUrl")
                     val probe = probeSource(candidateUrl, estimatedTotalBytes)
-                    val effectiveTotalBytes = if (probe.contentLength > 0) probe.contentLength else estimatedTotalBytes
+                    val effectiveTotalBytes = if (probe.contentLength >= 1024 * 1024L) probe.contentLength else estimatedTotalBytes
 
-                    if (probe.supportsRange) {
-                        val isOver2GB = effectiveTotalBytes >= LARGE_FILE_THRESHOLD || effectiveSizeMb >= 2048
-                        Log.d(TAG, "Executing Chunked Download Strategy (over2GB=$isOver2GB, size=${formatBytes(effectiveTotalBytes)}) from $candidateUrl")
+                    // Update totalBytes in database so UI reflects verified size immediately
+                    downloadDao.updateProgress(
+                        id = downloadId,
+                        progress = if (effectiveTotalBytes > 0) (initialExistingBytes.toFloat() / effectiveTotalBytes).coerceIn(0f, 0.99f) else 0f,
+                        status = DownloadStatus.DOWNLOADING.name,
+                        bytes = initialExistingBytes
+                    )
+
+                    val isOver2GB = effectiveTotalBytes >= LARGE_FILE_THRESHOLD || effectiveSizeMb >= 2048
+                    if (isOver2GB && probe.supportsRange) {
+                        Log.d(TAG, "Executing Chunked Download Strategy (>2GB, size=${formatBytes(effectiveTotalBytes)}) from $candidateUrl")
                         downloadSuccess = downloadInChunks(
                             url = candidateUrl,
                             tempFile = tempFile,
                             finalFile = finalFile,
                             movie = movie,
                             downloadId = downloadId,
-                            totalBytes = effectiveTotalBytes
+                            totalBytes = effectiveTotalBytes,
+                            displayTitle = displayTitle
                         )
                     } else {
-                        Log.d(TAG, "Server does not support Range requests, falling back to streaming with 64KB buffer for $displayTitle")
+                        Log.d(TAG, "Executing Resumable Stream Download (size=${formatBytes(effectiveTotalBytes)}) from $candidateUrl")
                         downloadSuccess = streamWithResumption(
                             url = candidateUrl,
                             tempFile = tempFile,
                             finalFile = finalFile,
                             movie = movie,
                             downloadId = downloadId,
-                            estimatedTotalBytes = effectiveTotalBytes
+                            estimatedTotalBytes = effectiveTotalBytes,
+                            displayTitle = displayTitle
                         )
                     }
                     if (downloadSuccess) break
@@ -404,7 +459,7 @@ class OfflineDownloadManager(
             }
         }
 
-        if (downloadSuccess && finalFile.exists() && finalFile.length() > 0) {
+        if (downloadSuccess && finalFile.exists() && finalFile.length() >= 1024 * 1024L) {
             val finalBytes = finalFile.length()
             downloadDao.updateDownloadProgressAndPath(
                 id = downloadId,
@@ -424,6 +479,9 @@ class OfflineDownloadManager(
             Log.d(TAG, "Download successfully finished for $displayTitle: ${finalFile.absolutePath} ($finalBytes bytes)")
         } else {
             Log.e(TAG, "All download candidates failed for $displayTitle: ${lastError?.message}")
+            if (finalFile.exists() && finalFile.length() < 1024 * 1024L) {
+                runCatching { finalFile.delete() }
+            }
             val currentBytes = if (tempFile.exists()) tempFile.length() else 0L
             val currentProgress = if (estimatedTotalBytes > 0) (currentBytes.toFloat() / estimatedTotalBytes).coerceIn(0f, 0.99f) else 0f
             downloadDao.updateProgress(
@@ -452,6 +510,30 @@ class OfflineDownloadManager(
     )
 
     private suspend fun probeSource(url: String, fallbackEstimate: Long): SourceProbe = withContext(Dispatchers.IO) {
+        // Step 1: Probe with HEAD request to retrieve real full Content-Length and Accept-Ranges
+        try {
+            val headRequest = Request.Builder()
+                .url(url)
+                .header("User-Agent", "MovieRoom-Probe/2.0")
+                .head()
+                .build()
+
+            val headResponse = downloadHttpClient.newCall(headRequest).execute()
+            headResponse.use { resp ->
+                if (resp.isSuccessful) {
+                    val headLen = resp.header("Content-Length")?.toLongOrNull()
+                    val acceptsRanges = resp.header("Accept-Ranges")?.contains("bytes", ignoreCase = true) == true
+                    if (headLen != null && headLen >= 1024 * 1024L) {
+                        Log.d(TAG, "HEAD probe succeeded for $url: length=$headLen bytes, acceptsRanges=$acceptsRanges")
+                        return@withContext SourceProbe(supportsRange = acceptsRanges, contentLength = headLen)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "HEAD probe failed for $url: ${e.message}")
+        }
+
+        // Step 2: If HEAD did not return a valid length, probe with Range: bytes=0-0
         try {
             val request = Request.Builder()
                 .url(url)
@@ -461,21 +543,24 @@ class OfflineDownloadManager(
 
             val response = downloadHttpClient.newCall(request).execute()
             response.use { resp ->
+                val acceptsRanges = resp.header("Accept-Ranges")?.contains("bytes", ignoreCase = true) == true || resp.code == 206
                 if (resp.code == 206) {
                     val contentRange = resp.header("Content-Range")
                     val totalFromRange = contentRange?.substringAfterLast('/')?.trim()?.toLongOrNull()
-                    val totalLength = totalFromRange ?: resp.header("Content-Length")?.toLongOrNull() ?: fallbackEstimate
-                    return@withContext SourceProbe(supportsRange = true, contentLength = totalLength)
-                } else if (resp.isSuccessful) {
-                    val acceptsRanges = resp.header("Accept-Ranges")?.contains("bytes", ignoreCase = true) == true
-                    val totalLength = resp.header("Content-Length")?.toLongOrNull() ?: fallbackEstimate
-                    return@withContext SourceProbe(supportsRange = acceptsRanges, contentLength = totalLength)
+                    if (totalFromRange != null && totalFromRange >= 1024 * 1024L) {
+                        Log.d(TAG, "Range probe succeeded via Content-Range for $url: length=$totalFromRange bytes")
+                        return@withContext SourceProbe(supportsRange = true, contentLength = totalFromRange)
+                    }
+                }
+                if (resp.isSuccessful) {
+                    return@withContext SourceProbe(supportsRange = acceptsRanges, contentLength = fallbackEstimate)
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Source probe failed for $url: ${e.message}")
+            Log.w(TAG, "Range probe failed for $url: ${e.message}")
         }
-        return@withContext SourceProbe(supportsRange = false, contentLength = fallbackEstimate)
+
+        return@withContext SourceProbe(supportsRange = true, contentLength = fallbackEstimate)
     }
 
     /**
@@ -490,11 +575,12 @@ class OfflineDownloadManager(
         finalFile: File,
         movie: Movie,
         downloadId: String,
-        totalBytes: Long
+        totalBytes: Long,
+        displayTitle: String
     ): Boolean = withContext(Dispatchers.IO) {
         val existingBytes = if (tempFile.exists()) tempFile.length() else 0L
 
-        if (existingBytes >= totalBytes && totalBytes > 0) {
+        if (existingBytes >= totalBytes && totalBytes >= 1024 * 1024L) {
             return@withContext finalizeDownloadedFile(tempFile, finalFile)
         }
 
@@ -509,11 +595,11 @@ class OfflineDownloadManager(
         val totalChunks = ((totalBytes + CHUNK_SIZE - 1) / CHUNK_SIZE).toInt()
         var bytesDownloaded = verifiedOffset
 
-        Log.d(TAG, "Starting chunked download for ${movie.title}: totalChunks=$totalChunks, startChunk=$startingChunkIndex, totalBytes=$totalBytes")
+        Log.d(TAG, "Starting chunked download for $displayTitle: totalChunks=$totalChunks, startChunk=$startingChunkIndex, totalBytes=$totalBytes")
 
         for (chunkIndex in startingChunkIndex until totalChunks) {
             if (!activeDownloadJobs.containsKey(downloadId)) {
-                Log.d(TAG, "Download job cancelled during chunk $chunkIndex for ${movie.title}")
+                Log.d(TAG, "Download job cancelled during chunk $chunkIndex for $displayTitle")
                 return@withContext false
             }
 
@@ -527,12 +613,30 @@ class OfflineDownloadManager(
             for (attempt in 1..3) {
                 if (!activeDownloadJobs.containsKey(downloadId)) return@withContext false
                 try {
-                    downloadSingleChunk(url, tempFile, chunkStart, chunkEnd, downloadId)
+                    downloadSingleChunk(url, tempFile, chunkStart, chunkEnd, downloadId) { currentBytes ->
+                        val progress = (currentBytes.toFloat() / totalBytes.coerceAtLeast(1L)).coerceIn(0.01f, 0.99f)
+                        downloadDao.updateProgress(
+                            id = downloadId,
+                            progress = progress,
+                            status = DownloadStatus.DOWNLOADING.name,
+                            bytes = currentBytes
+                        )
+                        val progressPercent = (progress * 100).toInt()
+                        val progressText = "${formatBytes(currentBytes)} / ${formatBytes(totalBytes)} ($progressPercent%) • Chunk ${chunkIndex + 1}/$totalChunks"
+                        OfflineDownloadService.updateProgress(
+                            context = context,
+                            movieId = movie.id,
+                            title = displayTitle,
+                            progress = progressPercent,
+                            text = progressText,
+                            isComplete = false
+                        )
+                    }
                     chunkSuccess = true
                     break
                 } catch (e: Exception) {
                     lastChunkError = e
-                    Log.w(TAG, "Chunk $chunkIndex/$totalChunks attempt $attempt failed for ${movie.title}: ${e.message}")
+                    Log.w(TAG, "Chunk $chunkIndex/$totalChunks attempt $attempt failed for $displayTitle: ${e.message}")
                     delay(attempt * 800L)
                 }
             }
@@ -556,7 +660,7 @@ class OfflineDownloadManager(
             OfflineDownloadService.updateProgress(
                 context = context,
                 movieId = movie.id,
-                title = movie.title,
+                title = displayTitle,
                 progress = progressPercent,
                 text = progressText,
                 isComplete = false
@@ -571,7 +675,8 @@ class OfflineDownloadManager(
         tempFile: File,
         chunkStart: Long,
         chunkEnd: Long,
-        downloadId: String
+        downloadId: String,
+        onProgress: suspend (Long) -> Unit
     ) = withContext(Dispatchers.IO) {
         val request = Request.Builder()
             .url(url)
@@ -591,18 +696,27 @@ class OfflineDownloadManager(
                 val inputStream = body.byteStream()
                 val buffer = ByteArray(BUFFER_SIZE)
                 var read: Int
+                var bytesWrittenInChunk = 0L
+                var lastUpdateMs = System.currentTimeMillis()
                 while (inputStream.read(buffer).also { read = it } != -1) {
                     if (!activeDownloadJobs.containsKey(downloadId)) {
                         throw CancellationException("Download cancelled")
                     }
                     raf.write(buffer, 0, read)
+                    bytesWrittenInChunk += read
+                    val now = System.currentTimeMillis()
+                    if (now - lastUpdateMs >= 500) {
+                        lastUpdateMs = now
+                        onProgress(chunkStart + bytesWrittenInChunk)
+                    }
                 }
+                onProgress(chunkStart + bytesWrittenInChunk)
             }
         }
     }
 
     private fun finalizeDownloadedFile(tempFile: File, finalFile: File): Boolean {
-        if (tempFile.exists() && tempFile.length() > 0) {
+        if (tempFile.exists() && tempFile.length() >= 1024 * 1024L) {
             if (finalFile.exists()) finalFile.delete()
             val renamed = tempFile.renameTo(finalFile)
             if (!renamed) {
@@ -623,7 +737,8 @@ class OfflineDownloadManager(
         finalFile: File,
         movie: Movie,
         downloadId: String,
-        estimatedTotalBytes: Long
+        estimatedTotalBytes: Long,
+        displayTitle: String
     ): Boolean = withContext(Dispatchers.IO) {
         var existingBytes = if (tempFile.exists()) tempFile.length() else 0L
 
@@ -650,7 +765,7 @@ class OfflineDownloadManager(
                     freshResponse.close()
                     return@withContext false
                 }
-                return@withContext streamResponseBody(freshResponse, tempFile, finalFile, movie, downloadId, 0L, estimatedTotalBytes)
+                return@withContext streamResponseBody(freshResponse, tempFile, finalFile, movie, downloadId, 0L, estimatedTotalBytes, displayTitle)
             }
             return@withContext false
         }
@@ -661,7 +776,7 @@ class OfflineDownloadManager(
             tempFile.delete()
         }
 
-        return@withContext streamResponseBody(response, tempFile, finalFile, movie, downloadId, startingOffset, estimatedTotalBytes)
+        return@withContext streamResponseBody(response, tempFile, finalFile, movie, downloadId, startingOffset, estimatedTotalBytes, displayTitle)
     }
 
     private suspend fun streamResponseBody(
@@ -671,12 +786,13 @@ class OfflineDownloadManager(
         movie: Movie,
         downloadId: String,
         startingOffset: Long,
-        estimatedTotalBytes: Long
+        estimatedTotalBytes: Long,
+        displayTitle: String
     ): Boolean = withContext(Dispatchers.IO) {
         response.use { resp ->
             val body = resp.body ?: return@withContext false
             val contentLength = body.contentLength()
-            val totalBytes: Long = if (contentLength > 0) {
+            val totalBytes: Long = if (contentLength > 0 && (startingOffset + contentLength) >= 1024 * 1024L) {
                 startingOffset + contentLength
             } else {
                 estimatedTotalBytes
@@ -724,9 +840,10 @@ class OfflineDownloadManager(
                                 OfflineDownloadService.updateProgress(
                                     context = context,
                                     movieId = movie.id,
-                                    title = movie.title,
+                                    title = displayTitle,
                                     progress = progressPercent,
-                                    text = progressText
+                                    text = progressText,
+                                    isComplete = false
                                 )
                             }
                         }
@@ -739,7 +856,7 @@ class OfflineDownloadManager(
             }
 
             // Verify integrity of downloaded temp file
-            if (tempFile.exists() && tempFile.length() > 0) {
+            if (tempFile.exists() && tempFile.length() >= 1024 * 1024L) {
                 // Atomic rename
                 if (finalFile.exists()) finalFile.delete()
                 val renamed = tempFile.renameTo(finalFile)

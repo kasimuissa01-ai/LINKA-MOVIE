@@ -283,9 +283,20 @@ fun DownloadsScreen(
                     DownloadItemCard(
                         item = item,
                         onPlayClick = {
+                            val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+                            val baseFileName = if (!item.episodeId.isNullOrBlank()) "movie_${item.movieId}_ep_${item.episodeId}.mp4" else "movie_${item.movieId}.mp4"
+                            val canonicalFile = java.io.File(destDir, baseFileName)
+                            val storedFile = java.io.File(item.localFilePath.removePrefix("file://"))
+
+                            val verifiedPath = when {
+                                storedFile.exists() && storedFile.length() >= 1024 * 1024L -> storedFile.absolutePath
+                                canonicalFile.exists() && canonicalFile.length() >= 1024 * 1024L -> canonicalFile.absolutePath
+                                else -> null
+                            }
+
                             val movieToPlay = if (correspondingMovie != null) {
-                                if (correspondingMovie.videoStreamUrl.isBlank() && item.localFilePath.isNotBlank()) {
-                                    correspondingMovie.copy(videoStreamUrl = item.localFilePath)
+                                if (verifiedPath != null) {
+                                    correspondingMovie.copy(videoStreamUrl = verifiedPath)
                                 } else {
                                     correspondingMovie
                                 }
@@ -297,7 +308,7 @@ fun DownloadsScreen(
                                     genres = emptyList(),
                                     coverUrl = item.coverUrl,
                                     videoKey = "",
-                                    videoStreamUrl = item.localFilePath,
+                                    videoStreamUrl = verifiedPath ?: item.localFilePath,
                                     durationMinutes = 120,
                                     fileSizeMb = (item.totalBytes / (1024 * 1024L)).coerceAtLeast(100L),
                                     releaseYear = 2025,

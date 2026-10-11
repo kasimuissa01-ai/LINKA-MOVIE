@@ -55,6 +55,9 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads ORDER BY id DESC")
     fun getAllDownloads(): Flow<List<DownloadEntity>>
 
+    @Query("SELECT * FROM downloads")
+    suspend fun getAllDownloadsList(): List<DownloadEntity>
+
     @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId IS NULL ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
     suspend fun getDownloadByMovieId(movieId: String): DownloadEntity?
 

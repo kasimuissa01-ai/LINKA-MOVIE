@@ -374,9 +374,15 @@ class PlayerViewModel(
             else -> null
         }
 
+        val passedFile = if (movie.videoStreamUrl.startsWith("file:") || movie.videoStreamUrl.startsWith("/")) {
+            java.io.File(movie.videoStreamUrl.removePrefix("file://"))
+        } else null
+        val isPassedFileValid = passedFile != null && passedFile.exists() && passedFile.length() >= 1024 * 1024L
+
         val offlineUri: String? = when {
             localCandidate != null -> android.net.Uri.fromFile(localCandidate).toString()
-            movie.videoStreamUrl.startsWith("file:") || movie.videoStreamUrl.startsWith("/") || movie.videoStreamUrl.startsWith("content:") -> movie.videoStreamUrl
+            isPassedFileValid && passedFile != null -> android.net.Uri.fromFile(passedFile).toString()
+            movie.videoStreamUrl.startsWith("content:") -> movie.videoStreamUrl
             else -> null
         }
 
