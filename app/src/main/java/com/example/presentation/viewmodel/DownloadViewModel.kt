@@ -9,8 +9,10 @@ import com.example.data.repository.MovieRepository
 import com.example.domain.model.DownloadItem
 import com.example.domain.model.Episode
 import com.example.domain.model.Movie
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -31,8 +33,13 @@ class DownloadViewModel(
             initialValue = emptyList()
         )
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     val episodeProgressMap: StateFlow<Map<String, EpisodeDownloadProgress>> =
-        (progressManager?.observeAllEpisodeProgress() ?: flowOf(emptyMap()))
+        (progressManager?.let { pm ->
+            repository.userSession.flatMapLatest { session ->
+                pm.observeAllEpisodeProgress(session.uid)
+            }
+        } ?: flowOf(emptyMap()))
             .stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5000),
@@ -42,9 +49,9 @@ class DownloadViewModel(
     fun startDownload(movie: Movie, context: Context, episode: Episode? = null) {
         viewModelScope.launch {
             if (episode != null) {
-                // Route episode downloads through WorkManager for guaranteed background execution and progress
+                val uid = repository.userSession.value.uid
                 val manager = progressManager ?: EpisodeDownloadProgressManager.getInstance(context)
-                manager.startEpisodeDownload(movie, episode)
+                manager.startEpisodeDownload(movie, episode, uid)
             } else {
                 repository.startDownload(movie, context, null)
             }
@@ -52,8 +59,9 @@ class DownloadViewModel(
     }
 
     fun startEpisodeDownload(movie: Movie, episode: Episode, context: Context) {
+        val uid = repository.userSession.value.uid
         val manager = progressManager ?: EpisodeDownloadProgressManager.getInstance(context)
-        manager.startEpisodeDownload(movie, episode)
+        manager.startEpisodeDownload(movie, episode, uid)
     }
 
     fun cancelEpisodeDownload(movieId: String, episodeId: String, context: Context) {
@@ -111,22 +119,16 @@ class DownloadViewModel(
     }
 
     /**
-     * Computes the total storage used by downloaded movies on device in bytes.
+     * Computes the total storage used by downloaded movies on device in bytes for the current user.
      */
     fun getTotalStorageUsedBytes(context: Context, downloadList: List<DownloadItem>): Long {
+        val currentUid = repository.userSession.value.uid
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+        val userDir = java.io.File(destDir, "users/$currentUid")
         var diskBytes = 0L
-        destDir.listFiles { file ->
-            file.name.startsWith("movie_") || file.name.endsWith(".download") || file.name.endsWith(".mp4")
-        }?.forEach {
-            diskBytes += it.length()
-        }
-        val internalDir = context.filesDir
-        if (internalDir != destDir) {
-            internalDir.listFiles { file ->
-                file.name.startsWith("movie_") || file.name.endsWith(".download") || file.name.endsWith(".mp4")
-            }?.forEach {
-                diskBytes += it.length()
+        if (userDir.exists() && userDir.isDirectory) {
+            userDir.listFiles()?.forEach { file ->
+                diskBytes += file.length()
             }
         }
         val dbBytes = downloadList.sumOf { it.downloadedBytes.coerceAtLeast(0L) }

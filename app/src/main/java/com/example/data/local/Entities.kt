@@ -1,5 +1,6 @@
 package com.example.data.local
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.example.domain.model.DownloadItem
@@ -155,7 +156,8 @@ data class DownloadEntity(
     val episodeId: String? = null,
     val episodeTitle: String? = null,
     val seasonNumber: Int? = null,
-    val episodeNumber: Int? = null
+    val episodeNumber: Int? = null,
+    @ColumnInfo(defaultValue = "") val userId: String = ""
 ) {
     fun toDomain(): DownloadItem = DownloadItem(
         id = id,
@@ -170,7 +172,8 @@ data class DownloadEntity(
         episodeId = episodeId,
         episodeTitle = episodeTitle,
         seasonNumber = seasonNumber,
-        episodeNumber = episodeNumber
+        episodeNumber = episodeNumber,
+        userId = userId
     )
 
     companion object {
@@ -187,7 +190,8 @@ data class DownloadEntity(
             episodeId = item.episodeId,
             episodeTitle = item.episodeTitle,
             seasonNumber = item.seasonNumber,
-            episodeNumber = item.episodeNumber
+            episodeNumber = item.episodeNumber,
+            userId = item.userId
         )
     }
 }

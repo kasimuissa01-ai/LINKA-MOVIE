@@ -584,7 +584,10 @@ fun ProfileScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onNavigateToOnboarding() }
+                        .clickable {
+                            authViewModel.signOut()
+                            onNavigateToOnboarding()
+                        }
                         .padding(16.dp)
                         .testTag("btn_switch_account")
                 ) {

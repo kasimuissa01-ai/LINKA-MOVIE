@@ -18,6 +18,7 @@ class SessionManager(context: Context) {
         private const val KEY_PHONE_NUMBER = "key_phone_number"
         private const val KEY_ROLE = "key_role"
         private const val KEY_TOKEN = "key_token"
+        private const val KEY_FIRST_ACCOUNT_UID = "key_first_account_uid"
         private const val KEY_WATCHED_COUNT = "key_watched_count"
         private const val KEY_FAVORITE_COUNT = "key_favorite_count"
     }
@@ -25,10 +26,21 @@ class SessionManager(context: Context) {
     val isLoggedIn: Boolean
         get() = prefs.getBoolean(KEY_IS_LOGGED_IN, false)
 
+    fun getFirstAccountUid(): String? = prefs.getString(KEY_FIRST_ACCOUNT_UID, null)
+
+    fun setFirstAccountUid(uid: String) {
+        if (uid.isNotBlank() && prefs.getString(KEY_FIRST_ACCOUNT_UID, null).isNullOrBlank()) {
+            prefs.edit().putString(KEY_FIRST_ACCOUNT_UID, uid).apply()
+        }
+    }
+
     fun saveSession(session: UserSession) {
         prefs.edit().apply {
             putBoolean(KEY_IS_LOGGED_IN, true)
             putString(KEY_UID, session.uid)
+            if (prefs.getString(KEY_FIRST_ACCOUNT_UID, null).isNullOrBlank()) {
+                putString(KEY_FIRST_ACCOUNT_UID, session.uid)
+            }
             putString(KEY_EMAIL, session.email)
             putString(KEY_DISPLAY_NAME, session.displayName)
             putString(KEY_PHONE_NUMBER, session.phoneNumber)
@@ -72,8 +84,12 @@ class SessionManager(context: Context) {
     }
 
     fun clearSession() {
+        val firstAccountUid = prefs.getString(KEY_FIRST_ACCOUNT_UID, null)
         prefs.edit().apply {
             clear()
+            if (!firstAccountUid.isNullOrBlank()) {
+                putString(KEY_FIRST_ACCOUNT_UID, firstAccountUid)
+            }
             apply()
         }
     }

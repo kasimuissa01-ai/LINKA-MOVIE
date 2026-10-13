@@ -45,8 +45,22 @@ class OfflineDownloadManager(
     private val downloadDao: DownloadDao,
     private val r2Client: CloudflareR2PresignedClient,
     private val context: Context,
-    private val managerScope: CoroutineScope = CoroutineScope(Dispatchers.IO)
+    private val managerScope: CoroutineScope = CoroutineScope(Dispatchers.IO),
+    private val userIdProvider: () -> String = { "" }
 ) {
+
+    fun getEffectiveUserId(explicitUserId: String? = null): String {
+        return explicitUserId?.ifBlank { null } ?: userIdProvider().ifBlank { null } ?: "guest"
+    }
+
+    fun buildDownloadId(userId: String, movieId: String, episodeId: String? = null): String {
+        val clean = userId.ifBlank { "guest" }
+        return if (!episodeId.isNullOrBlank()) {
+            "${clean}_${movieId}_ep_${episodeId}"
+        } else {
+            "${clean}_${movieId}"
+        }
+    }
 
     private val activeDownloadJobs = ConcurrentHashMap<String, Job>()
 
@@ -83,7 +97,7 @@ class OfflineDownloadManager(
     private suspend fun sanitizeCorruptDownloads() = withContext(Dispatchers.IO) {
         try {
             val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-            val downloads = downloadDao.getAllDownloadsList()
+            val downloads = downloadDao.getAllDownloadsRaw()
             for (item in downloads) {
                 val candidateFile = File(item.localFilePath)
                 val canonicalFile = File(destDir, if (!item.episodeId.isNullOrBlank()) "movie_${item.movieId}_ep_${item.episodeId}.mp4" else "movie_${item.movieId}.mp4")
@@ -110,11 +124,12 @@ class OfflineDownloadManager(
     }
 
     /**
-     * Reactive stream of all downloads observed from Room.
+     * Reactive stream of all downloads observed from Room for effective user.
      */
-    val allDownloads: Flow<List<DownloadItem>> = downloadDao.getAllDownloads().map { list ->
-        list.map { it.toDomain() }
-    }
+    fun getDownloadsForUser(userId: String = ""): Flow<List<DownloadItem>> =
+        downloadDao.getAllDownloads(getEffectiveUserId(userId)).map { list ->
+            list.map { it.toDomain() }
+        }
 
     /**
      * Returns verified local file URI for offline playback if and only if:
@@ -127,131 +142,135 @@ class OfflineDownloadManager(
      */
     /**
      * Returns verified local file URI for offline playback if and only if:
-     * 1. Room marks status as COMPLETED and links to the requested movieId (and episodeId if applicable).
-     * 2. The contentUri or filePath stored in Room (or canonical file) is verified.
+     * 1. Room marks status as COMPLETED and links to the requested movieId (and episodeId if applicable) AND belongs to requested user.
+     * 2. The contentUri or filePath stored in Room (or canonical user file) is verified.
      * 3. The file is non-empty and has valid video size (>= 1MB).
+     *
+     * IMPORTANT: Never grants offline access to a movie if the requesting user did not download it!
      */
-    suspend fun getVerifiedOfflinePlaybackUri(movieId: String, episodeId: String? = null): String? = withContext(Dispatchers.IO) {
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val baseFileName = if (!episodeId.isNullOrBlank()) "movie_${movieId}_ep_${episodeId}.mp4" else "movie_${movieId}.mp4"
-        val finalFile = File(destDir, baseFileName)
-        val internalFile = File(context.filesDir, baseFileName)
-
+    suspend fun getVerifiedOfflinePlaybackUri(
+        movieId: String,
+        episodeId: String? = null,
+        userId: String? = null
+    ): String? = withContext(Dispatchers.IO) {
+        val effectiveUid = getEffectiveUserId(userId)
         val entity = if (!episodeId.isNullOrBlank()) {
-            downloadDao.getDownloadByEpisode(movieId, episodeId)
+            downloadDao.getDownloadByEpisode(movieId, episodeId, effectiveUid)
         } else {
-            downloadDao.getDownloadByMovieId(movieId)
+            downloadDao.getDownloadByMovieId(movieId, effectiveUid)
         }
-        val isMarkedCompleted = entity != null && entity.status == DownloadStatus.COMPLETED.name
 
-        if (entity != null && isMarkedCompleted) {
-            // 1. Check localFilePath or contentUri stored in Room database
-            val storedPath = entity.localFilePath.trim()
-            if (storedPath.isNotBlank()) {
-                // Case A: content:// URI
-                if (storedPath.startsWith("content://")) {
-                    try {
-                        val uri = android.net.Uri.parse(storedPath)
-                        val isValidDescriptor = context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
-                            pfd.statSize >= 1024 * 1024L
-                        } ?: false
-                        if (isValidDescriptor) {
-                            Log.d(TAG, "Verified contentUri offline file for movie $movieId (ep=$episodeId): $storedPath")
-                            return@withContext storedPath
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Failed reading stored contentUri for movie $movieId (ep=$episodeId): ${e.message}")
+        // If the user has NO download record or it is not COMPLETED, return null immediately!
+        // This ensures other accounts cannot play or see this movie as offline!
+        if (entity == null || entity.status != DownloadStatus.COMPLETED.name) {
+            return@withContext null
+        }
+
+        // 1. Check localFilePath or contentUri stored in Room database
+        val storedPath = entity.localFilePath.trim()
+        if (storedPath.isNotBlank()) {
+            if (storedPath.startsWith("content://")) {
+                try {
+                    val uri = android.net.Uri.parse(storedPath)
+                    val isValidDescriptor = context.contentResolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                        pfd.statSize >= 1024 * 1024L
+                    } ?: false
+                    if (isValidDescriptor) {
+                        Log.d(TAG, "Verified contentUri offline file for movie $movieId (user=$effectiveUid): $storedPath")
+                        return@withContext storedPath
                     }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed reading stored contentUri for movie $movieId: ${e.message}")
                 }
-
-                // Case B: Standard filesystem path or file:// URI
+            } else {
                 val cleanPath = storedPath.removePrefix("file://")
                 val storedFile = File(cleanPath)
                 if (storedFile.exists() && storedFile.length() >= 1024 * 1024L) {
                     val fileSize = storedFile.length()
-                    val belongsToItem = if (!episodeId.isNullOrBlank()) {
-                        entity.episodeId == episodeId || storedFile.name.contains(episodeId)
-                    } else {
-                        entity.movieId == movieId || storedFile.name.contains(movieId)
-                    }
-
-                    if (belongsToItem) {
-                        Log.d(TAG, "Verified stored filePath from Room for movie $movieId (ep=$episodeId): ${storedFile.absolutePath} ($fileSize bytes)")
-                        return@withContext android.net.Uri.fromFile(storedFile).toString()
-                    }
+                    Log.d(TAG, "Verified stored filePath from Room for movie $movieId (user=$effectiveUid): ${storedFile.absolutePath} ($fileSize bytes)")
+                    return@withContext android.net.Uri.fromFile(storedFile).toString()
                 }
-            }
-
-            // 2. Check canonical external and internal files
-            val candidateFile = when {
-                finalFile.exists() && finalFile.length() >= 1024 * 1024L -> finalFile
-                internalFile.exists() && internalFile.length() >= 1024 * 1024L -> internalFile
-                else -> null
-            }
-
-            if (candidateFile != null) {
-                val fileSize = candidateFile.length()
-                if (entity != null && entity.localFilePath != candidateFile.absolutePath) {
-                    downloadDao.updateDownloadProgressAndPath(
-                        id = entity.id,
-                        progress = 1.0f,
-                        status = DownloadStatus.COMPLETED.name,
-                        bytes = fileSize,
-                        localPath = candidateFile.absolutePath
-                    )
-                }
-                Log.d(TAG, "Verified canonical file available for movie $movieId (ep=$episodeId): ${candidateFile.length()} bytes")
-                return@withContext android.net.Uri.fromFile(candidateFile).toString()
-            }
-
-            if (entity != null) {
-                Log.w(TAG, "Movie $movieId (ep=$episodeId) marked COMPLETED in Room but local file missing or corrupt.")
-                downloadDao.updateStatus(entity.id, DownloadStatus.FAILED.name)
             }
         }
 
-        // 3. Fallback: even if Room record is missing or not marked COMPLETED, if valid offline file exists on disk, use it!
-        val fallbackCandidate = when {
+        // 2. Check canonical external and internal files in user's isolated directory
+        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+        val baseFileName = if (!episodeId.isNullOrBlank()) "movie_${movieId}_ep_${episodeId}.mp4" else "movie_${movieId}.mp4"
+        val userDir = File(destDir, "users/$effectiveUid")
+        val finalFile = File(userDir, baseFileName)
+        val internalFile = File(File(context.filesDir, "users/$effectiveUid"), baseFileName)
+        val legacyFile = File(destDir, baseFileName)
+
+        val candidateFile = when {
             finalFile.exists() && finalFile.length() >= 1024 * 1024L -> finalFile
             internalFile.exists() && internalFile.length() >= 1024 * 1024L -> internalFile
+            legacyFile.exists() && legacyFile.length() >= 1024 * 1024L -> legacyFile
             else -> null
         }
-        if (fallbackCandidate != null) {
-            val fileSize = fallbackCandidate.length()
-            val downloadId = if (!episodeId.isNullOrBlank()) "${movieId}_ep_${episodeId}" else movieId
-            downloadDao.updateDownloadProgressAndPath(
-                id = downloadId,
-                progress = 1.0f,
-                status = DownloadStatus.COMPLETED.name,
-                bytes = fileSize,
-                localPath = fallbackCandidate.absolutePath
-            )
-            Log.d(TAG, "Recovered offline playback from disk for $downloadId: ${fallbackCandidate.absolutePath} ($fileSize bytes)")
-            return@withContext android.net.Uri.fromFile(fallbackCandidate).toString()
+
+        if (candidateFile != null) {
+            val fileSize = candidateFile.length()
+            if (entity.localFilePath != candidateFile.absolutePath) {
+                downloadDao.updateDownloadProgressAndPath(
+                    id = entity.id,
+                    progress = 1.0f,
+                    status = DownloadStatus.COMPLETED.name,
+                    bytes = fileSize,
+                    localPath = candidateFile.absolutePath
+                )
+            }
+            Log.d(TAG, "Verified user offline file available for movie $movieId (user=$effectiveUid): ${candidateFile.length()} bytes")
+            return@withContext android.net.Uri.fromFile(candidateFile).toString()
         }
 
-        // Clean up only if file is a tiny corrupt stub (< 1MB) and not actively downloading
-        val activeKey = if (!episodeId.isNullOrBlank()) "${movieId}_ep_${episodeId}" else movieId
-        if (finalFile.exists() && finalFile.length() < 1024 * 1024L && activeDownloadJobs[activeKey]?.isActive != true) {
-            Log.w(TAG, "Found incomplete stub (<1MB) for $activeKey. Cleaning up...")
-            runCatching { finalFile.delete() }
-        }
-
+        Log.w(TAG, "Movie $movieId marked COMPLETED in Room for user $effectiveUid but file missing or corrupt.")
+        downloadDao.updateStatus(entity.id, DownloadStatus.FAILED.name)
         return@withContext null
     }
 
     /**
-     * Starts or resumes a movie or episode download.
+     * Finds an already downloaded, verified file on device from any account or legacy storage.
      */
-    fun startDownload(movie: Movie, episode: Episode? = null) {
-        val downloadId = if (episode != null) "${movie.id}_ep_${episode.id}" else movie.id
+    private fun findExistingCompletedFile(destDir: File, movieId: String, episodeId: String?): File? {
+        val baseFileName = if (!episodeId.isNullOrBlank()) "movie_${movieId}_ep_${episodeId}.mp4" else "movie_${movieId}.mp4"
+        val legacy = File(destDir, baseFileName)
+        if (legacy.exists() && legacy.length() >= 1024 * 1024L) return legacy
+        val internalLegacy = File(context.filesDir, baseFileName)
+        if (internalLegacy.exists() && internalLegacy.length() >= 1024 * 1024L) return internalLegacy
+        val usersDir = File(destDir, "users")
+        if (usersDir.exists() && usersDir.isDirectory) {
+            usersDir.listFiles()?.forEach { uDir ->
+                if (uDir.isDirectory) {
+                    val candidate = File(uDir, baseFileName)
+                    if (candidate.exists() && candidate.length() >= 1024 * 1024L) return candidate
+                }
+            }
+        }
+        val internalUsersDir = File(context.filesDir, "users")
+        if (internalUsersDir.exists() && internalUsersDir.isDirectory) {
+            internalUsersDir.listFiles()?.forEach { uDir ->
+                if (uDir.isDirectory) {
+                    val candidate = File(uDir, baseFileName)
+                    if (candidate.exists() && candidate.length() >= 1024 * 1024L) return candidate
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Starts or resumes a movie or episode download for the specified user (or current user).
+     */
+    fun startDownload(movie: Movie, episode: Episode? = null, userId: String? = null) {
+        val effectiveUid = getEffectiveUserId(userId)
+        val downloadId = buildDownloadId(effectiveUid, movie.id, episode?.id)
         if (activeDownloadJobs[downloadId]?.isActive == true) {
             Log.d(TAG, "Download already active for item: $downloadId (${episode?.title ?: movie.title})")
             return
         }
 
         val job = managerScope.launch {
-            executeDownloadPipeline(movie, episode)
+            executeDownloadPipeline(movie, episode, effectiveUid)
         }
         activeDownloadJobs[downloadId] = job
     }
@@ -274,24 +293,26 @@ class OfflineDownloadManager(
     /**
      * Retries or resumes a failed or paused download.
      */
-    suspend fun retryDownload(downloadId: String, movie: Movie, episode: Episode? = null) {
+    suspend fun retryDownload(downloadId: String, movie: Movie, episode: Episode? = null, userId: String? = null) {
         pauseDownload(downloadId)
-        startDownload(movie, episode)
+        startDownload(movie, episode, userId)
     }
 
     /**
-     * Cancels and deletes a download record and its local files.
+     * Cancels and deletes a download record and its user-scoped local files.
      */
-    suspend fun deleteDownload(downloadId: String, movieId: String, episodeId: String? = null) = withContext(Dispatchers.IO) {
+    suspend fun deleteDownload(downloadId: String, movieId: String, episodeId: String? = null, userId: String? = null) = withContext(Dispatchers.IO) {
+        val effectiveUid = getEffectiveUserId(userId)
         activeDownloadJobs[downloadId]?.cancel()
         activeDownloadJobs.remove(downloadId)
 
         downloadDao.deleteById(downloadId)
 
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+        val userDir = File(destDir, "users/$effectiveUid")
         val baseFileName = if (!episodeId.isNullOrBlank()) "movie_${movieId}_ep_${episodeId}.mp4" else "movie_${movieId}.mp4"
-        val finalFile = File(destDir, baseFileName)
-        val partFile = File(destDir, "$baseFileName.download")
+        val finalFile = File(userDir, baseFileName)
+        val partFile = File(userDir, "$baseFileName.download")
 
         runCatching { if (finalFile.exists()) finalFile.delete() }
         runCatching { if (partFile.exists()) partFile.delete() }
@@ -300,57 +321,100 @@ class OfflineDownloadManager(
     }
 
     /**
-     * Cancels all downloads and purges all offline movie/episode video files.
+     * Cancels all downloads and purges offline movie video files for the specified user (or current user).
      */
-    suspend fun clearAllDownloads() = withContext(Dispatchers.IO) {
+    suspend fun clearAllDownloads(userId: String? = null) = withContext(Dispatchers.IO) {
+        val effectiveUid = getEffectiveUserId(userId)
         activeDownloadJobs.values.forEach { it.cancel() }
         activeDownloadJobs.clear()
 
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        destDir.listFiles { file ->
-            file.name.startsWith("movie_") || file.name.endsWith(".download") || file.name.endsWith(".mp4")
-        }?.forEach { file ->
-            runCatching { file.delete() }
-        }
+        val userDir = File(destDir, "users/$effectiveUid")
+        runCatching { userDir.deleteRecursively() }
 
-        val internalDir = context.filesDir
-        if (internalDir != destDir) {
-            internalDir.listFiles { file ->
-                file.name.startsWith("movie_") || file.name.endsWith(".download") || file.name.endsWith(".mp4")
-            }?.forEach { file ->
-                runCatching { file.delete() }
-            }
-        }
+        val internalUserDir = File(context.filesDir, "users/$effectiveUid")
+        runCatching { internalUserDir.deleteRecursively() }
 
+        downloadDao.deleteAllDownloads(effectiveUid)
         checkAndStopForegroundService()
     }
 
     /**
-     * Core download execution pipeline.
+     * Core download execution pipeline with user scoping and fast local copy support.
      */
-    private suspend fun executeDownloadPipeline(movie: Movie, episode: Episode? = null) = withContext(Dispatchers.IO) {
-        val downloadId = if (episode != null) "${movie.id}_ep_${episode.id}" else movie.id
+    private suspend fun executeDownloadPipeline(movie: Movie, episode: Episode? = null, userId: String? = null) = withContext(Dispatchers.IO) {
+        val effectiveUid = getEffectiveUserId(userId)
+        val downloadId = buildDownloadId(effectiveUid, movie.id, episode?.id)
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+        val userDir = File(destDir, "users/$effectiveUid")
         val baseFileName = if (episode != null) "movie_${movie.id}_ep_${episode.id}.mp4" else "movie_${movie.id}.mp4"
-        val finalFile = File(destDir, baseFileName)
-        val tempFile = File(destDir, "$baseFileName.download")
+        val finalFile = File(userDir, baseFileName)
+        val tempFile = File(userDir, "$baseFileName.download")
 
-        destDir.mkdirs()
+        userDir.mkdirs()
 
-        // Check if already completed and valid (>= 1MB)
+        val displayTitle = if (episode != null) {
+            "${movie.title} • S${episode.seasonNumber}E${episode.episodeNumber}: ${episode.title}"
+        } else {
+            movie.title
+        }
+
+        // Check if already completed and valid for this user (>= 1MB)
         if (finalFile.exists() && finalFile.length() >= 1024 * 1024L) {
             val existing = if (episode != null) {
-                downloadDao.getDownloadByEpisode(movie.id, episode.id)
+                downloadDao.getDownloadByEpisode(movie.id, episode.id, effectiveUid)
             } else {
-                downloadDao.getDownloadByMovieId(movie.id)
+                downloadDao.getDownloadByMovieId(movie.id, effectiveUid)
             }
             if (existing?.status == DownloadStatus.COMPLETED.name) {
-                Log.d(TAG, "Item '${episode?.title ?: movie.title}' is already fully downloaded.")
+                Log.d(TAG, "Item '${episode?.title ?: movie.title}' is already fully downloaded for user $effectiveUid.")
                 return@withContext
             }
         } else if (finalFile.exists() && finalFile.length() < 1024 * 1024L) {
             Log.w(TAG, "Cleaning corrupt stub for $downloadId (${finalFile.length()} bytes)")
             runCatching { finalFile.delete() }
+        }
+
+        // Fast Local Copy Optimization:
+        // If another account on this device already downloaded this exact movie/episode,
+        // instantly copy it into this user's private storage without wasting network data!
+        if (!finalFile.exists() || finalFile.length() < 1024 * 1024L) {
+            val existingSource = findExistingCompletedFile(destDir, movie.id, episode?.id)
+            if (existingSource != null && existingSource.exists() && existingSource.length() >= 1024 * 1024L) {
+                try {
+                    Log.d(TAG, "Reusing already cached video from device for user $effectiveUid via fast local copy")
+                    existingSource.copyTo(finalFile, overwrite = true)
+                    val fileSize = finalFile.length()
+                    val completedEntity = DownloadEntity(
+                        id = downloadId,
+                        movieId = movie.id,
+                        movieTitle = movie.title,
+                        coverUrl = movie.coverUrl,
+                        localFilePath = finalFile.absolutePath,
+                        progress = 1.0f,
+                        status = DownloadStatus.COMPLETED.name,
+                        downloadedBytes = fileSize,
+                        totalBytes = fileSize,
+                        episodeId = episode?.id,
+                        episodeTitle = episode?.title,
+                        seasonNumber = episode?.seasonNumber,
+                        episodeNumber = episode?.episodeNumber,
+                        userId = effectiveUid
+                    )
+                    downloadDao.insertOrUpdate(completedEntity)
+                    OfflineDownloadService.updateProgress(
+                        context = context,
+                        movieId = movie.id,
+                        title = displayTitle,
+                        progress = 100,
+                        text = "${formatBytes(fileSize)} downloaded",
+                        isComplete = true
+                    )
+                    return@withContext
+                } catch (e: Exception) {
+                    Log.w(TAG, "Fast local copy failed, will proceed with network download: ${e.message}")
+                }
+            }
         }
 
         // Clean corrupt/tiny temp files (< 1KB) left by previous broken attempts
@@ -367,12 +431,6 @@ class OfflineDownloadManager(
             50L * 1024L * 1024L
         }
 
-        val displayTitle = if (episode != null) {
-            "${movie.title} • S${episode.seasonNumber}E${episode.episodeNumber}: ${episode.title}"
-        } else {
-            movie.title
-        }
-
         val downloadEntity = DownloadEntity(
             id = downloadId,
             movieId = movie.id,
@@ -386,7 +444,8 @@ class OfflineDownloadManager(
             episodeId = episode?.id,
             episodeTitle = episode?.title,
             seasonNumber = episode?.seasonNumber,
-            episodeNumber = episode?.episodeNumber
+            episodeNumber = episode?.episodeNumber,
+            userId = effectiveUid
         )
         downloadDao.insertOrUpdate(downloadEntity)
 

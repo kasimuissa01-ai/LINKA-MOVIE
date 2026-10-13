@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [
@@ -11,7 +13,7 @@ import androidx.room.RoomDatabase
         DownloadEntity::class,
         UploadStateEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class MovieRoomDatabase : RoomDatabase() {
@@ -23,6 +25,12 @@ abstract class MovieRoomDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: MovieRoomDatabase? = null
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE downloads ADD COLUMN userId TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getInstance(context: Context): MovieRoomDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -30,6 +38,7 @@ abstract class MovieRoomDatabase : RoomDatabase() {
                     MovieRoomDatabase::class.java,
                     "movieroom.db"
                 )
+                    .addMigrations(MIGRATION_3_4)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

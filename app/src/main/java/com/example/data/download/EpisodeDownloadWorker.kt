@@ -70,7 +70,9 @@ class EpisodeDownloadWorker(
         val videoStreamUrl = inputData.getString(KEY_STREAM_URL).orEmpty()
         val coverUrl = inputData.getString(KEY_COVER_URL).orEmpty()
 
-        val downloadId = "${movieId}_ep_${episodeId}"
+        val userId = inputData.getString(KEY_USER_ID) ?: com.example.data.local.SessionManager(context).getSession()?.uid.orEmpty()
+        val cleanUser = userId.ifBlank { "guest" }
+        val downloadId = "${cleanUser}_${movieId}_ep_${episodeId}"
         val displayTitle = "$movieTitle • S${seasonNum}E$epNum: $episodeTitle"
         val notificationId = (downloadId.hashCode() and 0x7FFFFFFF).coerceAtLeast(1000)
 
@@ -78,12 +80,13 @@ class EpisodeDownloadWorker(
         val downloadDao = database.downloadDao()
 
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        destDir.mkdirs()
+        val userDir = File(destDir, "users/$cleanUser")
+        userDir.mkdirs()
         val finalFileName = "movie_${movieId}_ep_${episodeId}.mp4"
-        val finalFile = File(destDir, finalFileName)
-        val tempFile = File(destDir, "$finalFileName.download")
+        val finalFile = File(userDir, finalFileName)
+        val tempFile = File(userDir, "$finalFileName.download")
 
-        // 1. Verify if already cached locally
+        // 1. Verify if already cached locally for this user
         if (finalFile.exists() && finalFile.length() >= 1024 * 1024L) {
             val completedBytes = finalFile.length()
             downloadDao.updateDownloadProgressAndPath(
@@ -104,6 +107,45 @@ class EpisodeDownloadWorker(
             )
             setProgress(successData)
             return@withContext Result.success(successData)
+        }
+
+        // Fast local copy optimization: check if another account already cached this episode
+        val legacyOrOtherCandidate = File(destDir, finalFileName)
+        if (legacyOrOtherCandidate.exists() && legacyOrOtherCandidate.length() >= 1024 * 1024L) {
+            try {
+                legacyOrOtherCandidate.copyTo(finalFile, overwrite = true)
+                val completedBytes = finalFile.length()
+                val entity = DownloadEntity(
+                    id = downloadId,
+                    movieId = movieId,
+                    movieTitle = movieTitle,
+                    coverUrl = coverUrl,
+                    localFilePath = finalFile.absolutePath,
+                    progress = 1.0f,
+                    status = DownloadStatus.COMPLETED.name,
+                    downloadedBytes = completedBytes,
+                    totalBytes = completedBytes,
+                    episodeId = episodeId,
+                    episodeTitle = episodeTitle,
+                    seasonNumber = seasonNum,
+                    episodeNumber = epNum,
+                    userId = cleanUser
+                )
+                downloadDao.insertOrUpdate(entity)
+                val successData = workDataOf(
+                    KEY_EPISODE_ID to episodeId,
+                    KEY_MOVIE_ID to movieId,
+                    KEY_PROGRESS_PERCENT to 100,
+                    KEY_PROGRESS_FRACTION to 1.0f,
+                    KEY_BYTES_DOWNLOADED to completedBytes,
+                    KEY_TOTAL_BYTES to completedBytes,
+                    KEY_STATUS to DownloadStatus.COMPLETED.name
+                )
+                setProgress(successData)
+                return@withContext Result.success(successData)
+            } catch (e: Exception) {
+                Log.w(TAG, "Fast copy for episode failed: ${e.message}")
+            }
         }
 
         // 2. Resolve download candidate URLs
@@ -144,7 +186,8 @@ class EpisodeDownloadWorker(
             episodeId = episodeId,
             episodeTitle = episodeTitle,
             seasonNumber = seasonNum,
-            episodeNumber = epNum
+            episodeNumber = epNum,
+            userId = cleanUser
         )
         downloadDao.insertOrUpdate(entity)
 
@@ -553,6 +596,7 @@ class EpisodeDownloadWorker(
         const val CHANNEL_ID = "movie_room_episode_downloads"
 
         // Input Keys
+        const val KEY_USER_ID = "user_id"
         const val KEY_EPISODE_ID = "episode_id"
         const val KEY_MOVIE_ID = "movie_id"
         const val KEY_EPISODE_TITLE = "episode_title"
@@ -573,8 +617,9 @@ class EpisodeDownloadWorker(
         const val KEY_SPEED_TEXT = "speed_text"
         const val KEY_ERROR_MESSAGE = "error_message"
 
-        fun createInputData(movie: Movie, episode: Episode): Data {
+        fun createInputData(movie: Movie, episode: Episode, userId: String = ""): Data {
             return workDataOf(
+                KEY_USER_ID to userId,
                 KEY_EPISODE_ID to episode.id,
                 KEY_MOVIE_ID to movie.id,
                 KEY_EPISODE_TITLE to episode.title,

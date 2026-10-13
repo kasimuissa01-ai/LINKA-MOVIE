@@ -329,7 +329,7 @@ fun MovieDetailScreen(
         val mediaUri = when {
             isEpOffline && storedEpPath.startsWith("content://") -> storedEpPath
             isEpOffline && storedEpPath.isNotBlank() && java.io.File(storedEpPath.removePrefix("file://")).exists() -> storedEpPath
-            directOfflineCandidate != null -> directOfflineCandidate
+            isEpOffline && directOfflineCandidate != null -> directOfflineCandidate
             targetEpisode != null -> {
                 val epKey = R2UrlUtils.extractCleanVideoKey(targetEpisode.videoKey, targetEpisode.videoStreamUrl)
                 if (epKey.isNotBlank()) R2UrlUtils.buildUrl(epKey) else targetEpisode.videoStreamUrl
@@ -665,11 +665,9 @@ fun MovieDetailScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // Action Area: Download Movie Button
-                    val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-                    val movieBaseFileName = "movie_${movie.id}.mp4"
-                    val movieLocalFile = java.io.File(destDir, movieBaseFileName)
                     val isMovieActuallyDownloaded = downloadItem?.status == DownloadStatus.COMPLETED &&
-                            movieLocalFile.exists() && movieLocalFile.length() >= 1024 * 1024L
+                            downloadItem.localFilePath.isNotBlank() &&
+                            java.io.File(downloadItem.localFilePath.removePrefix("file://")).let { it.exists() && it.length() >= 1024 * 1024L }
 
                     Button(
                         onClick = {

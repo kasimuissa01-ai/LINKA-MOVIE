@@ -239,10 +239,13 @@ class PlayerViewModel(
                 if (currentUrl.startsWith("file://") || currentUrl.startsWith("/")) {
                     android.util.Log.w("PlayerViewModel", "Corrupted or unreadable local file detected. Purging file and seamlessly failing over to online stream...")
                     viewModelScope.launch {
+                        val currentUid = repository.userSession.value.uid
                         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
                         val targetFilename = if (episodeId != null) "movie_${movie.id}_ep_${episodeId}.mp4" else "movie_${movie.id}.mp4"
-                        val localFile = java.io.File(destDir, targetFilename)
+                        val localFile = java.io.File(java.io.File(destDir, "users/$currentUid"), targetFilename)
+                        val legacyFile = java.io.File(destDir, targetFilename)
                         runCatching { if (localFile.exists()) localFile.delete() }
+                        runCatching { if (legacyFile.exists()) legacyFile.delete() }
 
                         val onlineUrl = if (episodeId != null) {
                             val ep = movie.episodes.firstOrNull { it.id == episodeId }
@@ -319,7 +322,8 @@ class PlayerViewModel(
                 // 2. If it was playing an online stream, attempt offline failover or alternative stream:
                 viewModelScope.launch {
                     val fallbackOffline = try {
-                        repository.getDownloadManager(context).getVerifiedOfflinePlaybackUri(movie.id, episodeId)
+                        val currentUid = repository.userSession.value.uid
+                        repository.getDownloadManager(context).getVerifiedOfflinePlaybackUri(movie.id, episodeId, currentUid)
                     } catch (_: Exception) { null }
                     if (fallbackOffline != null && fallbackOffline != currentUrl) {
                         android.util.Log.i("PlayerViewModel", "Switching to verified offline video: $fallbackOffline")
@@ -362,26 +366,28 @@ class PlayerViewModel(
             }
         })
 
-        // 1. Check if verified offline file exists for zero-delay offline playback
+        // 1. Check if verified offline file exists for zero-delay offline playback for the CURRENT USER
+        val currentUid = repository.userSession.value.uid
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
         val filename = if (episodeId != null) "movie_${movie.id}_ep_${episodeId}.mp4" else "movie_${movie.id}.mp4"
-        val localFile = java.io.File(destDir, filename)
-        val internalFile = java.io.File(context.filesDir, filename)
+        val userFile = java.io.File(java.io.File(destDir, "users/$currentUid"), filename)
+        val internalUserFile = java.io.File(java.io.File(context.filesDir, "users/$currentUid"), filename)
+
+        val passedFile = if (movie.videoStreamUrl.startsWith("file:") || movie.videoStreamUrl.startsWith("/")) {
+            val f = java.io.File(movie.videoStreamUrl.removePrefix("file://"))
+            // Check that the passed file is valid and belongs to this user
+            if (f.exists() && f.length() >= 1024 * 1024L && (f.absolutePath.contains("/users/$currentUid/") || f.absolutePath.contains("/$currentUid/"))) f else null
+        } else null
 
         val localCandidate = when {
-            localFile.exists() && localFile.length() >= 1024 * 1024L -> localFile
-            internalFile.exists() && internalFile.length() >= 1024 * 1024L -> internalFile
+            userFile.exists() && userFile.length() >= 1024 * 1024L -> userFile
+            internalUserFile.exists() && internalUserFile.length() >= 1024 * 1024L -> internalUserFile
+            passedFile != null -> passedFile
             else -> null
         }
 
-        val passedFile = if (movie.videoStreamUrl.startsWith("file:") || movie.videoStreamUrl.startsWith("/")) {
-            java.io.File(movie.videoStreamUrl.removePrefix("file://"))
-        } else null
-        val isPassedFileValid = passedFile != null && passedFile.exists() && passedFile.length() >= 1024 * 1024L
-
         val offlineUri: String? = when {
             localCandidate != null -> android.net.Uri.fromFile(localCandidate).toString()
-            isPassedFileValid && passedFile != null -> android.net.Uri.fromFile(passedFile).toString()
             movie.videoStreamUrl.startsWith("content:") -> movie.videoStreamUrl
             else -> null
         }

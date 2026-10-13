@@ -55,7 +55,8 @@ data class DownloadItem(
     val episodeId: String? = null,
     val episodeTitle: String? = null,
     val seasonNumber: Int? = null,
-    val episodeNumber: Int? = null
+    val episodeNumber: Int? = null,
+    val userId: String = ""
 )
 
 data class UploadPart(

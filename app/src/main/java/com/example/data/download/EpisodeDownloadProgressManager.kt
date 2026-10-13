@@ -96,9 +96,10 @@ class EpisodeDownloadProgressManager(
     /**
      * Enqueues an episode download task via WorkManager with network constraints.
      */
-    fun startEpisodeDownload(movie: Movie, episode: Episode) {
-        val workName = getWorkName(movie.id, episode.id)
-        val inputData = EpisodeDownloadWorker.createInputData(movie, episode)
+    fun startEpisodeDownload(movie: Movie, episode: Episode, userId: String = "") {
+        val effectiveUid = if (userId.isNotBlank()) userId else com.example.data.local.SessionManager(context).getSession()?.uid.orEmpty()
+        val workName = if (effectiveUid.isNotBlank()) "${effectiveUid}_${movie.id}_${episode.id}" else getWorkName(movie.id, episode.id)
+        val inputData = EpisodeDownloadWorker.createInputData(movie, episode, effectiveUid)
 
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -110,9 +111,14 @@ class EpisodeDownloadProgressManager(
             .addTag(TAG_ALL_EPISODES)
             .addTag("movie_${movie.id}")
             .addTag("episode_${episode.id}")
+            .apply {
+                if (effectiveUid.isNotBlank()) {
+                    addTag("user_$effectiveUid")
+                }
+            }
             .build()
 
-        Log.d(TAG, "Enqueuing unique WorkManager task: $workName for ${episode.title}")
+        Log.d(TAG, "Enqueuing unique WorkManager task: $workName for ${episode.title} (user=$effectiveUid)")
         workManager.enqueueUniqueWork(
             workName,
             ExistingWorkPolicy.REPLACE,
@@ -164,12 +170,12 @@ class EpisodeDownloadProgressManager(
     }
 
     /**
-     * Observes real-time progress for all episodes belonging to a specific movie.
+     * Observes real-time progress for all episodes belonging to a specific movie for a specific user.
      * Combines WorkManager's live WorkInfo stream with Room database state.
      */
-    fun observeMovieEpisodesProgress(movieId: String): Flow<Map<String, EpisodeDownloadProgress>> {
+    fun observeMovieEpisodesProgress(movieId: String, userId: String = ""): Flow<Map<String, EpisodeDownloadProgress>> {
         val workInfoFlow = workManager.getWorkInfosByTagFlow("movie_$movieId")
-        val roomDownloadsFlow = downloadDao.observeDownloadsForMovie(movieId)
+        val roomDownloadsFlow = downloadDao.observeDownloadsForMovie(movieId, userId)
 
         return combine(workInfoFlow, roomDownloadsFlow) { workInfoList, roomList ->
             val progressMap = mutableMapOf<String, EpisodeDownloadProgress>()
@@ -197,6 +203,9 @@ class EpisodeDownloadProgressManager(
 
             // 2. Overlay live WorkManager real-time progress
             for (workInfo in workInfoList) {
+                if (userId.isNotBlank() && !workInfo.tags.contains("user_$userId")) {
+                    continue
+                }
                 val epId = workInfo.tags.firstOrNull { it.startsWith("episode_") }?.removePrefix("episode_")
                     ?: workInfo.progress.getString(EpisodeDownloadWorker.KEY_EPISODE_ID)
                     ?: continue
@@ -210,11 +219,11 @@ class EpisodeDownloadProgressManager(
     }
 
     /**
-     * Observes real-time progress for all episodes across all movies.
+     * Observes real-time progress for all episodes across all movies for a specific user.
      */
-    fun observeAllEpisodeProgress(): Flow<Map<String, EpisodeDownloadProgress>> {
+    fun observeAllEpisodeProgress(userId: String = ""): Flow<Map<String, EpisodeDownloadProgress>> {
         val workInfoFlow = workManager.getWorkInfosByTagFlow(TAG_ALL_EPISODES)
-        val roomDownloadsFlow = downloadDao.getAllDownloads()
+        val roomDownloadsFlow = downloadDao.getAllDownloads(userId)
 
         return combine(workInfoFlow, roomDownloadsFlow) { workInfoList, roomList ->
             val progressMap = mutableMapOf<String, EpisodeDownloadProgress>()
@@ -239,14 +248,17 @@ class EpisodeDownloadProgressManager(
                 )
             }
 
-            // 2. Overlay active WorkInfo
+            // 2. Overlay live WorkManager real-time progress
             for (workInfo in workInfoList) {
+                if (userId.isNotBlank() && !workInfo.tags.contains("user_$userId")) {
+                    continue
+                }
                 val epId = workInfo.tags.firstOrNull { it.startsWith("episode_") }?.removePrefix("episode_")
                     ?: workInfo.progress.getString(EpisodeDownloadWorker.KEY_EPISODE_ID)
                     ?: continue
                 val movieId = workInfo.tags.firstOrNull { it.startsWith("movie_") }?.removePrefix("movie_")
                     ?: workInfo.progress.getString(EpisodeDownloadWorker.KEY_MOVIE_ID)
-                    ?: ""
+                    ?: progressMap[epId]?.movieId.orEmpty()
 
                 val mapped = mapWorkInfoToProgress(workInfo, epId, movieId, progressMap[epId])
                 progressMap[epId] = mapped

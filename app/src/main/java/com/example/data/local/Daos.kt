@@ -52,26 +52,29 @@ interface MovieDao {
 
 @Dao
 interface DownloadDao {
+    @Query("SELECT * FROM downloads WHERE userId = :userId AND :userId != '' ORDER BY id DESC")
+    fun getAllDownloads(userId: String = ""): Flow<List<DownloadEntity>>
+
+    @Query("SELECT * FROM downloads WHERE userId = :userId AND :userId != ''")
+    suspend fun getAllDownloadsList(userId: String = ""): List<DownloadEntity>
+
     @Query("SELECT * FROM downloads ORDER BY id DESC")
-    fun getAllDownloads(): Flow<List<DownloadEntity>>
+    suspend fun getAllDownloadsRaw(): List<DownloadEntity>
 
-    @Query("SELECT * FROM downloads")
-    suspend fun getAllDownloadsList(): List<DownloadEntity>
+    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId IS NULL AND userId = :userId AND :userId != '' ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
+    suspend fun getDownloadByMovieId(movieId: String, userId: String = ""): DownloadEntity?
 
-    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId IS NULL ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
-    suspend fun getDownloadByMovieId(movieId: String): DownloadEntity?
+    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId IS NULL AND userId = :userId AND :userId != '' ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
+    fun observeDownloadByMovieId(movieId: String, userId: String = ""): Flow<DownloadEntity?>
 
-    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId IS NULL ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
-    fun observeDownloadByMovieId(movieId: String): Flow<DownloadEntity?>
+    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId = :episodeId AND userId = :userId AND :userId != '' ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
+    suspend fun getDownloadByEpisode(movieId: String, episodeId: String, userId: String = ""): DownloadEntity?
 
-    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId = :episodeId ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
-    suspend fun getDownloadByEpisode(movieId: String, episodeId: String): DownloadEntity?
+    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId = :episodeId AND userId = :userId AND :userId != '' ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
+    fun observeDownloadByEpisode(movieId: String, episodeId: String, userId: String = ""): Flow<DownloadEntity?>
 
-    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND episodeId = :episodeId ORDER BY CASE WHEN status = 'COMPLETED' THEN 0 ELSE 1 END, id DESC LIMIT 1")
-    fun observeDownloadByEpisode(movieId: String, episodeId: String): Flow<DownloadEntity?>
-
-    @Query("SELECT * FROM downloads WHERE movieId = :movieId")
-    fun observeDownloadsForMovie(movieId: String): Flow<List<DownloadEntity>>
+    @Query("SELECT * FROM downloads WHERE movieId = :movieId AND userId = :userId AND :userId != ''")
+    fun observeDownloadsForMovie(movieId: String, userId: String = ""): Flow<List<DownloadEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdate(download: DownloadEntity)
@@ -91,17 +94,20 @@ interface DownloadDao {
     @Query("UPDATE downloads SET status = :status WHERE id = :id")
     suspend fun updateStatus(id: String, status: String)
 
-    @Query("SELECT * FROM downloads WHERE status = 'COMPLETED'")
-    fun getCompletedDownloads(): Flow<List<DownloadEntity>>
+    @Query("SELECT * FROM downloads WHERE status = 'COMPLETED' AND userId = :userId AND :userId != ''")
+    fun getCompletedDownloads(userId: String = ""): Flow<List<DownloadEntity>>
 
     @Query("DELETE FROM downloads WHERE id = :id")
     suspend fun deleteById(id: String)
 
-    @Query("DELETE FROM downloads WHERE movieId = :movieId")
-    suspend fun deleteByMovieId(movieId: String)
+    @Query("DELETE FROM downloads WHERE movieId = :movieId AND userId = :userId AND :userId != ''")
+    suspend fun deleteByMovieId(movieId: String, userId: String = "")
 
-    @Query("DELETE FROM downloads")
-    suspend fun deleteAllDownloads()
+    @Query("DELETE FROM downloads WHERE userId = :userId AND :userId != ''")
+    suspend fun deleteAllDownloads(userId: String = "")
+
+    @Query("UPDATE downloads SET userId = :targetUserId WHERE userId = '' OR userId IS NULL")
+    suspend fun claimLegacyDownloads(targetUserId: String)
 }
 
 @Dao

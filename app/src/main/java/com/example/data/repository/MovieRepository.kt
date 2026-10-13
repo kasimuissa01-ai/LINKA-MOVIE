@@ -28,10 +28,12 @@ import com.example.util.R2UrlUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -67,7 +69,8 @@ class MovieRepository(
             downloadManagerInstance ?: OfflineDownloadManager(
                 downloadDao = downloadDao,
                 r2Client = r2Client,
-                context = ctx.applicationContext
+                context = ctx.applicationContext,
+                userIdProvider = { _userSession.value.uid }
             ).also { downloadManagerInstance = it }
         }
     }
@@ -302,6 +305,7 @@ class MovieRepository(
      */
     fun signOut() {
         authService?.signOut()
+        authRepository.signOut()
         sessionManager?.clearSession()
         _userSession.value = UserSession(
             uid = "usr_guest_" + UUID.randomUUID().toString().take(6),
@@ -317,6 +321,11 @@ class MovieRepository(
 
     init {
         repositoryScope.launch {
+            val firstAccount = sessionManager?.getFirstAccountUid() ?: _userSession.value.uid
+            if (firstAccount.isNotBlank()) {
+                downloadDao.claimLegacyDownloads(firstAccount)
+                sessionManager?.setFirstAccountUid(firstAccount)
+            }
             syncCatalogFromSupabase()
         }
     }
@@ -541,14 +550,27 @@ class MovieRepository(
     }
 
     // Downloads
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun getAllDownloads(): Flow<List<DownloadItem>> =
-        downloadDao.getAllDownloads().map { list -> list.map { it.toDomain() } }
+        _userSession.flatMapLatest { session ->
+            downloadDao.getAllDownloads(session.uid).map { list -> list.map { it.toDomain() } }
+        }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun observeDownloadForMovie(movieId: String): Flow<DownloadItem?> =
-        downloadDao.observeDownloadByMovieId(movieId).map { it?.toDomain() }
+        _userSession.flatMapLatest { session ->
+            downloadDao.observeDownloadByMovieId(movieId, session.uid).map { it?.toDomain() }
+        }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeDownloadForEpisode(movieId: String, episodeId: String): Flow<DownloadItem?> =
+        _userSession.flatMapLatest { session ->
+            downloadDao.observeDownloadByEpisode(movieId, episodeId, session.uid).map { it?.toDomain() }
+        }
 
     fun startDownload(movie: Movie, context: Context, episode: Episode? = null) {
-        getDownloadManager(context).startDownload(movie, episode)
+        val uid = _userSession.value.uid
+        getDownloadManager(context).startDownload(movie, episode, uid)
     }
 
     suspend fun pauseDownload(downloadId: String) {
@@ -558,17 +580,20 @@ class MovieRepository(
     }
 
     suspend fun retryDownload(downloadId: String, movie: Movie, context: Context, episode: Episode? = null) {
-        getDownloadManager(context).retryDownload(downloadId, movie, episode)
+        val uid = _userSession.value.uid
+        getDownloadManager(context).retryDownload(downloadId, movie, episode, uid)
     }
 
     suspend fun deleteDownload(downloadId: String, movieId: String = downloadId, episodeId: String? = null) {
-        downloadManagerInstance?.deleteDownload(downloadId, movieId, episodeId) ?: run {
+        val uid = _userSession.value.uid
+        downloadManagerInstance?.deleteDownload(downloadId, movieId, episodeId, uid) ?: run {
             downloadDao.deleteById(downloadId)
             appContext?.let { ctx ->
                 val destDir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
+                val userDir = File(destDir, "users/$uid")
                 val baseFileName = if (!episodeId.isNullOrBlank()) "movie_${movieId}_ep_${episodeId}.mp4" else "movie_${movieId}.mp4"
-                val finalFile = File(destDir, baseFileName)
-                val partFile = File(destDir, "$baseFileName.download")
+                val finalFile = File(userDir, baseFileName)
+                val partFile = File(userDir, "$baseFileName.download")
                 runCatching { if (finalFile.exists()) finalFile.delete() }
                 runCatching { if (partFile.exists()) partFile.delete() }
             }
@@ -576,39 +601,31 @@ class MovieRepository(
     }
 
     suspend fun clearAllDownloads(context: Context) = withContext(Dispatchers.IO) {
+        val uid = _userSession.value.uid
         runCatching {
             com.example.data.download.EpisodeDownloadProgressManager.getInstance(context).cancelAllEpisodeDownloads()
         }
-        getDownloadManager(context).clearAllDownloads()
-        downloadDao.deleteAllDownloads()
+        getDownloadManager(context).clearAllDownloads(uid)
+        downloadDao.deleteAllDownloads(uid)
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        destDir.listFiles()?.forEach { file: File ->
-            if (file.name.startsWith("movie_") || file.name.endsWith(".download") || file.name.endsWith(".mp4")) {
-                runCatching { file.delete() }
-            }
-        }
-        val internalDir = context.filesDir
-        if (internalDir != destDir) {
-            internalDir.listFiles()?.forEach { file: File ->
-                if (file.name.startsWith("movie_") || file.name.endsWith(".download") || file.name.endsWith(".mp4")) {
-                    runCatching { file.delete() }
-                }
-            }
-        }
+        val userDir = File(destDir, "users/$uid")
+        runCatching { userDir.deleteRecursively() }
+        val internalUserDir = File(context.filesDir, "users/$uid")
+        runCatching { internalUserDir.deleteRecursively() }
         com.example.util.VideoCacheManager.clearCache(context)
     }
 
     /**
      * Resolves playback URI for movie or specific episode:
-     * 1. Checks OfflineDownloadManager for a verified complete offline download (>1MB).
-     * 2. If an unverified or corrupt partial file is detected on disk, purges it to prevent playback errors.
-     * 3. Seamlessly falls back to Cloudflare R2 / CDN online stream.
+     * 1. Checks OfflineDownloadManager for a verified complete offline download (>1MB) owned by the current user.
+     * 2. Seamlessly falls back to Cloudflare R2 / CDN online stream.
      */
     suspend fun resolvePlaybackUri(movie: Movie, context: Context, episodeId: String? = null): String = withContext(Dispatchers.IO) {
-        val verifiedOffline = getDownloadManager(context).getVerifiedOfflinePlaybackUri(movie.id, episodeId)
+        val currentUid = _userSession.value.uid
+        val verifiedOffline = getDownloadManager(context).getVerifiedOfflinePlaybackUri(movie.id, episodeId, currentUid)
         if (verifiedOffline != null) {
             val label = if (episodeId != null) "${movie.title} (Ep: $episodeId)" else movie.title
-            Log.d(TAG, "Resolved verified offline playback for $label: $verifiedOffline")
+            Log.d(TAG, "Resolved verified offline playback for $label (user=$currentUid): $verifiedOffline")
             return@withContext verifiedOffline
         }
 

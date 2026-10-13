@@ -77,23 +77,30 @@ class AuthRepository(
     ): Result<UserSession> = withContext(Dispatchers.IO) {
         val trimmedName = displayName.trim().ifBlank { "Guest User" }
         val trimmedPhone = phoneNumber.trim()
+        val digits = trimmedPhone.filter { it.isDigit() }
         val assignedRole = if (trimmedPhone.isNotBlank() && isAdminPhoneNumber(trimmedPhone)) UserRole.ADMIN else UserRole.USER
+
+        // Deterministic, unique account UID strictly scoped per phone account so different users never collide
+        val accountUid = if (digits.length >= 7) {
+            "usr_p$digits"
+        } else {
+            "usr_anon_${System.currentTimeMillis()}"
+        }
 
         try {
             val firebaseAuth = auth
             if (firebaseAuth == null) {
                 // Fallback for development / offline / test environments
-                val uid = "anon_${System.currentTimeMillis()}"
                 val session = UserSession(
-                    uid = uid,
-                    email = if (trimmedPhone.isNotBlank()) "$trimmedPhone@movieroom.stream" else "$uid@movieroom.stream",
+                    uid = accountUid,
+                    email = if (trimmedPhone.isNotBlank()) "$trimmedPhone@movieroom.stream" else "$accountUid@movieroom.stream",
                     displayName = trimmedName,
                     phoneNumber = trimmedPhone,
                     role = assignedRole,
-                    token = "dev_anon_token_$uid"
+                    token = "dev_anon_token_$accountUid"
                 )
                 saveUserToFirestore(
-                    uid = uid,
+                    uid = accountUid,
                     displayName = trimmedName,
                     phoneNumber = trimmedPhone,
                     isAnonymous = true,
@@ -103,12 +110,19 @@ class AuthRepository(
                 return@withContext Result.success(session)
             }
 
+            // Cleanly sign out previous anonymous session so different users don't share identical Firebase user
+            try {
+                if (firebaseAuth.currentUser != null && firebaseAuth.currentUser?.isAnonymous == true) {
+                    firebaseAuth.signOut()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Notice: signOut before new anonymous auth: ${e.message}")
+            }
+
             // 1. Firebase Anonymous Sign-in
             val authResult = firebaseAuth.signInAnonymously().await()
             val user = authResult.user ?: firebaseAuth.currentUser
                 ?: throw IllegalStateException("Firebase anonymous sign-in returned null user")
-
-            val uid = user.uid
 
             // 2. Update FirebaseUser profile display name
             try {
@@ -122,9 +136,9 @@ class AuthRepository(
                 Log.w(TAG, "Failed to update FirebaseUser profile display name: ${e.message}")
             }
 
-            // 3. Save display name and phone number to Firestore document: users/{uid}
+            // 3. Save display name and phone number to Firestore document: users/{accountUid}
             saveUserToFirestore(
-                uid = uid,
+                uid = accountUid,
                 displayName = trimmedName,
                 phoneNumber = trimmedPhone,
                 isAnonymous = true,
@@ -136,31 +150,30 @@ class AuthRepository(
                 user.getIdToken(false).await()?.token
             } catch (e: Exception) {
                 null
-            } ?: "token_$uid"
+            } ?: "token_$accountUid"
 
             val session = UserSession(
-                uid = uid,
-                email = user.email ?: (if (trimmedPhone.isNotBlank()) "$trimmedPhone@movieroom.stream" else "$uid@movieroom.stream"),
+                uid = accountUid,
+                email = user.email ?: (if (trimmedPhone.isNotBlank()) "$trimmedPhone@movieroom.stream" else "$accountUid@movieroom.stream"),
                 displayName = trimmedName,
                 phoneNumber = trimmedPhone,
                 role = assignedRole,
                 token = idToken
             )
             _currentUserSession.value = session
-            Log.d(TAG, "Successfully signed in anonymously and saved profile to Firestore for user: $uid, role=$assignedRole")
+            Log.d(TAG, "Successfully signed in and saved profile to Firestore for user: $accountUid, role=$assignedRole")
             Result.success(session)
 
         } catch (e: Exception) {
             Log.e(TAG, "signInAnonymously encountered error: ${e.message}", e)
             // Create fallback session to ensure graceful degradation
-            val fallbackUid = "anon_fallback_${System.currentTimeMillis()}"
             val fallbackSession = UserSession(
-                uid = fallbackUid,
-                email = if (trimmedPhone.isNotBlank()) "$trimmedPhone@movieroom.stream" else "$fallbackUid@movieroom.stream",
+                uid = accountUid,
+                email = if (trimmedPhone.isNotBlank()) "$trimmedPhone@movieroom.stream" else "$accountUid@movieroom.stream",
                 displayName = trimmedName,
                 phoneNumber = trimmedPhone,
                 role = assignedRole,
-                token = "token_$fallbackUid"
+                token = "token_$accountUid"
             )
             _currentUserSession.value = fallbackSession
             Result.success(fallbackSession)

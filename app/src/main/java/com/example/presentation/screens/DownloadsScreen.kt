@@ -285,11 +285,13 @@ fun DownloadsScreen(
                         onPlayClick = {
                             val destDir = context.getExternalFilesDir(null) ?: context.filesDir
                             val baseFileName = if (!item.episodeId.isNullOrBlank()) "movie_${item.movieId}_ep_${item.episodeId}.mp4" else "movie_${item.movieId}.mp4"
-                            val canonicalFile = java.io.File(destDir, baseFileName)
+                            val userFile = java.io.File(java.io.File(destDir, "users/${item.userId}"), baseFileName)
                             val storedFile = java.io.File(item.localFilePath.removePrefix("file://"))
+                            val canonicalFile = java.io.File(destDir, baseFileName)
 
                             val verifiedPath = when {
                                 storedFile.exists() && storedFile.length() >= 1024 * 1024L -> storedFile.absolutePath
+                                userFile.exists() && userFile.length() >= 1024 * 1024L -> userFile.absolutePath
                                 canonicalFile.exists() && canonicalFile.length() >= 1024 * 1024L -> canonicalFile.absolutePath
                                 else -> null
                             }
