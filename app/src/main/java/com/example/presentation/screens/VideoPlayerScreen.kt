@@ -116,6 +116,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import com.example.domain.model.Movie
+import com.example.domain.model.Episode
 import com.example.presentation.components.CinematicLoadingOverlay
 import com.example.presentation.viewmodel.PlayerViewModel
 import com.example.ui.theme.AmberGold
@@ -153,8 +154,23 @@ fun VideoPlayerScreen(
     val coroutineScope = rememberCoroutineScope()
     val uiState by playerViewModel.uiState.collectAsState()
 
-    val sortedEpisodes = remember(movie.episodes) {
-        movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+    val sortedEpisodes = remember(movie.episodes, movie.videoStreamUrl) {
+        val list = movie.episodes.toMutableList()
+        if (list.isNotEmpty() && list.none { it.seasonNumber == 1 && it.episodeNumber == 1 } && movie.videoStreamUrl.isNotBlank()) {
+            list.add(
+                Episode(
+                    id = "synth_s1_e1_${movie.id}",
+                    movieId = movie.id,
+                    episodeNumber = 1,
+                    seasonNumber = 1,
+                    title = "Episode 1",
+                    description = "Season 1, Episode 1",
+                    videoStreamUrl = movie.videoStreamUrl,
+                    videoKey = movie.videoKey
+                )
+            )
+        }
+        list.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
     }
     var activeEpisodeId by remember(movie.id, episodeId) {
         mutableStateOf(episodeId ?: sortedEpisodes.firstOrNull()?.id)

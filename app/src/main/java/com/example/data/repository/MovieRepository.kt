@@ -622,18 +622,22 @@ class MovieRepository(
      */
     suspend fun resolvePlaybackUri(movie: Movie, context: Context, episodeId: String? = null): String = withContext(Dispatchers.IO) {
         val currentUid = _userSession.value.uid
-        val verifiedOffline = getDownloadManager(context).getVerifiedOfflinePlaybackUri(movie.id, episodeId, currentUid)
+        val effectiveEp = if (!episodeId.isNullOrBlank()) {
+            movie.episodes.firstOrNull { it.id == episodeId }
+        } else if (movie.episodes.isNotEmpty()) {
+            movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })).firstOrNull()
+        } else null
+
+        val epIdToUse = effectiveEp?.id ?: episodeId
+        val verifiedOffline = getDownloadManager(context).getVerifiedOfflinePlaybackUri(movie.id, epIdToUse, currentUid)
         if (verifiedOffline != null) {
-            val label = if (episodeId != null) "${movie.title} (Ep: $episodeId)" else movie.title
+            val label = if (epIdToUse != null) "${movie.title} (Ep: $epIdToUse)" else movie.title
             Log.d(TAG, "Resolved verified offline playback for $label (user=$currentUid): $verifiedOffline")
             return@withContext verifiedOffline
         }
 
-        if (!episodeId.isNullOrBlank()) {
-            val ep = movie.episodes.firstOrNull { it.id == episodeId }
-            if (ep != null) {
-                return@withContext resolveEpisodeOnlineStreamUri(movie, ep)
-            }
+        if (effectiveEp != null) {
+            return@withContext resolveEpisodeOnlineStreamUri(movie, effectiveEp)
         }
 
         return@withContext resolveOnlineStreamUri(movie)
@@ -645,7 +649,7 @@ class MovieRepository(
 
         // If this is episode 2, 3, etc. and it has no unique key or stream URL, do NOT fall back to Episode 1
         if (rawKey.isBlank() && rawStreamUrl.isBlank()) {
-            if (episode.episodeNumber == 1) {
+            if (episode.seasonNumber == 1 && episode.episodeNumber == 1) {
                 val primaryKey = R2UrlUtils.extractCleanVideoKey(movie.videoKey, movie.videoStreamUrl)
                 val primaryStream = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
                 if (primaryKey.isNotBlank()) return@withContext R2UrlUtils.buildUrl(primaryKey)

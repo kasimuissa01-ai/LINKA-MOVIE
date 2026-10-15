@@ -179,6 +179,9 @@ fun AdminAddEditMovieScreen(
     var episodesList by remember(existingMovie?.id) {
         mutableStateOf(existingMovie?.episodes?.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })) ?: emptyList())
     }
+    var isSeries by remember(existingMovie?.id, episodesList.size) {
+        mutableStateOf(existingMovie?.episodes?.isNotEmpty() == true)
+    }
     var showEpisodeDialog by remember { mutableStateOf(false) }
     var episodeBeingEdited by remember { mutableStateOf<Episode?>(null) }
     var activeSeasonTab by remember { mutableStateOf(1) }
@@ -191,9 +194,36 @@ fun AdminAddEditMovieScreen(
     var faststartDetails by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
-    val videoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri: Uri? ->
+    fun syncMainVideoToS1E1(customUri: Uri? = null, customSizeMb: Long? = null) {
+        val currentUri = customUri ?: selectedVideoUri
+        val effectiveStream = currentUri?.toString() ?: streamUrl
+        if (effectiveStream.isNotBlank()) {
+            val existingS1E1 = episodesList.firstOrNull { it.seasonNumber == 1 && it.episodeNumber == 1 }
+            val targetS1E1Id = existingS1E1?.id ?: "ep_s1_e1_${java.util.UUID.randomUUID().toString().take(8)}"
+            val size = customSizeMb ?: (fileSizeMb.toLongOrNull() ?: 450L)
+            val updatedS1E1 = (existingS1E1 ?: Episode(
+                id = targetS1E1Id,
+                movieId = existingMovie?.id ?: "m_series",
+                episodeNumber = 1,
+                seasonNumber = 1,
+                title = "Episode 1",
+                description = "Season 1, Episode 1",
+                durationMinutes = 45,
+                fileSizeMb = size
+            )).copy(
+                videoStreamUrl = effectiveStream,
+                fileSizeMb = size
+            )
+            val currentList = episodesList.filterNot { it.seasonNumber == 1 && it.episodeNumber == 1 }.toMutableList()
+            currentList.add(updatedS1E1)
+            episodesList = currentList.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+            if (currentUri != null) {
+                pendingEpisodeUris = pendingEpisodeUris + (targetS1E1Id to currentUri)
+            }
+        }
+    }
+
+    fun handleVideoUriSelected(uri: Uri?) {
         if (uri != null) {
             selectedVideoUri = uri
             try {
@@ -229,6 +259,11 @@ fun AdminAddEditMovieScreen(
             }
             streamUrl = uri.toString()
 
+            // If in series mode, automatically map this uploaded video to Season 1 Episode 1
+            if (isSeries) {
+                syncMainVideoToS1E1(customUri = uri, customSizeMb = calculatedSizeMb)
+            }
+
             // Automatically check MP4 Faststart (Web Optimization)
             faststartStatus = com.example.util.Mp4FaststartUtils.FaststartStatus.CHECKING
             scope.launch {
@@ -238,6 +273,14 @@ fun AdminAddEditMovieScreen(
             }
         }
     }
+
+    val videoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? -> handleVideoUriSelected(uri) }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? -> handleVideoUriSelected(uri) }
 
     // Cover Photo Gallery Picker State
     var selectedCoverFileName by remember { mutableStateOf<String?>(null) }
@@ -635,8 +678,123 @@ fun AdminAddEditMovieScreen(
 
         Spacer(modifier = Modifier.height(18.dp))
 
+        // Content Format Selector: Single Movie vs TV Series / Season
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFFFFF)),
+            modifier = Modifier.fillMaxWidth().testTag("content_type_selector_card")
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Content Format",
+                        color = TextPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Surface(
+                        color = if (isSeries) AmberGold.copy(alpha = 0.2f) else ElectricBlue.copy(alpha = 0.2f),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text(
+                            text = if (isSeries) "TV SERIES / SEASONS" else "SINGLE MOVIE",
+                            color = if (isSeries) AmberGold else ElectricBlue,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = if (isSeries) "Multi-episode seasons. Upload Episode 1 in the field below, and add Episode 2, 3... in the Series manager."
+                           else "Standard standalone film with a single main video file.",
+                    color = TextSecondary,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // Single Movie Option Button
+                    Surface(
+                        color = if (!isSeries) CinematicRed else SurfaceElevated,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable {
+                                isSeries = false
+                            }
+                            .testTag("toggle_content_type_movie")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Movie,
+                                contentDescription = null,
+                                tint = if (!isSeries) Color.White else TextSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Single Movie",
+                                color = if (!isSeries) Color.White else TextSecondary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // TV Series / Seasons Option Button
+                    Surface(
+                        color = if (isSeries) CinematicRed else SurfaceElevated,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable {
+                                isSeries = true
+                                syncMainVideoToS1E1()
+                            }
+                            .testTag("toggle_content_type_series")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.VideoLibrary,
+                                contentDescription = null,
+                                tint = if (isSeries) Color.White else TextSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "TV Series",
+                                color = if (isSeries) Color.White else TextSecondary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
         // Movie Title Field
-        Text(text = "Movie Title", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(text = if (isSeries) "Series Title" else "Movie Title", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         Spacer(modifier = Modifier.height(6.dp))
         OutlinedTextField(
             value = title,
@@ -724,7 +882,7 @@ fun AdminAddEditMovieScreen(
 
         // Video File Upload Card (Device Gallery Picker)
         Text(
-            text = "Video File (Upload from Gallery)",
+            text = if (isSeries) "Season 1 • Episode 1 Video (Gallery or Files)" else "Video File (Upload from Gallery)",
             color = TextPrimary,
             fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold
@@ -736,7 +894,7 @@ fun AdminAddEditMovieScreen(
             colors = CardDefaults.cardColors(containerColor = SurfaceDark),
             border = androidx.compose.foundation.BorderStroke(
                 width = 1.dp,
-                color = if (selectedVideoUri != null) ElectricBlue else Color(0x33FFFFFF)
+                color = if (selectedVideoUri != null) (if (isSeries) AmberGold else ElectricBlue) else Color(0x33FFFFFF)
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -759,13 +917,13 @@ fun AdminAddEditMovieScreen(
                                 modifier = Modifier
                                     .size(42.dp)
                                     .clip(CircleShape)
-                                    .background(ElectricBlue.copy(alpha = 0.2f)),
+                                    .background((if (isSeries) AmberGold else ElectricBlue).copy(alpha = 0.2f)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.VideoFile,
                                     contentDescription = null,
-                                    tint = ElectricBlue,
+                                    tint = if (isSeries) AmberGold else ElectricBlue,
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
@@ -780,23 +938,36 @@ fun AdminAddEditMovieScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "Ready to upload • ${fileSizeMb} MB",
-                                    color = ElectricBlue,
-                                    fontSize = 12.sp
+                                    text = if (isSeries) "✓ Linked to S1E1 • Ready to upload • ${fileSizeMb} MB" else "Ready to upload • ${fileSizeMb} MB",
+                                    color = if (isSeries) AmberGold else ElectricBlue,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSeries) FontWeight.SemiBold else FontWeight.Normal
                                 )
                             }
                         }
 
-                        OutlinedButton(
-                            onClick = {
-                                videoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
-                                )
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.testTag("btn_change_gallery_video")
-                        ) {
-                            Text("Change", fontSize = 12.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    videoPickerLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                                    )
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.testTag("btn_change_gallery_video")
+                            ) {
+                                Text("Gallery", fontSize = 11.sp)
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    filePickerLauncher.launch(arrayOf("video/*", "*/*"))
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.testTag("btn_change_files_video")
+                            ) {
+                                Text("Files", fontSize = 11.sp)
+                            }
                         }
                     }
 
@@ -857,40 +1028,59 @@ fun AdminAddEditMovieScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                             Text(
-                                text = "Select video from your gallery",
+                                text = if (isSeries) "Select Episode 1 video from phone" else "Select video from phone",
                                 color = TextPrimary,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                             Text(
-                                text = "MP4, MKV, or WebM video file",
+                                text = if (isSeries) "Upload Episode 1 here. Then add Episode 2, 3... in the Episodes section below."
+                                       else "Gallery or Downloads / Storage (MP4, MKV, WebM)",
                                 color = TextTertiary,
                                 fontSize = 12.sp
                             )
                         }
 
-                        Button(
-                            onClick = {
-                                videoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    videoPickerLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                                    )
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.testTag("btn_pick_gallery_video")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.VideoLibrary,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp)
                                 )
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = ElectricBlue,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier.testTag("btn_pick_gallery_video")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.UploadFile,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Choose Video", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Gallery", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+
+                            Button(
+                                onClick = {
+                                    filePickerLauncher.launch(arrayOf("video/*", "*/*"))
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = ElectricBlue,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.testTag("btn_browse_files_video")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.UploadFile,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Files", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -1414,19 +1604,81 @@ fun AdminAddEditMovieScreen(
                         }
                     }
 
-                    Button(
-                        onClick = {
-                            episodeBeingEdited = null
-                            showEpisodeDialog = true
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = CinematicRed),
+                    val nextEpNum = (episodesList.filter { it.seasonNumber == activeSeasonTab }.maxOfOrNull { it.episodeNumber } ?: 0) + 1
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Button(
+                            onClick = {
+                                episodeBeingEdited = null
+                                showEpisodeDialog = true
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = CinematicRed),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("btn_quick_add_next_episode")
+                        ) {
+                            Icon(Icons.Default.Bolt, contentDescription = null, modifier = Modifier.size(13.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("+ Quick Add Ep $nextEpNum", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                episodeBeingEdited = null
+                                showEpisodeDialog = true
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                            modifier = Modifier.testTag("btn_add_episode_dialog")
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(13.dp))
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text("Custom", fontSize = 11.sp)
+                        }
+                    }
+                }
+
+                // If in Series mode, but Season 1 Episode 1 has not yet been linked to the episode list
+                val hasS1E1 = episodesList.any { it.seasonNumber == 1 && it.episodeNumber == 1 }
+                val hasMainVideo = selectedVideoUri != null || streamUrl.isNotBlank()
+                if (isSeries && !hasS1E1 && hasMainVideo) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        color = AmberGold.copy(alpha = 0.15f),
                         shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                        modifier = Modifier.testTag("btn_add_episode_dialog")
+                        border = androidx.compose.foundation.BorderStroke(1.dp, AmberGold.copy(alpha = 0.5f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { syncMainVideoToS1E1() }
+                            .testTag("banner_sync_s1e1")
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("+ Add Episode", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Default.Info, contentDescription = null, tint = AmberGold, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Main video loaded at top is ready for Episode 1.",
+                                    color = AmberGold,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                            Surface(
+                                color = CinematicRed,
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    text = "Map to S1E1",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -1523,15 +1775,17 @@ fun AdminAddEditMovieScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.padding(10.dp)
                                 ) {
+                                    val isS1E1 = ep.seasonNumber == 1 && ep.episodeNumber == 1
                                     Surface(
-                                        color = Color(0x33E50914),
-                                        shape = RoundedCornerShape(4.dp)
+                                        color = if (isS1E1) Color(0x33E50914) else SurfaceDark,
+                                        shape = RoundedCornerShape(4.dp),
+                                        border = if (isS1E1) androidx.compose.foundation.BorderStroke(1.dp, CinematicRed.copy(alpha = 0.5f)) else null
                                     ) {
                                         Text(
-                                            text = "S${ep.seasonNumber}E${ep.episodeNumber}",
-                                            color = CinematicRed,
+                                            text = if (isS1E1) "S1E1 • PILOT (STARTS FIRST)" else "S${ep.seasonNumber}E${ep.episodeNumber}",
+                                            color = if (isS1E1) CinematicRed else AmberGold,
                                             fontWeight = FontWeight.Bold,
-                                            fontSize = 11.sp,
+                                            fontSize = 10.sp,
                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                         )
                                     }
@@ -1575,6 +1829,48 @@ fun AdminAddEditMovieScreen(
                                     ) {
                                         Icon(Icons.Default.Delete, contentDescription = "Delete", tint = CinematicRed, modifier = Modifier.size(16.dp))
                                     }
+                                }
+                            }
+                        }
+
+                        // Next Episode Quick Add Prompt Card
+                        val nextEpNum = (episodesList.filter { it.seasonNumber == activeSeasonTab }.maxOfOrNull { it.episodeNumber } ?: 0) + 1
+                        Surface(
+                            color = SurfaceElevated.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.padding(10.dp)
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Next: Season $activeSeasonTab Episode $nextEpNum",
+                                        color = TextPrimary,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        text = "Upload episode $nextEpNum from Gallery or Files",
+                                        color = TextSecondary,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                Button(
+                                    onClick = {
+                                        episodeBeingEdited = null
+                                        showEpisodeDialog = true
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier.testTag("btn_bottom_quick_add_episode")
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(13.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("+ Add Ep $nextEpNum", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -1780,6 +2076,31 @@ fun AdminAddEditMovieScreen(
                 } ?: ""
                 val finalCover = if (coverUrl.isNotBlank()) coverUrl.trim() else effectiveExistingCover
 
+                val finalEpisodesList = if (isSeries) {
+                    if (episodesList.none { it.seasonNumber == 1 && it.episodeNumber == 1 } && (streamUrl.isNotBlank() || selectedVideoUri != null)) {
+                        val s1e1Id = "ep_s1_e1_${java.util.UUID.randomUUID().toString().take(8)}"
+                        val synth = Episode(
+                            id = s1e1Id,
+                            movieId = existingMovie?.id ?: "m_series",
+                            episodeNumber = 1,
+                            seasonNumber = 1,
+                            title = "Episode 1",
+                            description = "Season 1, Episode 1",
+                            videoStreamUrl = streamUrl,
+                            durationMinutes = 45,
+                            fileSizeMb = size
+                        )
+                        if (selectedVideoUri != null) {
+                            pendingEpisodeUris = pendingEpisodeUris + (s1e1Id to selectedVideoUri!!)
+                        }
+                        (listOf(synth) + episodesList).sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+                    } else {
+                        episodesList.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+                    }
+                } else {
+                    episodesList
+                }
+
                 if (existingMovie != null) {
                     val isNewLocalVideo = streamUrl.isNotBlank() && (streamUrl.startsWith("content://") || streamUrl.startsWith("file://"))
                     
@@ -1796,7 +2117,7 @@ fun AdminAddEditMovieScreen(
                             releaseYear = year,
                             rating = rate,
                             isFeatured = isFeaturedOnCarousel,
-                            episodes = episodesList,
+                            episodes = finalEpisodesList,
                             isSwahiliTranslated = isSwahiliTranslated
                         )
                     } else {
@@ -1830,7 +2151,7 @@ fun AdminAddEditMovieScreen(
                             releaseYear = year,
                             rating = rate,
                             isFeatured = isFeaturedOnCarousel,
-                            episodes = episodesList,
+                            episodes = finalEpisodesList,
                             isSwahiliTranslated = isSwahiliTranslated
                         )
                         adminViewModel.updateMovie(updated, context = context, episodeUris = pendingEpisodeUris)
@@ -1838,7 +2159,7 @@ fun AdminAddEditMovieScreen(
                 } else {
                     adminViewModel.addMovieWithMultipartUpload(
                         context = context,
-                        title = title.ifBlank { "Untitled Movie" },
+                        title = title.ifBlank { if (isSeries) "Untitled Series" else "Untitled Movie" },
                         description = description.ifBlank { "A cinematic release." },
                         genres = selectedGenres,
                         coverUrl = finalCover,
@@ -1847,7 +2168,7 @@ fun AdminAddEditMovieScreen(
                         releaseYear = year,
                         rating = rate,
                         isFeatured = isFeaturedOnCarousel,
-                        episodes = episodesList,
+                        episodes = finalEpisodesList,
                         episodeUris = pendingEpisodeUris,
                         isSwahiliTranslated = isSwahiliTranslated
                     )
@@ -1871,7 +2192,11 @@ fun AdminAddEditMovieScreen(
             )
             Spacer(modifier = Modifier.width(10.dp))
             Text(
-                text = if (existingMovie != null) "Update Movie & Episodes" else "Publish Movie & Episodes",
+                text = if (isSeries) {
+                    if (existingMovie != null) "Update TV Series & Episodes" else "Publish TV Series & Episodes"
+                } else {
+                    if (existingMovie != null) "Update Movie" else "Publish Movie"
+                },
                 fontWeight = FontWeight.Bold,
                 fontSize = 15.sp
             )
@@ -1885,9 +2210,30 @@ fun AdminAddEditMovieScreen(
                     val year = releaseYear.toIntOrNull() ?: 2024
                     val rate = rating.toDoubleOrNull() ?: 8.0
                     val finalCover = coverUrl.trim()
+                    val finalEpisodesList = if (isSeries) {
+                        if (episodesList.none { it.seasonNumber == 1 && it.episodeNumber == 1 } && (streamUrl.isNotBlank() || selectedVideoUri != null)) {
+                            val s1e1Id = "ep_s1_e1_${java.util.UUID.randomUUID().toString().take(8)}"
+                            val synth = Episode(
+                                id = s1e1Id,
+                                movieId = "m_series",
+                                episodeNumber = 1,
+                                seasonNumber = 1,
+                                title = "Episode 1",
+                                description = "Season 1, Episode 1",
+                                videoStreamUrl = streamUrl,
+                                durationMinutes = 45,
+                                fileSizeMb = size
+                            )
+                            (listOf(synth) + episodesList).sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+                        } else {
+                            episodesList.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+                        }
+                    } else {
+                        episodesList
+                    }
                     adminViewModel.publishMovieDirectly(
                         context = context,
-                        title = title.ifBlank { "Untitled Movie" },
+                        title = title.ifBlank { if (isSeries) "Untitled Series" else "Untitled Movie" },
                         description = description.ifBlank { "A cinematic release." },
                         genres = selectedGenres,
                         coverUrl = finalCover,
@@ -1896,7 +2242,7 @@ fun AdminAddEditMovieScreen(
                         releaseYear = year,
                         rating = rate,
                         isFeatured = isFeaturedOnCarousel,
-                        episodes = episodesList,
+                        episodes = finalEpisodesList,
                         isSwahiliTranslated = isSwahiliTranslated
                     )
                 },

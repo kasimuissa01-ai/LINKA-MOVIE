@@ -264,11 +264,26 @@ fun MovieDetailScreen(
     }
 
     // Sort all episodes deterministically by Season, then Episode number
-    val sortedEpisodes = remember(movie.episodes) {
-        movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+    val sortedEpisodes = remember(movie.episodes, movie.videoStreamUrl) {
+        val list = movie.episodes.toMutableList()
+        if (list.isNotEmpty() && list.none { it.seasonNumber == 1 && it.episodeNumber == 1 } && movie.videoStreamUrl.isNotBlank()) {
+            list.add(
+                Episode(
+                    id = "synth_s1_e1_${movie.id}",
+                    movieId = movie.id,
+                    episodeNumber = 1,
+                    seasonNumber = 1,
+                    title = "Episode 1",
+                    description = "Season 1, Episode 1",
+                    videoStreamUrl = movie.videoStreamUrl,
+                    videoKey = movie.videoKey
+                )
+            )
+        }
+        list.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
     }
 
-    // Selected Episode state for series - always defaults to the first chronological episode
+    // Selected Episode state for series - always defaults to the first chronological episode (Season 1 Episode 1)
     var selectedEpisodeId by remember(movie.id) {
         mutableStateOf(sortedEpisodes.firstOrNull()?.id)
     }
@@ -2264,8 +2279,23 @@ fun MovieEpisodesSection(
     onCancelDownloadEpisode: ((Episode) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val sortedEpisodes = remember(movie.episodes) {
-        movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+    val sortedEpisodes = remember(movie.episodes, movie.videoStreamUrl) {
+        val list = movie.episodes.toMutableList()
+        if (list.isNotEmpty() && list.none { it.seasonNumber == 1 && it.episodeNumber == 1 } && movie.videoStreamUrl.isNotBlank()) {
+            list.add(
+                Episode(
+                    id = "synth_s1_e1_${movie.id}",
+                    movieId = movie.id,
+                    episodeNumber = 1,
+                    seasonNumber = 1,
+                    title = "Episode 1",
+                    description = "Season 1, Episode 1",
+                    videoStreamUrl = movie.videoStreamUrl,
+                    videoKey = movie.videoKey
+                )
+            )
+        }
+        list.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
     }
     val seasons = remember(sortedEpisodes) {
         val list = sortedEpisodes.map { it.seasonNumber }.distinct().sorted()

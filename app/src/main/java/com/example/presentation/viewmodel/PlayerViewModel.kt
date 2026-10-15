@@ -17,6 +17,7 @@ import com.example.data.repository.MovieRepository
 import com.example.data.analytics.AppAnalyticsManager
 import com.example.data.analytics.PlaybackWatchTracker
 import com.example.domain.model.Movie
+import com.example.domain.model.Episode
 import com.example.util.R2UrlUtils
 import com.example.util.VideoCacheManager
 import kotlinx.coroutines.Job
@@ -121,10 +122,28 @@ class PlayerViewModel(
     private var watchTracker: PlaybackWatchTracker? = null
 
     fun initializePlayer(context: Context, movie: Movie, initialPositionMs: Long = 0L, episodeId: String? = null) {
-        val isSameMovie = (currentMovieId == movie.id && currentEpisodeId == episodeId)
+        val sortedEpisodes = movie.episodes.toMutableList().apply {
+            if (isNotEmpty() && none { it.seasonNumber == 1 && it.episodeNumber == 1 } && movie.videoStreamUrl.isNotBlank()) {
+                add(
+                    Episode(
+                        id = "synth_s1_e1_${movie.id}",
+                        movieId = movie.id,
+                        episodeNumber = 1,
+                        seasonNumber = 1,
+                        title = "Episode 1",
+                        description = "Season 1, Episode 1",
+                        videoStreamUrl = movie.videoStreamUrl,
+                        videoKey = movie.videoKey
+                    )
+                )
+            }
+        }.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+
+        val effectiveEpisodeId = episodeId ?: if (sortedEpisodes.isNotEmpty()) sortedEpisodes.firstOrNull()?.id else null
+        val isSameMovie = (currentMovieId == movie.id && currentEpisodeId == effectiveEpisodeId)
         currentMovieId = movie.id
-        currentEpisodeId = episodeId
-        val positionKey = if (episodeId != null) "${movie.id}_ep_${episodeId}" else movie.id
+        currentEpisodeId = effectiveEpisodeId
+        val positionKey = if (effectiveEpisodeId != null) "${movie.id}_ep_${effectiveEpisodeId}" else movie.id
         val targetStartPos = if (initialPositionMs > 0L) {
             saveMoviePosition(positionKey, initialPositionMs)
             initialPositionMs
@@ -369,13 +388,19 @@ class PlayerViewModel(
         // 1. Check if verified offline file exists for zero-delay offline playback for the CURRENT USER
         val currentUid = repository.userSession.value.uid
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val filename = if (episodeId != null) "movie_${movie.id}_ep_${episodeId}.mp4" else "movie_${movie.id}.mp4"
+
+        val targetEpisode = if (effectiveEpisodeId != null) {
+            sortedEpisodes.firstOrNull { it.id == effectiveEpisodeId }
+        } else {
+            sortedEpisodes.firstOrNull()
+        }
+
+        val filename = if (effectiveEpisodeId != null) "movie_${movie.id}_ep_${effectiveEpisodeId}.mp4" else "movie_${movie.id}.mp4"
         val userFile = java.io.File(java.io.File(destDir, "users/$currentUid"), filename)
         val internalUserFile = java.io.File(java.io.File(context.filesDir, "users/$currentUid"), filename)
 
-        val passedFile = if (movie.videoStreamUrl.startsWith("file:") || movie.videoStreamUrl.startsWith("/")) {
+        val passedFile = if (targetEpisode == null && (movie.videoStreamUrl.startsWith("file:") || movie.videoStreamUrl.startsWith("/"))) {
             val f = java.io.File(movie.videoStreamUrl.removePrefix("file://"))
-            // Check that the passed file is valid and belongs to this user
             if (f.exists() && f.length() >= 1024 * 1024L && (f.absolutePath.contains("/users/$currentUid/") || f.absolutePath.contains("/$currentUid/"))) f else null
         } else null
 
@@ -386,32 +411,24 @@ class PlayerViewModel(
             else -> null
         }
 
-        val offlineUri: String? = when {
-            localCandidate != null -> android.net.Uri.fromFile(localCandidate).toString()
-            movie.videoStreamUrl.startsWith("content:") -> movie.videoStreamUrl
-            else -> null
-        }
-
-        val sortedEpisodes = movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
-        val targetEpisode = if (episodeId != null) {
-            movie.episodes.firstOrNull { it.id == episodeId }
-        } else {
-            sortedEpisodes.firstOrNull()
-        }
-        val directUrl = if (offlineUri != null) {
-            offlineUri
-        } else if (targetEpisode != null) {
+        val directUrl = if (targetEpisode != null) {
             val epKey = targetEpisode.videoKey
             val epStream = targetEpisode.videoStreamUrl
-            if (epKey.isNotBlank() || epStream.isNotBlank()) {
-                R2UrlUtils.canonicalizeStreamUrl(epStream, epKey)
-            } else if (targetEpisode.episodeNumber == 1) {
-                R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
-            } else {
-                "" // Never fall back to movie stream for Episode 2, 3+
+            when {
+                localCandidate != null -> android.net.Uri.fromFile(localCandidate).toString()
+                epStream.startsWith("content:") || epStream.startsWith("file:") -> epStream
+                epKey.isNotBlank() || epStream.isNotBlank() -> R2UrlUtils.canonicalizeStreamUrl(epStream, epKey)
+                targetEpisode.seasonNumber == 1 && targetEpisode.episodeNumber == 1 && movie.videoStreamUrl.isNotBlank() -> {
+                    R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+                }
+                else -> ""
             }
         } else {
-            R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+            when {
+                localCandidate != null -> android.net.Uri.fromFile(localCandidate).toString()
+                movie.videoStreamUrl.startsWith("content:") -> movie.videoStreamUrl
+                else -> R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+            }
         }
 
         if (directUrl.isNotBlank() && (directUrl.startsWith("http://") || directUrl.startsWith("https://") || directUrl.startsWith("file:") || directUrl.startsWith("content:") || directUrl.startsWith("/"))) {
