@@ -1,174 +1,64 @@
-# Structured Series & Season Movie Upload & Playback Flow
+# Implementation Plan: Category Deduplication & Screenshot-Inspired Movie Cards
 
-Streamlined content architecture for uploading and organizing multi-episode seasons and series movies, featuring a dedicated Content Type toggle (Single Movie vs. TV Series / Season), automatic Episode 1 mapping from media pickers, rapid auto-incrementing episode uploads, and guaranteed Season 1 Episode 1 playback priority.
-
-## User Review & Critical Decisions
-
-> [!IMPORTANT]
-> Based on your confirmed choices, here is the approved design and architecture:
->
-> - **Confirmed Decision 1 (Content Type Toggle)**: The upload screen will feature a clear segmented toggle between **Single Movie** and **TV Series / Season**. When TV Series is active, the upload UI transitions into a season-aware series structure with Episode 1 prominently integrated.
-> - **Confirmed Decision 2 (Quick Add Auto-Increment)**: Adding Episode 2 and subsequent episodes will feature a dedicated **"+ Quick Add Episode"** action that automatically detects the highest episode number in the current season and increments it (e.g. S1E2, S1E3, S1E4) with gallery/file picker shortcuts and auto-filled titles.
-> - **Confirmed Decision 3 (Guaranteed S1E1 Playback Priority)**: When launching playback from anywhere (Home banner, Movie Details, or fullscreen player), TV series will strictly prioritize and start at **Season 1 Episode 1** (or the lowest available episode) rather than jumping to Episode 2 or an unmapped video stream.
-> - **Root Cause Resolution**: The issue where uploading Episode 1 caused the player to show Episode 2 occurred because Episode 1 was saved as the root movie video while the episodes list only contained Episode 2. With the new structure, when TV Series is selected, the first video selected is explicitly registered as **Season 1 Episode 1** in `episodes`, ensuring no video is orphaned or mismatched.
+Restructure the home screen catalog display to eliminate movie duplicates across category rows, establish strict category assignment (movies can appear in Trending and exactly one specific genre), and modernize movie cards to match the clean aesthetic of the reference screenshots.
 
 ---
 
-## 1. Overview & Core Concept
-
-### What It Does
-Provides a unified, error-proof upload experience for admins managing movies and TV series. Admins can seamlessly switch between single standalone films and multi-episode TV series. For series, admins can upload Season 1 Episode 1 directly from their gallery or file manager, and rapidly add Episode 2, Episode 3, and onwards across seasons with minimal taps and instant auto-sequencing.
-
-### Target Audience & Persona
-Content administrators managing the video catalog who need an intuitive, fast mobile-friendly workflow to upload and organize episodic content directly from their device storage or gallery.
-
-### Key Value
-- **Zero Confusion**: Eliminates the ambiguity between root "Movie Video" and episodic "Series Episodes".
-- **Rapid Uploads**: Quick-add buttons with automatic numbering (e.g. Season 1, Episode 2, 3, 4...) and single-tap file selection.
-- **Accurate Playback**: Guarantees that viewers always start at Season 1 Episode 1 upon opening a series, with clean season tabs and episode badges.
+## User Decisions & Clarifications
+1. **Deduplication Strategy**: Movies can appear in **Trending Movie** and in **one specific genre only** (no movie will ever be repeated across multiple genre rows like Action, Romance, Horror, etc.).
+2. **Top Navigation**: Keep the existing hero banner at the top, flowing directly into the category sections without extra top sub-tabs.
+3. **Card & Header Aesthetic (from Reference Screenshots)**:
+   - Clean portrait movie cards (~115.dp width, ~170.dp height, 2:3 ratio).
+   - Rounded corners (10–12.dp) with clean image cropping and smooth press animation.
+   - Remove cluttered overlay badges that obstruct the movie poster art.
+   - Movie title positioned cleanly beneath the poster card (1–2 lines with ellipsis).
+   - Category headers featuring the genre title on the left (e.g., "Trending Movie", "💖 Romance 💖", "Action", "Horror", "Comedies", "Animation") and a sleek "More >" action link on the right.
 
 ---
 
-## 2. User Experience & Visual Design
+## Proposed Changes
 
-### Key User Flows
-
-#### A. Selecting Content Type
-1. Admin opens **Admin Studio -> Upload Movie**.
-2. At the very top of the media upload section, a prominent M3 Segmented Button / Pill Selector displays:
-   - 🎬 **Single Movie** (Standard full-length film upload)
-   - 📺 **TV Series / Season** (Multi-episode season management)
-3. Switching to **TV Series / Season** automatically configures the season structure:
-   - If no episodes exist yet, a primary card for **Season 1, Episode 1 (Pilot)** appears with direct **Gallery** and **Files** buttons.
-   - Any video selected is explicitly bound to `episodes[0]` as `Season 1, Episode 1`.
-
-#### B. Adding Episode 2 and Subsequent Episodes
-1. Directly below Episode 1, a prominent **"+ Add Episode 2"** (or next available number) button is displayed with an auto-increment counter.
-2. Tapping it opens the quick episode card or modal pre-filled with:
-   - Season: Current active season tab (default: Season 1).
-   - Episode: Next consecutive number (`max(episodeNumber) + 1`).
-   - Title: Pre-filled with `"Episode X"` or custom name.
-   - Video Source: One-tap access to **Gallery (Photo Picker)** or **Files (Storage Document Picker)**.
-3. Once picked, the episode card displays the file name, size in MB, and a green "Ready to Upload" pill.
-
-#### C. Multi-Season Navigation
-1. Admins can tap `+ New Season` to create Season 2, Season 3, etc.
-2. Season tabs let the admin effortlessly switch views and add episodes specific to that season.
-
-#### D. Detail Screen & Playback Experience
-1. In `MovieDetailScreen`, series show clean season pills (`Season 1`, `Season 2`) and a vertical list of episodes.
-2. The primary "Play" hero button and inline player automatically load **Season 1 Episode 1**.
-3. Viewers can tap any individual episode card to switch active playback immediately.
-
-### Visual Identity & Theme
-- **Theme**: Premium Cinematic Dark theme (`ObsidianBlack` #0D0F14, `SurfaceDark` #161922, `SurfaceElevated` #222634).
-- **Accents**: `CinematicRed` (#E50914) for primary creation actions, `ElectricBlue` (#2979FF) for episode badges, and `EmeraldGreen` (#00C853) for completed file selection indicators.
-- **Touch Targets**: All episode buttons, file picker triggers, and season tabs adhere to >= 48dp touch targets.
+### 1. Movie Deduplication & Category Grouping Logic
+#### `app/src/main/java/com/example/presentation/viewmodel/MovieViewModel.kt`
+- Create a dedicated deduplication helper:
+  - **Trending Row**: Top rated / featured movies (up to 8 items).
+  - **Genre Rows**: Assign each movie strictly to its **primary genre** (the first matching genre in its tags: Romance, Action, Horror, Comedy, Animation, Sci-Fi, Drama).
+  - Track assigned movie IDs across genre sections so that if a movie has multiple tags (e.g., `["Action", "Sci-Fi", "Drama"]`), it is only added to the first matching category and excluded from all other genre rows.
+  - Expose categorized lists (`trendingMovies`, `romanceMovies`, `actionMovies`, `horrorMovies`, `comedyMovies`, `animationMovies`, `otherMovies`) with zero repetition among the genre lists.
 
 ---
 
-## 3. Key Product Decisions & Trade-Offs
-
-### Decision 1: Explicit Content Type Selector vs. Implicit Detection
-- **Chosen Approach**: Explicit toggle at the top of the upload form between `Single Movie` and `TV Series / Season`.
-- **Why**: Eliminates user confusion. Admins immediately know whether they are creating a movie with a single video or an episodic series.
-- **Alternative Considered**: Detecting series solely by whether episodes are added in a sub-dialog. Rejected because users inadvertently uploaded Episode 1 to the movie root and Episode 2 to the sub-dialog.
-
-### Decision 2: Automatic S1E1 Sync & Backward Compatibility
-- **Chosen Approach**: When `TV Series` is active, Episode 1's video URL/key is automatically synchronized with both the `episodes` list and the root `videoStreamUrl`/`videoKey` fallback.
-- **Why**: Ensures backward compatibility with any player screen or catalog query while guaranteeing that `movie.episodes` contains an explicit `S1E1` record.
-
-### Decision 3: Quick Add vs Multi-Step Dialog
-- **Chosen Approach**: In-line quick add cards with pre-calculated episode numbers (`S${season}E${nextNumber}`) and direct file pickers.
-- **Why**: Dramatically speeds up uploading multiple episodes sequentially without having to re-enter season numbers or episode IDs manually.
+### 2. Modern Movie Poster Card Overhaul
+#### `app/src/main/java/com/example/presentation/components/MovieCards.kt`
+- Refactor `MoviePosterCard`:
+  - Set card width to `115.dp` and height to `172.dp` (true 2:3 cinematic poster aspect ratio).
+  - Clip to `RoundedCornerShape(10.dp)` with subtle elevation and background placeholder.
+  - Remove intrusive badges obscuring the front artwork (like the big top tags) to match the clean, unblocked poster presentation in the screenshot.
+  - Place the movie title directly beneath the poster image in crisp `TextPrimary` typography (13.sp, medium/semibold, maxLines = 1 or 2 with `TextOverflow.Ellipsis`).
+  - Keep touch ripple / scale animation for a smooth, tactile feel on click.
 
 ---
 
-## 4. Technical Architecture & Data Strategy *(Technical Reference)*
-
-### Architecture & Component Diagram
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                 AdminAddEditMovieScreen                     │
-│                                                             │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │  Content Type: [ 🎬 Single Movie | 📺 TV Series ]     │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                             │
-│  If Single Movie:                                           │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │ Single Movie Video Picker (Gallery / File Browser)    │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                                                             │
-│  If TV Series / Season:                                     │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │ Season Tabs: [ Season 1 (Active) ] [ + Season ]       │  │
-│  ├───────────────────────────────────────────────────────┤  │
-│  │ Episode 1 (Pilot) - [ Gallery ] [ Files ] - Selected  │  │
-│  │ Episode 2         - [ Gallery ] [ Files ] - Selected  │  │
-│  │ [+ Quick Add Episode 3]                               │  │
-│  └───────────────────────────────────────────────────────┘  │
-│                               │                             │
-│                               ▼                             │
-│                  adminViewModel.updateMovie()               │
-│                  adminViewModel.addMovieWithMultipartUpload│
-└───────────────────────────────┬─────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────┐
-│               Data Model: Movie & Episode                   │
-│                                                             │
-│  Movie.kt:                                                  │
-│  - isSeries: Boolean = episodes.isNotEmpty()                │
-│  - videoStreamUrl: String (S1E1 or single movie)            │
-│  - episodes: List<Episode>                                  │
-│    ├── Episode(s=1, e=1, title="Episode 1", ...)            │
-│    ├── Episode(s=1, e=2, title="Episode 2", ...)            │
-│    └── Episode(s=1, e=3, title="Episode 3", ...)            │
-└───────────────────────────────┬─────────────────────────────┘
-                                │
-                                ▼
-┌─────────────────────────────────────────────────────────────┐
-│             MovieDetailScreen & PlayerViewModel             │
-│                                                             │
-│  - Default activeEpisodeId = sortedEpisodes.firstOrNull()   │
-│    (Strictly Season 1 Episode 1)                            │
-│  - MediaUri resolution: S1E1 plays first                    │
-│  - Episode selector row allows one-tap switching to E2, E3  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Data Model & State Mapping
-1. **`isSeriesMode` State**:
-   - `var isSeriesMode by remember { mutableStateOf(existingMovie?.episodes?.isNotEmpty() == true) }`
-2. **Auto-Increment Logic**:
-   - For season `s`, `val nextEpNumber = (episodesList.filter { it.seasonNumber == s }.maxOfOrNull { it.episodeNumber } ?: 0) + 1`
-   - Quick Add generates `Episode(id = "${movieId}_s${s}_e${nextEpNumber}_${UUID.randomUUID().toString().take(4)}", seasonNumber = s, episodeNumber = nextEpNumber, title = "Episode $nextEpNumber")`
-3. **Synchronized S1E1 Storage**:
-   - When uploading a series, `episodesList` contains all episodes (1, 2, 3...). The first episode's video key and URL are mirrored into the root `videoKey`/`videoStreamUrl` so existing catalog widgets and home carousels function smoothly.
-4. **Player Default Alignment**:
-   - In `MovieDetailScreen.kt` and `VideoPlayerScreen.kt`, `sortedEpisodes` sorts by `seasonNumber ASC, episodeNumber ASC`.
-   - The initial playback target is strictly `sortedEpisodes.firstOrNull()` which guarantees Season 1 Episode 1 is played.
+### 3. Home Screen Category Rows & Headers
+#### `app/src/main/java/com/example/presentation/screens/HomeScreen.kt`
+- Update `MovieRowSection`:
+  - Replace the old "See All" text with the screenshot-styled `"More >"` or `"More ❯"` indicator in `TextSecondary` / subtle tint.
+  - Support category icons or emoji flair where appropriate (e.g., `"💖 Romance 💖"`, `"Trending Movie"`, `"Action"`, `"Horror"`, `"Comedies"`, `"Animation"`).
+  - Horizontal `LazyRow` spacing tuned to `10.dp` for a dense, visually engaging shelf layout.
+  - Clicking `"More >"` navigates to the filtered catalog view for that specific category.
+- Remove duplicate rows:
+  - Eliminate the generic "All Movies" row right above the genre rows which caused immediate visual repetition.
+  - Sequence rows cleanly: Hero Banner -> Trending Movie -> 💖 Romance 💖 -> Action -> Horror -> Comedies -> Animation.
 
 ---
 
-## 5. Verification Plan
+## Verification Plan
 
-### Compilation & Build
-- Verify the Android project compiles cleanly via `compile_applet`.
-
-### Functional Tests
-1. **Content Type Toggle**:
-   - Switch between "Single Movie" and "TV Series / Season" on `AdminAddEditMovieScreen`.
-   - Verify the UI adapts cleanly: Single Movie shows the movie video picker; TV Series shows the Season/Episode structure with Episode 1 ready for video selection.
-2. **Episode 1 Creation**:
-   - Select a video for Episode 1 via Gallery or File Browser.
-   - Verify it appears under Season 1 as Episode 1 with proper filename and size.
-3. **Quick Add Episode 2 & Consecutive Episodes**:
-   - Tap "+ Quick Add Episode".
-   - Verify Episode 2 is created with `seasonNumber = 1, episodeNumber = 2`.
-   - Select video for Episode 2. Verify both Episode 1 and Episode 2 are preserved and distinct in `episodesList`.
-4. **Playback Verification**:
-   - Open a TV series in `MovieDetailScreen`.
-   - Verify Season 1 Episode 1 is loaded and displayed as active, and Episode 2 can be tapped to switch playback without confusion.
+1. **Compilation**: Run `compile_applet` to verify all Compose components build without error.
+2. **Deduplication Verification**:
+   - Check that no movie appears in more than one genre category shelf.
+   - Verify that Trending displays top movies while each genre row presents distinct titles.
+3. **Card Presentation**:
+   - Inspect poster aspect ratio (115dp x 172dp), title layout underneath, and clean poster art without obscuring badges.
+4. **Unit Tests**:
+   - Run `gradle :app:testDebugUnitTest` to verify repository and viewmodel logic integrity.

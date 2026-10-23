@@ -98,8 +98,8 @@ fun Modifier.shimmerSkeleton(
 @Composable
 fun MoviePosterCardSkeleton(
     modifier: Modifier = Modifier,
-    cardWidth: Int = 150,
-    cardHeight: Int = 225,
+    cardWidth: Int = 115,
+    cardHeight: Int = 172,
     brush: Brush = shimmerBrush()
 ) {
     Column(
@@ -107,63 +107,23 @@ fun MoviePosterCardSkeleton(
             .width(cardWidth.dp)
             .testTag("movie_poster_card_skeleton")
     ) {
-        // Main poster artwork placeholder
+        // Main poster artwork placeholder (2:3 aspect ratio)
         Box(
             modifier = Modifier
-                .width(cardWidth.dp)
-                .height(cardHeight.dp)
-                .shimmerSkeleton(RoundedCornerShape(12.dp), brush)
-        ) {
-            // Rating pill placeholder (top right)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .size(width = 44.dp, height = 22.dp)
-                    .clip(RoundedCornerShape(bottomStart = 8.dp))
-                    .background(Color(0x33000000))
-            )
-
-            // 4K tag placeholder (top left)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .size(width = 38.dp, height = 18.dp)
-                    .clip(RoundedCornerShape(topStart = 12.dp, bottomEnd = 8.dp))
-                    .background(Color(0x33000000))
-            )
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // Title placeholder
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(0.82f)
-                .height(14.dp)
-                .shimmerSkeleton(RoundedCornerShape(4.dp), brush)
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f)
+                .shimmerSkeleton(RoundedCornerShape(10.dp), brush)
         )
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Subtitle / Genre & Year row placeholder
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(52.dp)
-                    .height(11.dp)
-                    .shimmerSkeleton(RoundedCornerShape(3.dp), brush)
-            )
-            Box(
-                modifier = Modifier
-                    .width(32.dp)
-                    .height(11.dp)
-                    .shimmerSkeleton(RoundedCornerShape(3.dp), brush)
-            )
-        }
+        // Title placeholder
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(0.85f)
+                .height(13.dp)
+                .shimmerSkeleton(RoundedCornerShape(4.dp), brush)
+        )
     }
 }
 
@@ -203,8 +163,8 @@ fun MovieRowSectionSkeleton(
 
         // Horizontal items row
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             userScrollEnabled = false
         ) {
             items(cardCount) {

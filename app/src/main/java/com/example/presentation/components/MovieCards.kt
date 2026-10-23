@@ -1,15 +1,18 @@
 package com.example.presentation.components
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,10 +22,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -44,26 +45,32 @@ import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.example.domain.model.Movie
-import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
-import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.SurfaceElevated
 import com.example.ui.theme.TextPrimary
-import com.example.ui.theme.TextSecondary
 import com.example.util.MovieCoverUtils
 
+/**
+ * Modern 2:3 portrait aspect ratio movie poster item component.
+ * Displays a clean, unobstructed movie poster with rounded corners and the title
+ * clearly styled underneath in a cinematic aesthetic matching the streaming catalog.
+ */
 @Composable
 fun MoviePosterCard(
     movie: Movie,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    cardWidth: Int = 150,
-    cardHeight: Int = 225
+    cardWidth: Int = 115,
+    cardHeight: Int = (cardWidth * 1.5f).toInt()
 ) {
     val context = LocalContext.current
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (isPressed) 0.96f else 1.0f, label = "card_scale")
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.96f else 1.0f,
+        animationSpec = tween(durationMillis = 150),
+        label = "card_scale"
+    )
 
     Column(
         modifier = modifier
@@ -76,12 +83,17 @@ fun MoviePosterCard(
             )
             .testTag("movie_card_${movie.id}")
     ) {
+        // 2:3 Cinematic Portrait Poster Container
         Box(
             modifier = Modifier
-                .width(cardWidth.dp)
-                .height(cardHeight.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f)
+                .clip(RoundedCornerShape(10.dp))
                 .background(SurfaceElevated)
+                .border(
+                    BorderStroke(0.5.dp, Color(0x18FFFFFF)),
+                    shape = RoundedCornerShape(10.dp)
+                )
         ) {
             val effectiveCover = MovieCoverUtils.resolveCoverUrl(movie.title, movie.coverUrl, movie.genres)
 
@@ -106,7 +118,7 @@ fun MoviePosterCard(
                         CircularProgressIndicator(
                             color = CinematicRed,
                             strokeWidth = 2.dp,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 },
@@ -124,13 +136,13 @@ fun MoviePosterCard(
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center,
-                            modifier = Modifier.padding(8.dp)
+                            modifier = Modifier.padding(6.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Movie,
                                 contentDescription = null,
                                 tint = CinematicRed.copy(alpha = 0.7f),
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(24.dp)
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
@@ -147,93 +159,20 @@ fun MoviePosterCard(
                 },
                 modifier = Modifier.fillMaxSize()
             )
-
-            // Subtle gradient overlay at bottom
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(60.dp)
-                    .align(Alignment.BottomCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color(0xDD09090C))
-                        )
-                    )
-            )
-
-            // Rating badge top right
-            Surface(
-                color = Color(0xCC09090C),
-                shape = RoundedCornerShape(bottomStart = 8.dp),
-                modifier = Modifier.align(Alignment.TopEnd)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Star,
-                        contentDescription = "Rating",
-                        tint = AmberGold,
-                        modifier = Modifier.size(12.dp)
-                    )
-                    Spacer(modifier = Modifier.width(3.dp))
-                    Text(
-                        text = String.format("%.1f", movie.rating),
-                        color = TextPrimary,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-
-            // Translation badge top left (Imetafsiriwa)
-            Surface(
-                color = if (movie.isSwahiliTranslated) CinematicRed else Color(0xFF282834),
-                shape = RoundedCornerShape(topStart = 12.dp, bottomEnd = 8.dp),
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .testTag("tag_imetafsiriwa_${movie.id}")
-            ) {
-                Text(
-                    text = if (movie.isSwahiliTranslated) "Imetafsiriwa" else "English",
-                    color = Color.White,
-                    fontSize = 8.5.sp,
-                    fontWeight = FontWeight.Black,
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
-                )
-            }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
+        // Title clearly styled underneath
         Text(
             text = movie.title,
             color = TextPrimary,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 2,
+            lineHeight = 17.sp,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = movie.genres.firstOrNull() ?: "Cinema",
-                color = TextSecondary,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false)
-            )
-            Text(
-                text = "${movie.releaseYear}",
-                color = TextSecondary.copy(alpha = 0.7f),
-                fontSize = 11.sp
-            )
-        }
+        )
     }
 }

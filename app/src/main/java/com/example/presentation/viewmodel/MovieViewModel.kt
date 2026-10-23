@@ -15,11 +15,15 @@ import kotlinx.coroutines.launch
 data class MovieUiState(
     val featuredMovies: List<Movie> = emptyList(),
     val allMovies: List<Movie> = emptyList(),
+    val trendingMovies: List<Movie> = emptyList(),
     val popularMovies: List<Movie> = emptyList(),
-    val sciFiMovies: List<Movie> = emptyList(),
+    val romanceMovies: List<Movie> = emptyList(),
     val actionMovies: List<Movie> = emptyList(),
-    val dramaMovies: List<Movie> = emptyList(),
     val horrorMovies: List<Movie> = emptyList(),
+    val comedyMovies: List<Movie> = emptyList(),
+    val animationMovies: List<Movie> = emptyList(),
+    val sciFiMovies: List<Movie> = emptyList(),
+    val dramaMovies: List<Movie> = emptyList(),
     val selectedGenre: String? = null,
     val selectedYear: Int? = null,
     val searchQuery: String = "",
@@ -86,14 +90,59 @@ class MovieViewModel(
             matchesQuery && matchesGenre && matchesYear
         }
 
+        // Trending shelf: Top rated & featured movies (distinct, up to 10)
+        val trending = (featured + allMovies.sortedByDescending { it.rating })
+            .distinctBy { it.id }
+            .take(10)
+
+        // Strict deduplication across genre shelves:
+        // A movie can appear in Trending, but only in EXACTLY ONE specific genre category shelf.
+        val usedInGenres = mutableSetOf<String>()
+
+        fun takeUniqueForGenre(predicate: (Movie) -> Boolean): List<Movie> {
+            val matched = allMovies.filter { movie ->
+                movie.id !in usedInGenres && predicate(movie)
+            }
+            matched.forEach { usedInGenres.add(it.id) }
+            return matched
+        }
+
+        val romance = takeUniqueForGenre { m ->
+            m.genres.any { it.contains("Romance", ignoreCase = true) || it.contains("Love", ignoreCase = true) }
+        }
+        val action = takeUniqueForGenre { m ->
+            m.genres.any { it.contains("Action", ignoreCase = true) }
+        }
+        val horror = takeUniqueForGenre { m ->
+            m.genres.any { it.contains("Horror", ignoreCase = true) || it.contains("Thriller", ignoreCase = true) || it.contains("Suspense", ignoreCase = true) }
+        }
+        val comedy = takeUniqueForGenre { m ->
+            m.genres.any { it.contains("Comed", ignoreCase = true) || it.contains("Funny", ignoreCase = true) }
+        }
+        val animation = takeUniqueForGenre { m ->
+            m.genres.any { it.contains("Animat", ignoreCase = true) || it.contains("Anime", ignoreCase = true) || it.contains("Cartoon", ignoreCase = true) }
+        }
+        val sciFi = takeUniqueForGenre { m ->
+            m.genres.any { it.contains("Sci-Fi", ignoreCase = true) || it.contains("Science", ignoreCase = true) || it.contains("Cyber", ignoreCase = true) }
+        }
+        val dramaMatches = takeUniqueForGenre { m ->
+            m.genres.any { it.contains("Drama", ignoreCase = true) || it.contains("Adventure", ignoreCase = true) || it.contains("Epic", ignoreCase = true) || it.contains("Nature", ignoreCase = true) }
+        }
+        val remainingUnassigned = allMovies.filter { it.id !in usedInGenres }
+        val drama = dramaMatches + remainingUnassigned
+
         MovieUiState(
             featuredMovies = featured.ifEmpty { allMovies.take(3) },
             allMovies = allMovies,
-            popularMovies = allMovies.sortedByDescending { it.rating },
-            sciFiMovies = allMovies.filter { it.genres.any { g -> g.contains("Sci-Fi", ignoreCase = true) } },
-            actionMovies = allMovies.filter { it.genres.any { g -> g.contains("Action", ignoreCase = true) } },
-            dramaMovies = allMovies.filter { it.genres.any { g -> g.contains("Adventure", ignoreCase = true) || g.contains("Drama", ignoreCase = true) || g.contains("Nature", ignoreCase = true) } },
-            horrorMovies = allMovies.filter { it.genres.any { g -> g.contains("Horror", ignoreCase = true) || g.contains("Thriller", ignoreCase = true) } },
+            trendingMovies = trending,
+            popularMovies = trending,
+            romanceMovies = romance,
+            actionMovies = action,
+            horrorMovies = horror,
+            comedyMovies = comedy,
+            animationMovies = animation,
+            sciFiMovies = sciFi,
+            dramaMovies = drama,
             selectedGenre = genre,
             selectedYear = year,
             searchQuery = query,

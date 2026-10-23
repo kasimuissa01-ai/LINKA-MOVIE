@@ -110,12 +110,19 @@ fun AppNavigation(
     playerViewModel: PlayerViewModel,
     updateViewModel: AppUpdateViewModel,
     modifier: Modifier = Modifier,
+    initialMovieId: String? = null,
     navController: NavHostController = rememberNavController()
 ) {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val context = androidx.compose.ui.platform.LocalContext.current
     val adminAnalyticsViewModel = remember { AdminAnalyticsViewModel(AppAnalyticsManager.getInstance(context)) }
+
+    androidx.compose.runtime.LaunchedEffect(initialMovieId) {
+        if (!initialMovieId.isNullOrBlank()) {
+            navController.navigate(Screen.MovieDetail.createRoute(initialMovieId))
+        }
+    }
 
     val bottomNavItems = listOf(
         BottomNavItem("Home", Screen.Home.route, Icons.Filled.Home, Icons.Outlined.Home),
@@ -221,6 +228,21 @@ fun AppNavigation(
                             navController.navigate(Screen.VideoPlayer.createRoute(movie.id)) {
                                 launchSingleTop = true
                             }
+                        },
+                        onCategoryClick = { category ->
+                            val genreFilter = when (category) {
+                                "Trending" -> null
+                                "Romance" -> "Romance"
+                                "Action" -> "Action"
+                                "Horror" -> "Horror"
+                                "Comedy" -> "Comedy"
+                                "Animation" -> "Animation"
+                                "Sci-Fi" -> "Sci-Fi"
+                                "Drama" -> "Drama"
+                                else -> category
+                            }
+                            movieViewModel.onGenreSelected(genreFilter)
+                            navController.navigate(Screen.Search.route)
                         }
                     )
                 }

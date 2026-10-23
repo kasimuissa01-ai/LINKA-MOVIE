@@ -117,6 +117,11 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.PlayerView
 import com.example.domain.model.Movie
 import com.example.domain.model.Episode
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.compose.material.icons.filled.VideoFile
 import com.example.presentation.components.CinematicLoadingOverlay
 import com.example.presentation.viewmodel.PlayerViewModel
 import com.example.ui.theme.AmberGold
@@ -182,6 +187,14 @@ fun VideoPlayerScreen(
     var showSubtitleSheet by remember { mutableStateOf(false) }
     var showSpeedDialog by remember { mutableStateOf(false) }
     var showEpisodeModal by remember { mutableStateOf(false) }
+
+    val episodeVideoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null && activeEpisodeId != null) {
+            playerViewModel.playLocalEpisodeUri(context, movie, activeEpisodeId!!, uri)
+        }
+    }
 
     // Helper to safely restore system UI and portrait orientation
     val restoreSystemUiAndOrientation: () -> Unit = {
@@ -396,6 +409,10 @@ fun VideoPlayerScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(20.dp)
                 ) {
+                    val isConnectionIssue = errorText.contains("internet", ignoreCase = true) ||
+                            errorText.contains("connect", ignoreCase = true) ||
+                            uiState.streamDiagnostic?.failureSummary?.contains("internet", ignoreCase = true) == true
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
@@ -403,76 +420,83 @@ fun VideoPlayerScreen(
                         Icon(
                             imageVector = Icons.Default.Warning,
                             contentDescription = null,
-                            tint = CinematicRed,
+                            tint = if (isConnectionIssue) AmberGold else CinematicRed,
                             modifier = Modifier.size(24.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "Playback Pipeline Diagnostics",
+                            text = if (isConnectionIssue) "Connection Problem" else "Playback Notice",
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
+                            fontSize = 17.sp
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    uiState.streamDiagnostic?.let { diag ->
-                        Surface(
-                            color = Color.Black.copy(alpha = 0.4f),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
+                    Surface(
+                        color = Color.Black.copy(alpha = 0.45f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(14.dp)
                         ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text(
-                                    text = "Status: ${diag.failureSummary}",
-                                    color = AmberGold,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Broken Layer: ${diag.brokenLayer}",
-                                    color = Color.White.copy(alpha = 0.85f),
-                                    fontSize = 12.sp
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Stream URL: ${diag.streamUrl.take(60)}${if (diag.streamUrl.length > 60) "..." else ""}",
-                                    color = TextSecondary,
-                                    fontSize = 11.sp,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = "How to fix: ${diag.actionGuide}",
-                                    color = ElectricBlue,
-                                    fontSize = 12.sp,
-                                    lineHeight = 16.sp
-                                )
-                            }
+                            val primaryMsg = uiState.streamDiagnostic?.failureSummary ?: errorText
+                            val guideMsg = uiState.streamDiagnostic?.actionGuide ?: "Please check your internet or tap Retry."
+                            Text(
+                                text = primaryMsg,
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = guideMsg,
+                                color = TextSecondary,
+                                fontSize = 12.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
                         }
-                    } ?: run {
-                        Text(
-                            text = errorText,
-                            color = Color.White.copy(alpha = 0.9f),
-                            fontSize = 13.sp
-                        )
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        if (activeEpisodeId != null) {
+                            Button(
+                                onClick = {
+                                    episodeVideoPicker.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                                    )
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.testTag("btn_player_pick_episode_video")
+                            ) {
+                                Icon(Icons.Default.VideoFile, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Select Video File",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
                         Button(
                             onClick = {
-                                playerViewModel.retryPlayback(context, movie, episodeId)
+                                playerViewModel.retryPlayback(context, movie, activeEpisodeId)
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = CinematicRed),
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("btn_player_retry_stream")
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
@@ -489,7 +513,8 @@ fun VideoPlayerScreen(
                                 restoreSystemUiAndOrientation()
                                 onBackClick()
                             },
-                            shape = RoundedCornerShape(8.dp)
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("btn_player_back_to_details")
                         ) {
                             Text(
                                 text = "Back to Details",
@@ -1009,6 +1034,13 @@ fun VideoPlayerScreen(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     }
+                                    val isLocal = ep.videoStreamUrl.startsWith("content:") || ep.videoStreamUrl.startsWith("file:")
+                                    val hasVideo = isLocal || ep.videoKey.isNotBlank() || ep.videoStreamUrl.isNotBlank()
+                                    Text(
+                                        text = if (isLocal) "• Local Video Ready" else if (hasVideo) "• Cloud Stream Ready" else "• Needs Video Source",
+                                        color = if (hasVideo) ElectricBlue else AmberGold,
+                                        fontSize = 10.sp
+                                    )
                                 }
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(

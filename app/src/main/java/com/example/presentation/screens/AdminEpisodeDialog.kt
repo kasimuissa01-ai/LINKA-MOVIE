@@ -441,7 +441,7 @@ fun AdminEpisodeEditDialog(
                                 else -> initialEpisode?.videoKey ?: ""
                             }
                             val resolvedStreamUrl = when {
-                                selectedVideoUri != null -> ""
+                                selectedVideoUri != null -> selectedVideoUri.toString()
                                 cleanInput.isNotBlank() -> if (resolvedKey.isNotBlank()) R2UrlUtils.buildUrl(resolvedKey) else cleanInput
                                 else -> initialEpisode?.videoStreamUrl ?: ""
                             }

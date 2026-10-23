@@ -2118,6 +2118,7 @@ fun AdminAddEditMovieScreen(
                             rating = rate,
                             isFeatured = isFeaturedOnCarousel,
                             episodes = finalEpisodesList,
+                            episodeUris = pendingEpisodeUris,
                             isSwahiliTranslated = isSwahiliTranslated
                         )
                     } else {
@@ -2243,6 +2244,7 @@ fun AdminAddEditMovieScreen(
                         rating = rate,
                         isFeatured = isFeaturedOnCarousel,
                         episodes = finalEpisodesList,
+                        episodeUris = pendingEpisodeUris,
                         isSwahiliTranslated = isSwahiliTranslated
                     )
                 },
@@ -2292,8 +2294,12 @@ fun AdminAddEditMovieScreen(
                 val sorted = current.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
                 episodesList = sorted
 
-                if (videoUri != null) {
-                    pendingEpisodeUris = pendingEpisodeUris + (ep.id to videoUri)
+                val effectiveUri = videoUri ?: if (ep.videoStreamUrl.startsWith("content://") || ep.videoStreamUrl.startsWith("file://")) {
+                    try { android.net.Uri.parse(ep.videoStreamUrl) } catch (_: Exception) { null }
+                } else null
+
+                if (effectiveUri != null) {
+                    pendingEpisodeUris = pendingEpisodeUris + (ep.id to effectiveUri)
                 }
             }
         )

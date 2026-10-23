@@ -119,6 +119,25 @@ class MainActivity : ComponentActivity() {
         // Schedule Daily Morning, Afternoon & Night Movie Recommendations
         com.example.util.DailyMovieNotificationReceiver.scheduleDailyPicks(applicationContext)
 
+        // Request Notification Permission on Android 13+ if not granted
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val permissionCheck = androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            )
+            if (permissionCheck != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { }.launch(
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                )
+            }
+        }
+
+        val initialMovieId = intent?.getStringExtra(com.example.util.MovieNotificationHelper.EXTRA_MOVIE_ID)
+            ?: intent?.getStringExtra("extra_movie_id")
+        if (!initialMovieId.isNullOrBlank()) {
+            notificationMovieId.value = initialMovieId
+        }
+
         setContent {
             MovieRoomTheme {
                 Surface(
@@ -131,10 +150,23 @@ class MainActivity : ComponentActivity() {
                         adminViewModel = adminViewModel,
                         authViewModel = authViewModel,
                         playerViewModel = playerViewModel,
-                        updateViewModel = appUpdateViewModel
+                        updateViewModel = appUpdateViewModel,
+                        initialMovieId = notificationMovieId.value
                     )
                 }
             }
+        }
+    }
+
+    private val notificationMovieId = androidx.compose.runtime.mutableStateOf<String?>(null)
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val movieId = intent.getStringExtra(com.example.util.MovieNotificationHelper.EXTRA_MOVIE_ID)
+            ?: intent.getStringExtra("extra_movie_id")
+        if (!movieId.isNullOrBlank()) {
+            notificationMovieId.value = movieId
         }
     }
 

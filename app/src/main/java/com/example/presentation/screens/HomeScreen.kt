@@ -95,6 +95,7 @@ fun HomeScreen(
     onMovieClick: (Movie) -> Unit,
     onPlayClick: (Movie) -> Unit,
     updateViewModel: AppUpdateViewModel? = null,
+    onCategoryClick: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val state by movieViewModel.uiState.collectAsState()
@@ -251,77 +252,110 @@ fun HomeScreen(
             }
         }
 
-        item { Spacer(modifier = Modifier.height(24.dp)) }
+        item { Spacer(modifier = Modifier.height(18.dp)) }
 
-        // All Uploaded Movies
-        if (state.allMovies.isNotEmpty()) {
+        // 1. Trending Movie Shelf
+        if (state.trendingMovies.isNotEmpty()) {
             item {
                 MovieRowSection(
-                    title = "All Movies",
-                    movies = state.allMovies,
-                    onMovieClick = onMovieClick
+                    title = "Trending Movie",
+                    movies = state.trendingMovies,
+                    onMovieClick = onMovieClick,
+                    onMoreClick = { onCategoryClick?.invoke("Trending") }
                 )
             }
-            item { Spacer(modifier = Modifier.height(24.dp)) }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
-        // Popular Movies Row
-        if (state.popularMovies.isNotEmpty()) {
+        // 2. 💖 Romance 💖 Shelf (Mutually Exclusive)
+        if (state.romanceMovies.isNotEmpty()) {
             item {
                 MovieRowSection(
-                    title = "Popular on MovieRoom",
-                    movies = state.popularMovies,
-                    onMovieClick = onMovieClick
+                    title = "💖 Romance 💖",
+                    movies = state.romanceMovies,
+                    onMovieClick = onMovieClick,
+                    onMoreClick = { onCategoryClick?.invoke("Romance") }
                 )
             }
-            item { Spacer(modifier = Modifier.height(24.dp)) }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
-        // Sci-Fi & Cyberpunk Row
+        // 3. Action Shelf (Mutually Exclusive)
+        if (state.actionMovies.isNotEmpty()) {
+            item {
+                MovieRowSection(
+                    title = "Action",
+                    movies = state.actionMovies,
+                    onMovieClick = onMovieClick,
+                    onMoreClick = { onCategoryClick?.invoke("Action") }
+                )
+            }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
+        }
+
+        // 4. Horror Shelf (Mutually Exclusive)
+        if (state.horrorMovies.isNotEmpty()) {
+            item {
+                MovieRowSection(
+                    title = "Horror",
+                    movies = state.horrorMovies,
+                    onMovieClick = onMovieClick,
+                    onMoreClick = { onCategoryClick?.invoke("Horror") }
+                )
+            }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
+        }
+
+        // 5. Comedies Shelf (Mutually Exclusive)
+        if (state.comedyMovies.isNotEmpty()) {
+            item {
+                MovieRowSection(
+                    title = "Comedies",
+                    movies = state.comedyMovies,
+                    onMovieClick = onMovieClick,
+                    onMoreClick = { onCategoryClick?.invoke("Comedy") }
+                )
+            }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
+        }
+
+        // 6. Animation Shelf (Mutually Exclusive)
+        if (state.animationMovies.isNotEmpty()) {
+            item {
+                MovieRowSection(
+                    title = "Animation",
+                    movies = state.animationMovies,
+                    onMovieClick = onMovieClick,
+                    onMoreClick = { onCategoryClick?.invoke("Animation") }
+                )
+            }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
+        }
+
+        // 7. Sci-Fi & Cyberpunk Shelf (Mutually Exclusive)
         if (state.sciFiMovies.isNotEmpty()) {
             item {
                 MovieRowSection(
                     title = "Sci-Fi & Cyberpunk",
                     movies = state.sciFiMovies,
-                    onMovieClick = onMovieClick
+                    onMovieClick = onMovieClick,
+                    onMoreClick = { onCategoryClick?.invoke("Sci-Fi") }
                 )
             }
-            item { Spacer(modifier = Modifier.height(24.dp)) }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
         }
 
-        // Action & Thrillers
-        if (state.actionMovies.isNotEmpty()) {
-            item {
-                MovieRowSection(
-                    title = "Action & Thrillers",
-                    movies = state.actionMovies,
-                    onMovieClick = onMovieClick
-                )
-            }
-            item { Spacer(modifier = Modifier.height(24.dp)) }
-        }
-
-        // Horror & Suspense
-        if (state.horrorMovies.isNotEmpty()) {
-            item {
-                MovieRowSection(
-                    title = "Horror & Suspense",
-                    movies = state.horrorMovies,
-                    onMovieClick = onMovieClick
-                )
-            }
-            item { Spacer(modifier = Modifier.height(24.dp)) }
-        }
-
-        // Cinematic Epics & Drama
+        // 8. Cinematic Epics Shelf (Mutually Exclusive)
         if (state.dramaMovies.isNotEmpty()) {
             item {
                 MovieRowSection(
                     title = "Cinematic Epics",
                     movies = state.dramaMovies,
-                    onMovieClick = onMovieClick
+                    onMovieClick = onMovieClick,
+                    onMoreClick = { onCategoryClick?.invoke("Drama") }
                 )
             }
+            item { Spacer(modifier = Modifier.height(20.dp)) }
         }
     }
 }
@@ -617,7 +651,8 @@ fun MovieRowSection(
     title: String,
     movies: List<Movie>,
     onMovieClick: (Movie) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onMoreClick: (() -> Unit)? = null
 ) {
     if (movies.isEmpty()) return
 
@@ -627,7 +662,7 @@ fun MovieRowSection(
             horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 16.dp)
         ) {
             Text(
                 text = title,
@@ -635,19 +670,34 @@ fun MovieRowSection(
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )
-            Text(
-                text = "See All",
-                color = CinematicRed,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { onMoreClick?.invoke() }
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = "More",
+                    color = TextSecondary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.width(3.dp))
+                Icon(
+                    imageVector = Icons.Default.ArrowForward,
+                    contentDescription = "More $title",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(13.dp)
+                )
+            }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.testTag("movie_row_${title.replace(" ", "_")}")
         ) {
             items(movies, key = { it.id }) { movie ->

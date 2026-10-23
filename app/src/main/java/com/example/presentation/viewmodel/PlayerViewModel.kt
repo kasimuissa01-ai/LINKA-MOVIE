@@ -296,46 +296,44 @@ class PlayerViewModel(
                     currCause = currCause.cause
                 }
 
-                val diagnostic = when (httpCode) {
-                    404 -> StreamDiagnosticInfo(
+                val isNetworkError = error.errorCodeName.contains("NETWORK", ignoreCase = true) ||
+                        error.errorCodeName.contains("TIMEOUT", ignoreCase = true) ||
+                        error.message?.contains("Unable to connect", ignoreCase = true) == true ||
+                        error.message?.contains("UnknownHost", ignoreCase = true) == true
+
+                val diagnostic = when {
+                    isNetworkError -> StreamDiagnosticInfo(
+                        streamUrl = currentUrl,
+                        httpStatusCode = httpCode,
+                        errorCodeName = error.errorCodeName,
+                        failureSummary = "Please check your internet connection.",
+                        brokenLayer = "Network Connection",
+                        actionGuide = "Make sure your device is connected to the internet and tap Retry."
+                    )
+                    httpCode == 404 -> StreamDiagnosticInfo(
                         streamUrl = currentUrl,
                         httpStatusCode = 404,
                         errorCodeName = error.errorCodeName,
-                        failureSummary = "HTTP 404 Not Found from Cloudflare R2",
-                        brokenLayer = "Cloudflare R2 Storage (File missing or unfinished multipart upload)",
-                        actionGuide = "The video file does not exist in your R2 bucket. In Cloudflare R2, uploads left in 'Ongoing' state are not playable until completed. Open Admin Studio -> Edit Movie -> Upload Video to finish."
+                        failureSummary = "This video is currently unavailable.",
+                        brokenLayer = "Video Stream",
+                        actionGuide = "The video file cannot be reached online. You can select a local video file or try again later."
                     )
-                    403 -> StreamDiagnosticInfo(
+                    httpCode == 403 -> StreamDiagnosticInfo(
                         streamUrl = currentUrl,
                         httpStatusCode = 403,
                         errorCodeName = error.errorCodeName,
-                        failureSummary = "HTTP 403 Forbidden from Cloudflare R2",
-                        brokenLayer = "Cloudflare R2 Permissions / CORS / Public Domain",
-                        actionGuide = "Cloudflare R2 is denying read access. Verify Public Access / Custom Domain settings in Cloudflare Dashboard."
+                        failureSummary = "Video playback is temporarily restricted.",
+                        brokenLayer = "Stream Access",
+                        actionGuide = "Please tap Retry in a moment or select another title."
                     )
-                    else -> {
-                        val isNetwork = error.errorCodeName.contains("NETWORK", ignoreCase = true) ||
-                                error.errorCodeName.contains("TIMEOUT", ignoreCase = true) ||
-                                error.message?.contains("Unable to connect", ignoreCase = true) == true
-                        val isParser = error.errorCodeName.contains("PARSING", ignoreCase = true) ||
-                                error.errorCodeName.contains("CONTAINER", ignoreCase = true)
-                        StreamDiagnosticInfo(
-                            streamUrl = currentUrl,
-                            httpStatusCode = httpCode,
-                            errorCodeName = error.errorCodeName,
-                            failureSummary = error.message ?: error.errorCodeName,
-                            brokenLayer = when {
-                                isNetwork -> "Network Connection / Bandwidth to R2 CDN"
-                                isParser -> "Video Codec / MP4 Moov-Atom (Faststart) header"
-                                else -> "Stream Resolver / Player Pipeline"
-                            },
-                            actionGuide = when {
-                                isNetwork -> "Ensure active internet connection and check if ${R2UrlUtils.PUBLIC_R2_DOMAIN} is accessible."
-                                isParser -> "The MP4 file has moov atom at the end of file instead of beginning. Re-encode video with 'faststart' or re-upload via Admin Studio."
-                                else -> "Tap Retry to reconnect or edit the movie in Admin Studio to set a verified stream URL."
-                            }
-                        )
-                    }
+                    else -> StreamDiagnosticInfo(
+                        streamUrl = currentUrl,
+                        httpStatusCode = httpCode,
+                        errorCodeName = error.errorCodeName,
+                        failureSummary = "Unable to play video right now.",
+                        brokenLayer = "Video Playback",
+                        actionGuide = "Please tap Retry or select a video file from your device."
+                    )
                 }
 
                 // 2. If it was playing an online stream, attempt offline failover or alternative stream:
@@ -360,27 +358,48 @@ class PlayerViewModel(
                         return@launch
                     }
 
-                    val fallbackUrl = repository.resolveOnlineStreamUri(movie, excludeUrl = currentUrl)
-                    if (fallbackUrl.isNotBlank() && fallbackUrl != currentUrl) {
-                        android.util.Log.w("PlayerViewModel", "Switching to verified stream source: $fallbackUrl")
-                        _uiState.value = _uiState.value.copy(
-                            currentPlaybackUrl = fallbackUrl,
-                            errorMessage = null,
-                            streamDiagnostic = null,
-                            isLoading = true,
-                            loadingStage = "Buffering cinema stream..."
-                        )
-                        player.setMediaItem(MediaItem.fromUri(fallbackUrl))
-                        player.prepare()
-                        player.playWhenReady = true
+                    if (episodeId == null) {
+                        val fallbackUrl = repository.resolveOnlineStreamUri(movie, excludeUrl = currentUrl)
+                        if (fallbackUrl.isNotBlank() && fallbackUrl != currentUrl) {
+                            android.util.Log.w("PlayerViewModel", "Switching to verified stream source: $fallbackUrl")
+                            _uiState.value = _uiState.value.copy(
+                                currentPlaybackUrl = fallbackUrl,
+                                errorMessage = null,
+                                streamDiagnostic = null,
+                                isLoading = true,
+                                loadingStage = "Buffering cinema stream..."
+                            )
+                            player.setMediaItem(MediaItem.fromUri(fallbackUrl))
+                            player.prepare()
+                            player.playWhenReady = true
+                            return@launch
+                        }
                     } else {
+                        // For a specific episode: NEVER fall back to Episode 1 / Movie stream URL!
+                        val targetEp = movie.episodes.firstOrNull { it.id == episodeId }
+                        val epNumber = targetEp?.episodeNumber ?: 2
+                        val epTitle = targetEp?.title ?: "Episode $epNumber"
+                        val isLocal = currentUrl.startsWith("content:") || currentUrl.startsWith("file:")
+                        val diagnosticMsg = if (isLocal) {
+                            "Unable to read local video file for $epTitle. Tap 'Select Video' below to choose the file again from your device."
+                        } else {
+                            "Cloud stream for $epTitle is not available yet. Tap 'Select Video' to play from your device or wait for upload."
+                        }
                         _uiState.value = _uiState.value.copy(
                             isPlaying = false,
                             isLoading = false,
-                            errorMessage = diagnostic.failureSummary,
-                            streamDiagnostic = diagnostic
+                            errorMessage = diagnosticMsg,
+                            streamDiagnostic = diagnostic.copy(failureSummary = diagnosticMsg)
                         )
+                        return@launch
                     }
+
+                    _uiState.value = _uiState.value.copy(
+                        isPlaying = false,
+                        isLoading = false,
+                        errorMessage = diagnostic.failureSummary,
+                        streamDiagnostic = diagnostic
+                    )
                 }
             }
         })
@@ -514,6 +533,17 @@ class PlayerViewModel(
                     loadingStage = "Buffering cinema stream..."
                 )
                 val playbackUrl = repository.resolvePlaybackUri(movie, context, episodeId)
+                if (playbackUrl.isBlank()) {
+                    val targetEp = movie.episodes.firstOrNull { it.id == episodeId }
+                    val epTitle = targetEp?.title ?: if (episodeId != null) "Episode ${targetEp?.episodeNumber ?: 2}" else movie.title
+                    _uiState.value = _uiState.value.copy(
+                        isPlaying = false,
+                        isLoading = false,
+                        isResolvingStreamUrl = false,
+                        errorMessage = "No video stream is available for '$epTitle'. Tap 'Select Video' to pick a local file from your device."
+                    )
+                    return@launch
+                }
                 val isOffline = playbackUrl.startsWith("file:") || playbackUrl.startsWith("/") || playbackUrl.startsWith("content:")
                 val positionKey = if (episodeId != null) "${movie.id}_ep_${episodeId}" else movie.id
                 val resumePos = getMovieLastPosition(positionKey)
@@ -535,6 +565,47 @@ class PlayerViewModel(
                 }
                 player.prepare()
                 player.playWhenReady = true
+            }
+        }
+    }
+
+    fun playLocalEpisodeUri(context: Context, movie: Movie, episodeId: String, uri: android.net.Uri) {
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: Exception) { }
+
+        viewModelScope.launch {
+            val updatedEpisodes = movie.episodes.map { ep ->
+                if (ep.id == episodeId) ep.copy(videoStreamUrl = uri.toString()) else ep
+            }
+            val updatedMovie = movie.copy(episodes = updatedEpisodes)
+            try {
+                repository.updateMovie(updatedMovie)
+            } catch (e: Exception) {
+                android.util.Log.w("PlayerViewModel", "Failed to persist local episode URI: ${e.message}")
+            }
+
+            currentMovieId = movie.id
+            currentEpisodeId = episodeId
+            _uiState.value = _uiState.value.copy(
+                isOfflinePlayback = true,
+                currentPlaybackUrl = uri.toString(),
+                isResolvingStreamUrl = false,
+                isLoading = true,
+                loadingStage = "Playing local episode video...",
+                errorMessage = null,
+                streamDiagnostic = null
+            )
+
+            exoPlayer?.let { player ->
+                player.setMediaItem(MediaItem.fromUri(uri))
+                player.prepare()
+                player.playWhenReady = true
+                player.play()
+                startProgressTracker()
             }
         }
     }
