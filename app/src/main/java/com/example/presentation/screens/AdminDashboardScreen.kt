@@ -84,12 +84,16 @@ fun AdminDashboardScreen(
 ) {
     val movies by adminViewModel.movies.collectAsState()
     val uploadState by adminViewModel.uploadState.collectAsState()
+    val userSession by adminViewModel.userSession.collectAsState()
+    val currentPhone = userSession.phoneNumber.filter { it.isDigit() }
+    val isMainAdmin = com.example.data.repository.AuthRepository.isMainAdmin(currentPhone) || currentPhone == "255696102700"
     val context = androidx.compose.ui.platform.LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
     var movieToDelete by remember { mutableStateOf<Movie?>(null) }
     var syncBannerMessage by remember { mutableStateOf<String?>(null) }
     var movieForCoverChange by remember { mutableStateOf<Movie?>(null) }
     var managingMovieEpisodes by remember { mutableStateOf<Movie?>(null) }
+    var showManageAdminsDialog by remember { mutableStateOf(false) }
 
     val coverChangeLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()
@@ -167,6 +171,30 @@ fun AdminDashboardScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    if (isMainAdmin) {
+                        Button(
+                            onClick = { showManageAdminsDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853)),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier.testTag("admin_manage_admins_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Admins",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
                     // Analytics Button
                     Button(
                         onClick = onAnalyticsClick,
@@ -522,7 +550,9 @@ fun AdminDashboardScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        adminViewModel.deleteMovie(movie.id)
+                        adminViewModel.deleteMovie(movie.id, context) { success, msg ->
+                            syncBannerMessage = msg
+                        }
                         movieToDelete = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = CinematicRed)
@@ -538,4 +568,107 @@ fun AdminDashboardScreen(
             containerColor = SurfaceElevated
         )
     }
+
+    if (showManageAdminsDialog) {
+        ManageAdminsDialog(
+            adminViewModel = adminViewModel,
+            context = context,
+            onDismiss = { showManageAdminsDialog = false }
+        )
+    }
+}
+
+@Composable
+fun ManageAdminsDialog(
+    adminViewModel: AdminViewModel,
+    context: android.content.Context,
+    onDismiss: () -> Unit
+) {
+    var newAdminPhone by remember { mutableStateOf("") }
+    var subAdmins by remember { mutableStateOf(adminViewModel.getSubAdmins(context)) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Manage Sub-Admins", color = TextPrimary, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = "Main Admin (255696102700) can add other users as sub-admins so they can upload movies. Sub-admins can delete only movies they uploaded themselves.",
+                    color = TextSecondary,
+                    fontSize = 12.sp
+                )
+
+                OutlinedTextField(
+                    value = newAdminPhone,
+                    onValueChange = { newAdminPhone = it },
+                    label = { Text("Enter Admin Phone Number", color = TextSecondary) },
+                    singleLine = true,
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = CinematicRed,
+                        unfocusedBorderColor = SurfaceElevated,
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Button(
+                    onClick = {
+                        if (newAdminPhone.isNotBlank()) {
+                            adminViewModel.addSubAdmin(context, newAdminPhone)
+                            subAdmins = adminViewModel.getSubAdmins(context)
+                            newAdminPhone = ""
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = CinematicRed),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Grant Admin Rights")
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(text = "Current Sub-Admins:", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+
+                if (subAdmins.isEmpty()) {
+                    Text(text = "No sub-admins added yet.", color = TextSecondary, fontSize = 12.sp)
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.height(120.dp)
+                    ) {
+                        items(subAdmins) { phone ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(SurfaceDark, RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = phone, color = Color.White, fontSize = 13.sp)
+                                TextButton(onClick = {
+                                    adminViewModel.removeSubAdmin(context, phone)
+                                    subAdmins = adminViewModel.getSubAdmins(context)
+                                }) {
+                                    Text("Revoke", color = CinematicRed, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = SurfaceDark)
+            ) {
+                Text("Close", color = Color.White)
+            }
+        },
+        containerColor = ObsidianBlack
+    )
 }

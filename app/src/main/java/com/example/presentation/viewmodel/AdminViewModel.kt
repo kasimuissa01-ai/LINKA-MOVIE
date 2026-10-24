@@ -45,6 +45,8 @@ class AdminViewModel(
             initialValue = emptyList()
         )
 
+    val userSession: StateFlow<com.example.domain.model.UserSession> = repository.userSession
+
     private val _uploadState = MutableStateFlow(UploadProgressState())
     val uploadState: StateFlow<UploadProgressState> = _uploadState.asStateFlow()
 
@@ -155,7 +157,8 @@ class AdminViewModel(
             isFeatured = isFeatured,
             uploadStatus = "completed",
             episodes = episodes.map { it.copy(movieId = movieId) }.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
-            isSwahiliTranslated = isSwahiliTranslated
+            isSwahiliTranslated = isSwahiliTranslated,
+            phoneNumber = repository.userSession.value.phoneNumber
         )
 
         activeUploadJob?.cancel()
@@ -269,10 +272,19 @@ class AdminViewModel(
                     val cleanKey = R2UrlUtils.extractCleanVideoKey(uploadResult.key, uploadResult.url)
                     val publicR2Url = R2UrlUtils.buildUrl(cleanKey)
 
+                    val updatedEpisodes = movieWithEpisodes.episodes.map { ep ->
+                        if (ep.seasonNumber == 1 && ep.episodeNumber == 1 && (ep.videoKey.isBlank() || ep.videoStreamUrl.startsWith("content://") || ep.videoStreamUrl.startsWith("file://"))) {
+                            ep.copy(videoKey = cleanKey, videoStreamUrl = publicR2Url)
+                        } else {
+                            ep
+                        }
+                    }
+
                     val movieToSave = movieWithEpisodes.copy(
                         videoKey = cleanKey,
                         videoStreamUrl = publicR2Url,
-                        uploadStatus = "completed"
+                        uploadStatus = "completed",
+                        episodes = updatedEpisodes
                     )
                     repository.insertMovie(movieToSave)
                     com.example.util.MovieNotificationHelper.sendNewMovieNotification(context, movieToSave)
@@ -303,10 +315,19 @@ class AdminViewModel(
                     val effectiveKey = if (canonicalKey.isNotBlank()) canonicalKey else s1e1?.videoKey ?: ""
                     val effectiveStream = if (canonicalStream.isNotBlank()) canonicalStream else s1e1?.videoStreamUrl ?: ""
 
+                    val updatedEpisodes = movieWithEpisodes.episodes.map { ep ->
+                        if (ep.seasonNumber == 1 && ep.episodeNumber == 1 && ep.videoKey.isBlank() && effectiveKey.isNotBlank()) {
+                            ep.copy(videoKey = effectiveKey, videoStreamUrl = effectiveStream)
+                        } else {
+                            ep
+                        }
+                    }
+
                     val movieToSave = movieWithEpisodes.copy(
                         videoKey = effectiveKey,
                         videoStreamUrl = effectiveStream,
-                        uploadStatus = "completed"
+                        uploadStatus = "completed",
+                        episodes = updatedEpisodes
                     )
                     repository.insertMovie(movieToSave)
                     com.example.util.MovieNotificationHelper.sendNewMovieNotification(context, movieToSave)
@@ -404,7 +425,8 @@ class AdminViewModel(
                 isFeatured = isFeatured,
                 uploadStatus = "completed",
                 episodes = mappedEpisodes,
-                isSwahiliTranslated = isSwahiliTranslated
+                isSwahiliTranslated = isSwahiliTranslated,
+                phoneNumber = repository.userSession.value.phoneNumber
             )
 
             try {
@@ -498,28 +520,24 @@ class AdminViewModel(
         viewModelScope.launch {
             val latestMovie = repository.getMovieById(movie.id)
             
-            // Safely merge episodes to prevent overwriting already uploaded R2 keys
-            val mergedEpisodesMap = mutableMapOf<String, Episode>()
-            latestMovie?.episodes?.forEach { ep ->
-                mergedEpisodesMap["${ep.seasonNumber}_${ep.episodeNumber}"] = ep
-            }
-            movie.episodes.forEach { newEp ->
-                val key = "${newEp.seasonNumber}_${newEp.episodeNumber}"
-                val existingEp = mergedEpisodesMap[key]
-                if (existingEp != null) {
-                    mergedEpisodesMap[key] = newEp.copy(
-                        videoKey = if (newEp.videoKey.isNotBlank()) newEp.videoKey else existingEp.videoKey,
-                        videoStreamUrl = if (newEp.videoStreamUrl.isNotBlank()) newEp.videoStreamUrl else existingEp.videoStreamUrl,
-                        fileSizeMb = if (newEp.fileSizeMb > 0) newEp.fileSizeMb else existingEp.fileSizeMb
-                    )
-                } else {
-                    mergedEpisodesMap[key] = newEp
-                }
-            }
-            var effectiveEpisodes = if (mergedEpisodesMap.isNotEmpty()) {
-                mergedEpisodesMap.values.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+            // Safely merge episodes to preserve already uploaded R2 keys while respecting current episode list
+            val existingMap = latestMovie?.episodes?.associateBy { "${it.seasonNumber}_${it.episodeNumber}" } ?: emptyMap()
+            var effectiveEpisodes = if (movie.episodes.isNotEmpty()) {
+                movie.episodes.map { newEp ->
+                    val key = "${newEp.seasonNumber}_${newEp.episodeNumber}"
+                    val existing = existingMap[key]
+                    if (existing != null && newEp.videoKey.isBlank() && existing.videoKey.isNotBlank()) {
+                        newEp.copy(
+                            videoKey = existing.videoKey,
+                            videoStreamUrl = if (newEp.videoStreamUrl.isBlank()) existing.videoStreamUrl else newEp.videoStreamUrl,
+                            fileSizeMb = if (newEp.fileSizeMb > 0) newEp.fileSizeMb else existing.fileSizeMb
+                        )
+                    } else {
+                        newEp
+                    }
+                }.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
             } else {
-                latestMovie?.episodes ?: movie.episodes
+                latestMovie?.episodes ?: emptyList()
             }
 
             // Upload any pending episode videos to Cloudflare R2
@@ -822,9 +840,42 @@ class AdminViewModel(
         }
     }
 
-    fun deleteMovie(movieId: String) {
+    fun addSubAdmin(context: Context, phone: String) {
+        com.example.data.local.SessionManager(context).addSubAdminNumber(phone)
+    }
+
+    fun removeSubAdmin(context: Context, phone: String) {
+        com.example.data.local.SessionManager(context).removeSubAdminNumber(phone)
+    }
+
+    fun getSubAdmins(context: Context): List<String> {
+        return com.example.data.local.SessionManager(context).getSubAdminNumbers().toList()
+    }
+
+    fun deleteMovie(movieId: String, context: Context? = null, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         viewModelScope.launch {
-            repository.deleteMovie(movieId)
+            val movie = movies.value.find { it.id == movieId }
+            val currentSession = repository.userSession.value
+            val currentPhone = currentSession.phoneNumber.filter { it.isDigit() }
+            val isMain = com.example.data.repository.AuthRepository.isMainAdmin(currentPhone) || currentPhone == "255696102700"
+            val sessionManager = context?.let { com.example.data.local.SessionManager(it) }
+            val isSubAdmin = (sessionManager != null && sessionManager.isDynamicAdmin(currentPhone)) || currentPhone == "255716123283"
+
+            val canDelete = when {
+                isMain -> true
+                isSubAdmin -> {
+                    val moviePhone = movie?.phoneNumber?.filter { it.isDigit() } ?: ""
+                    moviePhone.isNotBlank() && moviePhone == currentPhone
+                }
+                else -> false
+            }
+
+            if (canDelete) {
+                repository.deleteMovie(movieId)
+                onResult(true, "Movie deleted successfully.")
+            } else {
+                onResult(false, "Access Denied: You can only delete movies that you uploaded yourself. Main Admin can delete any movie.")
+            }
         }
     }
 

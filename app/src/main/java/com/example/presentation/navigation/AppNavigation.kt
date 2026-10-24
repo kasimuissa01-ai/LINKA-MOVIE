@@ -262,8 +262,8 @@ fun AppNavigation(
                     DownloadsScreen(
                         downloadViewModel = downloadViewModel,
                         movieViewModel = movieViewModel,
-                        onPlayMovie = { movie, episodeId ->
-                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id, 0L, episodeId)) {
+                        onPlayMovie = { movie, startPos, episodeId ->
+                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id, startPos ?: 0L, episodeId)) {
                                 launchSingleTop = true
                             }
                         },

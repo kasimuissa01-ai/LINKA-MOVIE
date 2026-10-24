@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -47,6 +48,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -55,8 +57,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -124,6 +128,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -764,7 +769,7 @@ fun MovieDetailScreen(
                     }
 
                     // Episodes Section right under the download button for series
-                    if (movie.episodes.isNotEmpty()) {
+                    if (sortedEpisodes.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(20.dp))
                         MovieEpisodesSection(
                             movie = movie,
@@ -776,7 +781,6 @@ fun MovieDetailScreen(
                             },
                             onPlayEpisode = { ep ->
                                 selectedEpisodeId = ep.id
-                                onPlayFullscreenClick(movie, 0L, ep.id)
                             },
                             onDownloadEpisode = { ep ->
                                 downloadViewModel.startDownload(movie, context, ep)
@@ -2304,32 +2308,41 @@ fun MovieEpisodesSection(
     var selectedSeason by remember(movie.id) {
         mutableStateOf(seasons.firstOrNull() ?: 1)
     }
+    var showAllEpisodesDialog by remember { mutableStateOf(false) }
 
     val episodesInSeason = remember(sortedEpisodes, selectedSeason) {
         sortedEpisodes.filter { it.seasonNumber == selectedSeason }.sortedBy { it.episodeNumber }
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        // Section Header with Title and Count
+        // Section Header: Resources Detector & Server Info
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.VideoLibrary,
-                    contentDescription = null,
-                    tint = CinematicRed,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
+            Column {
                 Text(
-                    text = "Episodes",
+                    text = "Resources Detector",
                     color = TextPrimary,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Source: MovieRoom Server • 1080p FHD",
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = "Source Info",
+                        tint = TextSecondary.copy(alpha = 0.7f),
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
             }
 
             Surface(
@@ -2337,7 +2350,7 @@ fun MovieEpisodesSection(
                 shape = RoundedCornerShape(6.dp)
             ) {
                 Text(
-                    text = "${movie.episodes.size} Total",
+                    text = "${sortedEpisodes.size} Total",
                     color = CinematicRed,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -2346,61 +2359,511 @@ fun MovieEpisodesSection(
             }
         }
 
-        // Season selector tabs
-        if (seasons.size > 1) {
-            Spacer(modifier = Modifier.height(12.dp))
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                items(seasons) { season ->
-                    val isSelected = season == selectedSeason
-                    Surface(
-                        color = if (isSelected) CinematicRed else SurfaceDark,
-                        shape = RoundedCornerShape(8.dp),
-                        border = BorderStroke(1.dp, if (isSelected) CinematicRed else Color.White.copy(alpha = 0.08f)),
-                        modifier = Modifier
-                            .clickable { selectedSeason = season }
-                            .testTag("season_tab_$season")
-                    ) {
-                        Text(
-                            text = "Season $season",
-                            color = if (isSelected) Color.White else TextSecondary,
-                            fontSize = 13.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                        )
-                    }
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Season selector tabs (S01, S02, S03...)
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            items(seasons) { season ->
+                val isSelected = season == selectedSeason
+                val seasonLabel = "S" + season.toString().padStart(2, '0')
+                Surface(
+                    color = if (isSelected) SurfaceElevated else SurfaceDark,
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (isSelected) CinematicRed else Color.White.copy(alpha = 0.08f)
+                    ),
+                    modifier = Modifier
+                        .clickable { selectedSeason = season }
+                        .testTag("season_tab_$season")
+                ) {
+                    Text(
+                        text = seasonLabel,
+                        color = if (isSelected) CinematicRed else TextSecondary,
+                        fontSize = 13.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
-        // Main Episodes Container: Clean Vertical Scrolled List of Little Box Cards
+        // 2-Column Episode Cards Grid (MovieBox Style)
+        val chunkedEpisodes = remember(episodesInSeason) {
+            episodesInSeason.chunked(2)
+        }
+
         Column(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            episodesInSeason.forEach { ep ->
-                val epDownload = downloads.find {
-                    (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.movieId == movie.id
-                }
-                val epWorkProgress = episodeProgressMap[ep.id]
+            chunkedEpisodes.forEach { rowEpisodes ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    val firstEp = rowEpisodes[0]
+                    val firstDownload = downloads.find {
+                        (it.episodeId == firstEp.id || it.id == "${movie.id}_ep_${firstEp.id}") && it.movieId == movie.id
+                    }
+                    val firstProgress = episodeProgressMap[firstEp.id]
 
-                EpisodeBoxCard(
-                    episode = ep,
-                    movie = movie,
-                    isSelected = (ep.id == selectedEpisodeId),
-                    downloadItem = epDownload,
-                    workProgress = epWorkProgress,
-                    onPlay = {
-                        onSelectEpisode?.invoke(ep)
-                        onPlayEpisode(ep)
-                    },
-                    onDownload = { onDownloadEpisode(ep) },
-                    onCancelDownload = { onCancelDownloadEpisode?.invoke(ep) }
+                    MovieBoxEpisodeGridCard(
+                        episode = firstEp,
+                        movie = movie,
+                        isSelected = (firstEp.id == selectedEpisodeId),
+                        downloadItem = firstDownload,
+                        workProgress = firstProgress,
+                        onPlay = {
+                            onSelectEpisode?.invoke(firstEp)
+                            onPlayEpisode(firstEp)
+                        },
+                        onDownload = { onDownloadEpisode(firstEp) },
+                        onCancelDownload = { onCancelDownloadEpisode?.invoke(firstEp) },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    if (rowEpisodes.size > 1) {
+                        val secondEp = rowEpisodes[1]
+                        val secondDownload = downloads.find {
+                            (it.episodeId == secondEp.id || it.id == "${movie.id}_ep_${secondEp.id}") && it.movieId == movie.id
+                        }
+                        val secondProgress = episodeProgressMap[secondEp.id]
+
+                        MovieBoxEpisodeGridCard(
+                            episode = secondEp,
+                            movie = movie,
+                            isSelected = (secondEp.id == selectedEpisodeId),
+                            downloadItem = secondDownload,
+                            workProgress = secondProgress,
+                            onPlay = {
+                                onSelectEpisode?.invoke(secondEp)
+                                onPlayEpisode(secondEp)
+                            },
+                            onDownload = { onDownloadEpisode(secondEp) },
+                            onCancelDownload = { onCancelDownloadEpisode?.invoke(secondEp) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else {
+                        // Odd number of episodes: fill the second slot with "All Episodes" card
+                        AllEpisodesCard(
+                            onClick = { showAllEpisodesDialog = true },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            // If even number of episodes and at least 2 episodes exist, show "All Episodes" card
+            if (chunkedEpisodes.isNotEmpty() && episodesInSeason.size % 2 == 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    AllEpisodesCard(
+                        onClick = { showAllEpisodesDialog = true },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Centered Floating Download Season Button
+        val seasonHasUndownloaded = episodesInSeason.any { ep ->
+            downloads.none {
+                (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.status == DownloadStatus.COMPLETED
+            }
+        }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Surface(
+                color = Color(0xFF00C853), // MovieBox green download accent
+                shape = RoundedCornerShape(24.dp),
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .clickable {
+                        episodesInSeason.forEach { ep ->
+                            val isDownloaded = downloads.any {
+                                (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.status == DownloadStatus.COMPLETED
+                            }
+                            if (!isDownloaded) {
+                                onDownloadEpisode(ep)
+                            }
+                        }
+                    }
+                    .testTag("download_season_button")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = "Download Season",
+                        tint = Color.White,
+                        modifier = Modifier.size(19.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (seasonHasUndownloaded) "Download Season $selectedSeason" else "Season $selectedSeason Downloaded",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+
+    // All Episodes Dialog
+    if (showAllEpisodesDialog) {
+        AllEpisodesDialog(
+            movie = movie,
+            episodes = sortedEpisodes,
+            selectedEpisodeId = selectedEpisodeId,
+            downloads = downloads,
+            episodeProgressMap = episodeProgressMap,
+            onDismiss = { showAllEpisodesDialog = false },
+            onPlayEpisode = { ep ->
+                showAllEpisodesDialog = false
+                onSelectEpisode?.invoke(ep)
+                onPlayEpisode(ep)
+            },
+            onDownloadEpisode = onDownloadEpisode
+        )
+    }
+}
+
+/**
+ * Clean, MovieBox-styled 2-Column Episode Card.
+ * Tapping anywhere except the download icon triggers inline playback in the player above.
+ * Tapping the download icon directly initiates an offline download.
+ */
+@Composable
+fun MovieBoxEpisodeGridCard(
+    episode: Episode,
+    movie: Movie,
+    isSelected: Boolean = false,
+    downloadItem: DownloadItem?,
+    workProgress: EpisodeDownloadProgress? = null,
+    onPlay: () -> Unit,
+    onDownload: () -> Unit,
+    onCancelDownload: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
+) {
+    val isDownloading = workProgress?.isDownloading == true || downloadItem?.status == DownloadStatus.DOWNLOADING
+    val isCompleted = workProgress?.isCompleted == true || downloadItem?.status == DownloadStatus.COMPLETED
+
+    val codeText = "S" + episode.seasonNumber.toString().padStart(2, '0') +
+            " EP" + episode.episodeNumber.toString().padStart(2, '0')
+
+    val sizeText = if (episode.fileSizeMb > 0) "${episode.fileSizeMb}MB" else "805MB"
+    val durationText = if (episode.durationMinutes > 0) "${episode.durationMinutes}:00" else "44:12"
+    val subtitleText = if (episode.title.isNotBlank() && !episode.title.startsWith("Episode", ignoreCase = true)) {
+        episode.title
+    } else {
+        "Uploaded by MovieRoom"
+    }
+
+    Surface(
+        color = if (isSelected) SurfaceElevated else SurfaceDark,
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(
+            width = if (isSelected) 1.5.dp else 1.dp,
+            color = if (isSelected) CinematicRed else Color.White.copy(alpha = 0.08f)
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(96.dp)
+            .clickable { onPlay() }
+            .testTag("moviebox_ep_${episode.seasonNumber}_${episode.episodeNumber}")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            // Top Row: Code & Direct Download Icon
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = codeText,
+                    color = if (isSelected) CinematicRed else Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
                 )
+
+                // Direct download / progress action
+                Box(
+                    modifier = Modifier.size(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when {
+                        isDownloading -> {
+                            val pct = workProgress?.progressPercent ?: ((downloadItem?.progress ?: 0f) * 100).toInt()
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clickable { onCancelDownload?.invoke() },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    color = Color(0xFF00E676),
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = "$pct",
+                                    color = Color(0xFF00E676),
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        isCompleted -> {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = "Downloaded",
+                                tint = Color(0xFF00E676),
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                        else -> {
+                            IconButton(
+                                onClick = onDownload,
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Download Episode",
+                                    tint = Color(0xFF00E676),
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Middle: Size and Duration
+            Text(
+                text = "$sizeText • $durationText",
+                color = TextSecondary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
+            )
+
+            // Bottom: Subtitle / Source uploader
+            Text(
+                text = subtitleText,
+                color = TextSecondary.copy(alpha = 0.75f),
+                fontSize = 10.5.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+fun AllEpisodesCard(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = SurfaceDark,
+        shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .height(96.dp)
+            .clickable { onClick() }
+            .testTag("all_episodes_card")
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "All Episodes",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "View All Episodes",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun AllEpisodesDialog(
+    movie: Movie,
+    episodes: List<Episode>,
+    selectedEpisodeId: String?,
+    downloads: List<DownloadItem>,
+    episodeProgressMap: Map<String, EpisodeDownloadProgress>,
+    onDismiss: () -> Unit,
+    onPlayEpisode: (Episode) -> Unit,
+    onDownloadEpisode: (Episode) -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            color = ObsidianBlack,
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.82f)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+            ) {
+                // Dialog Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = movie.title,
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "All Episodes (${episodes.size})",
+                            color = CinematicRed,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close",
+                            tint = Color.White
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Scrollable episodes list
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(episodes) { ep ->
+                        val isSelected = ep.id == selectedEpisodeId
+                        val isDownloaded = downloads.any {
+                            (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.status == DownloadStatus.COMPLETED
+                        }
+                        val isDownloading = episodeProgressMap[ep.id]?.isDownloading == true ||
+                                downloads.any {
+                                    (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.status == DownloadStatus.DOWNLOADING
+                                }
+
+                        Surface(
+                            color = if (isSelected) SurfaceElevated else SurfaceDark,
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, if (isSelected) CinematicRed else Color.White.copy(alpha = 0.06f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onPlayEpisode(ep) }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "S${ep.seasonNumber.toString().padStart(2, '0')} E${ep.episodeNumber.toString().padStart(2, '0')}: ${ep.title}",
+                                        color = if (isSelected) CinematicRed else Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Text(
+                                        text = "${if (ep.fileSizeMb > 0) "${ep.fileSizeMb}MB" else "805MB"} • ${if (ep.durationMinutes > 0) "${ep.durationMinutes} min" else "44 min"}",
+                                        color = TextSecondary,
+                                        fontSize = 11.sp
+                                    )
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    when {
+                                        isDownloading -> {
+                                            CircularProgressIndicator(
+                                                color = Color(0xFF00E676),
+                                                strokeWidth = 2.dp,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        isDownloaded -> {
+                                            Icon(
+                                                imageVector = Icons.Default.CheckCircle,
+                                                contentDescription = "Downloaded",
+                                                tint = Color(0xFF00E676),
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                        }
+                                        else -> {
+                                            IconButton(
+                                                onClick = { onDownloadEpisode(ep) },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Download,
+                                                    contentDescription = "Download",
+                                                    tint = Color(0xFF00E676),
+                                                    modifier = Modifier.size(20.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -85,6 +85,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.os.Build
 import android.Manifest
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
 import com.example.presentation.viewmodel.AppUpdateViewModel
 import com.example.util.VideoCacheManager
 
@@ -109,7 +111,13 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         movieViewModel.refreshCatalog()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            val isGranted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!isGranted) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
         }
     }
 

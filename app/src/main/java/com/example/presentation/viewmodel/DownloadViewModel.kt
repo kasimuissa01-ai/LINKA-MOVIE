@@ -26,6 +26,8 @@ class DownloadViewModel(
         EpisodeDownloadProgressManager.getInstance(it)
     }
 
+    val userSession: StateFlow<com.example.domain.model.UserSession> = repository.userSession
+
     val downloads: StateFlow<List<DownloadItem>> = repository.getAllDownloads()
         .stateIn(
             scope = viewModelScope,

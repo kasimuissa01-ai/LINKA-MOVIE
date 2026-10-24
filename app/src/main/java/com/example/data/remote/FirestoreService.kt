@@ -167,7 +167,8 @@ class FirestoreService {
                     rating = rating,
                     uploadDate = uploadedAt,
                     episodes = episodesList.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
-                    isSwahiliTranslated = doc.getBoolean("isSwahiliTranslated") ?: true
+                    isSwahiliTranslated = doc.getBoolean("isSwahiliTranslated") ?: true,
+                    phoneNumber = doc.getString("phoneNumber") ?: ""
                 )
             }
         } catch (e: Exception) {
@@ -234,7 +235,8 @@ class FirestoreService {
                 "releaseYear" to movie.releaseYear,
                 "episodes" to epMapList,
                 "episodesJson" to epJson,
-                "isSwahiliTranslated" to movie.isSwahiliTranslated
+                "isSwahiliTranslated" to movie.isSwahiliTranslated,
+                "phoneNumber" to movie.phoneNumber
             )
             db.collection(COLLECTION_MOVIES).document(movie.id).set(data, SetOptions.merge()).await()
             return@withContext true

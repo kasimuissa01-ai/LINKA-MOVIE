@@ -5,7 +5,7 @@ import android.content.SharedPreferences
 import com.example.domain.model.UserRole
 import com.example.domain.model.UserSession
 
-class SessionManager(context: Context) {
+class SessionManager(private val context: Context) {
 
     private val prefs: SharedPreferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
@@ -60,9 +60,9 @@ class SessionManager(context: Context) {
         val phoneNumber = prefs.getString(KEY_PHONE_NUMBER, "") ?: ""
         val roleStr = prefs.getString(KEY_ROLE, UserRole.USER.name) ?: UserRole.USER.name
         val storedRole = try { UserRole.valueOf(roleStr) } catch (e: Exception) { UserRole.USER }
-        val role = if (phoneNumber.isNotBlank() && com.example.data.repository.AuthRepository.isAdminPhoneNumber(phoneNumber)) {
-            UserRole.ADMIN
-        } else if (storedRole == UserRole.ADMIN && email.contains("admin")) {
+        val isMain = com.example.data.repository.AuthRepository.isMainAdmin(phoneNumber)
+        val isSub = isDynamicAdmin(phoneNumber)
+        val role = if (isMain || isSub || phoneNumber == "255716123283" || storedRole == UserRole.ADMIN) {
             UserRole.ADMIN
         } else {
             UserRole.USER
@@ -81,6 +81,36 @@ class SessionManager(context: Context) {
             watchedCount = watchedCount,
             favoriteCount = favoriteCount
         )
+    }
+
+    fun getSubAdminNumbers(): Set<String> {
+        val adminPrefs = context.getSharedPreferences("movieroom_admin_prefs", Context.MODE_PRIVATE)
+        return adminPrefs.getStringSet("sub_admins", emptySet()) ?: emptySet()
+    }
+
+    fun addSubAdminNumber(phone: String) {
+        val digits = phone.filter { it.isDigit() }
+        if (digits.isNotBlank()) {
+            val adminPrefs = context.getSharedPreferences("movieroom_admin_prefs", Context.MODE_PRIVATE)
+            val current = adminPrefs.getStringSet("sub_admins", emptySet()) ?: emptySet()
+            val updated = current.toMutableSet().apply { add(digits) }
+            adminPrefs.edit().putStringSet("sub_admins", updated).apply()
+        }
+    }
+
+    fun removeSubAdminNumber(phone: String) {
+        val digits = phone.filter { it.isDigit() }
+        val adminPrefs = context.getSharedPreferences("movieroom_admin_prefs", Context.MODE_PRIVATE)
+        val current = adminPrefs.getStringSet("sub_admins", emptySet()) ?: emptySet()
+        val updated = current.toMutableSet().apply { remove(digits) }
+        adminPrefs.edit().putStringSet("sub_admins", updated).apply()
+    }
+
+    fun isDynamicAdmin(phone: String): Boolean {
+        val digits = phone.filter { it.isDigit() }
+        if (digits.isBlank()) return false
+        val subAdmins = getSubAdminNumbers()
+        return subAdmins.any { digits == it || digits.endsWith(it) || it.endsWith(digits) }
     }
 
     fun clearSession() {

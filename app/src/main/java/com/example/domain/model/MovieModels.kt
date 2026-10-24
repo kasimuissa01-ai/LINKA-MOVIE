@@ -31,7 +31,8 @@ data class Movie(
     val uploadStatus: String = "completed",
     val uploadDate: Long = System.currentTimeMillis(),
     val episodes: List<Episode> = emptyList(),
-    val isSwahiliTranslated: Boolean = true
+    val isSwahiliTranslated: Boolean = true,
+    val phoneNumber: String = ""
 )
 
 enum class DownloadStatus {

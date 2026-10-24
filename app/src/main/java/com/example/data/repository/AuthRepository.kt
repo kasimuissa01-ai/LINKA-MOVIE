@@ -31,6 +31,14 @@ class AuthRepository(
         const val ADMIN_PHONE_NUMBER = "0696102700"
         const val ADMIN_PHONE_NUMBER_2 = "255716123283"
 
+        fun isMainAdmin(phone: String): Boolean {
+            val digits = phone.filter { it.isDigit() }
+            return digits == "255696102700" ||
+                   digits == "0696102700" ||
+                   digits == "696102700" ||
+                   digits.endsWith("255696102700")
+        }
+
         fun isAdminPhoneNumber(phone: String): Boolean {
             val digits = phone.filter { it.isDigit() }
             return digits == "0696102700" ||

@@ -119,9 +119,14 @@ class PlayerViewModel(
     }
 
     private var currentEpisodeId: String? = null
+    private var activeMovie: Movie? = null
+    private var activeEpisode: Episode? = null
+    private var applicationContext: Context? = null
     private var watchTracker: PlaybackWatchTracker? = null
 
     fun initializePlayer(context: Context, movie: Movie, initialPositionMs: Long = 0L, episodeId: String? = null) {
+        applicationContext = context.applicationContext
+        activeMovie = movie
         val sortedEpisodes = movie.episodes.toMutableList().apply {
             if (isNotEmpty() && none { it.seasonNumber == 1 && it.episodeNumber == 1 } && movie.videoStreamUrl.isNotBlank()) {
                 add(
@@ -413,6 +418,7 @@ class PlayerViewModel(
         } else {
             sortedEpisodes.firstOrNull()
         }
+        activeEpisode = targetEpisode
 
         val filename = if (effectiveEpisodeId != null) "movie_${movie.id}_ep_${effectiveEpisodeId}.mp4" else "movie_${movie.id}.mp4"
         val userFile = java.io.File(java.io.File(destDir, "users/$currentUid"), filename)
@@ -590,6 +596,8 @@ class PlayerViewModel(
 
             currentMovieId = movie.id
             currentEpisodeId = episodeId
+            activeMovie = movie
+            activeEpisode = movie.episodes.firstOrNull { it.id == episodeId }
             _uiState.value = _uiState.value.copy(
                 isOfflinePlayback = true,
                 currentPlaybackUrl = uri.toString(),
@@ -613,17 +621,35 @@ class PlayerViewModel(
     private fun startProgressTracker() {
         progressTrackerJob?.cancel()
         progressTrackerJob = viewModelScope.launch {
+            var tickCount = 0
             while (true) {
                 exoPlayer?.let { player ->
                     val pos = player.currentPosition.coerceAtLeast(0L)
+                    val dur = player.duration.coerceAtLeast(0L)
                     watchTracker?.onProgressTick(player)
                     _uiState.value = _uiState.value.copy(
                         currentPositionMs = pos,
                         bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L),
-                        durationMs = player.duration.coerceAtLeast(0L)
+                        durationMs = dur
                     )
                     currentMovieId?.let { id ->
                         if (pos > 0L) moviePositions[id] = pos
+                    }
+                    // Record watch history periodically (every ~3 seconds = 10 ticks) or if near end
+                    tickCount++
+                    if (tickCount % 10 == 0 || (dur > 0L && pos >= dur - 1000L)) {
+                        val m = activeMovie
+                        val ctx = applicationContext
+                        if (m != null && ctx != null && pos > 1000L) {
+                            val currentUid = repository.userSession.value.uid
+                            com.example.data.local.WatchHistoryManager.getInstance(ctx).recordWatchProgress(
+                                userId = currentUid,
+                                movie = m,
+                                episode = activeEpisode,
+                                positionMs = pos,
+                                durationMs = dur
+                            )
+                        }
                     }
                 }
                 delay(300)
@@ -633,7 +659,23 @@ class PlayerViewModel(
 
     fun pause() {
         exoPlayer?.pause()
-        exoPlayer?.let { watchTracker?.onPause(it) }
+        exoPlayer?.let { player ->
+            watchTracker?.onPause(player)
+            val pos = player.currentPosition.coerceAtLeast(0L)
+            val dur = player.duration.coerceAtLeast(0L)
+            val m = activeMovie
+            val ctx = applicationContext
+            if (m != null && ctx != null && pos > 1000L) {
+                val currentUid = repository.userSession.value.uid
+                com.example.data.local.WatchHistoryManager.getInstance(ctx).recordWatchProgress(
+                    userId = currentUid,
+                    movie = m,
+                    episode = activeEpisode,
+                    positionMs = pos,
+                    durationMs = dur
+                )
+            }
+        }
         _uiState.value = _uiState.value.copy(isPlaying = false)
         showControls(keepVisible = true)
     }

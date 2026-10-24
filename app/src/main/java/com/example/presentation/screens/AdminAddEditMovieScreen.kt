@@ -223,6 +223,35 @@ fun AdminAddEditMovieScreen(
         }
     }
 
+    fun computeFinalEpisodes(): List<Episode> {
+        val effectiveIsSeries = isSeries || episodesList.isNotEmpty()
+        if (!effectiveIsSeries) return emptyList()
+        val size = fileSizeMb.toLongOrNull() ?: 450L
+        val effectiveStream = streamUrl.trim().takeIf { !it.contains("bunny/trailer.mp4") && !it.contains("BigBuckBunny.mp4") } ?: ""
+        val hasMainVideo = selectedVideoUri != null || effectiveStream.isNotBlank()
+        val hasS1E1 = episodesList.any { it.seasonNumber == 1 && it.episodeNumber == 1 }
+        return if (!hasS1E1 && hasMainVideo) {
+            val s1e1Id = "ep_s1_e1_${java.util.UUID.randomUUID().toString().take(8)}"
+            val synth = Episode(
+                id = s1e1Id,
+                movieId = existingMovie?.id ?: "m_series",
+                episodeNumber = 1,
+                seasonNumber = 1,
+                title = "Episode 1",
+                description = "Season 1, Episode 1",
+                videoStreamUrl = effectiveStream,
+                durationMinutes = 45,
+                fileSizeMb = size
+            )
+            if (selectedVideoUri != null) {
+                pendingEpisodeUris = pendingEpisodeUris + (s1e1Id to selectedVideoUri!!)
+            }
+            (listOf(synth) + episodesList).sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+        } else {
+            episodesList.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+        }
+    }
+
     fun handleVideoUriSelected(uri: Uri?) {
         if (uri != null) {
             selectedVideoUri = uri
@@ -2012,9 +2041,10 @@ fun AdminAddEditMovieScreen(
                                 val year = releaseYear.toIntOrNull() ?: 2024
                                 val rate = rating.toDoubleOrNull() ?: 8.0
                                 val finalCover = coverUrl.trim()
+                                val finalEpisodes = computeFinalEpisodes()
                                 adminViewModel.publishMovieDirectly(
                                     context = context,
-                                    title = title.ifBlank { "Untitled Movie" },
+                                    title = title.ifBlank { if (isSeries || finalEpisodes.isNotEmpty()) "Untitled Series" else "Untitled Movie" },
                                     description = description.ifBlank { "A cinematic release." },
                                     genres = selectedGenres,
                                     coverUrl = finalCover,
@@ -2023,6 +2053,8 @@ fun AdminAddEditMovieScreen(
                                     releaseYear = year,
                                     rating = rate,
                                     isFeatured = isFeaturedOnCarousel,
+                                    episodes = finalEpisodes,
+                                    episodeUris = pendingEpisodeUris,
                                     isSwahiliTranslated = isSwahiliTranslated
                                 )
                             },
@@ -2038,9 +2070,10 @@ fun AdminAddEditMovieScreen(
                                 val year = releaseYear.toIntOrNull() ?: 2024
                                 val rate = rating.toDoubleOrNull() ?: 8.0
                                 val finalCover = coverUrl.trim()
+                                val finalEpisodes = computeFinalEpisodes()
                                 adminViewModel.addMovieWithMultipartUpload(
                                     context = context,
-                                    title = title.ifBlank { "Untitled Movie" },
+                                    title = title.ifBlank { if (isSeries || finalEpisodes.isNotEmpty()) "Untitled Series" else "Untitled Movie" },
                                     description = description.ifBlank { "A cinematic release." },
                                     genres = selectedGenres,
                                     coverUrl = finalCover,
@@ -2049,6 +2082,8 @@ fun AdminAddEditMovieScreen(
                                     releaseYear = year,
                                     rating = rate,
                                     isFeatured = isFeaturedOnCarousel,
+                                    episodes = finalEpisodes,
+                                    episodeUris = pendingEpisodeUris,
                                     isSwahiliTranslated = isSwahiliTranslated
                                 )
                             },
@@ -2076,30 +2111,7 @@ fun AdminAddEditMovieScreen(
                 } ?: ""
                 val finalCover = if (coverUrl.isNotBlank()) coverUrl.trim() else effectiveExistingCover
 
-                val finalEpisodesList = if (isSeries) {
-                    if (episodesList.none { it.seasonNumber == 1 && it.episodeNumber == 1 } && (streamUrl.isNotBlank() || selectedVideoUri != null)) {
-                        val s1e1Id = "ep_s1_e1_${java.util.UUID.randomUUID().toString().take(8)}"
-                        val synth = Episode(
-                            id = s1e1Id,
-                            movieId = existingMovie?.id ?: "m_series",
-                            episodeNumber = 1,
-                            seasonNumber = 1,
-                            title = "Episode 1",
-                            description = "Season 1, Episode 1",
-                            videoStreamUrl = streamUrl,
-                            durationMinutes = 45,
-                            fileSizeMb = size
-                        )
-                        if (selectedVideoUri != null) {
-                            pendingEpisodeUris = pendingEpisodeUris + (s1e1Id to selectedVideoUri!!)
-                        }
-                        (listOf(synth) + episodesList).sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
-                    } else {
-                        episodesList.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
-                    }
-                } else {
-                    episodesList
-                }
+                val finalEpisodesList = computeFinalEpisodes()
 
                 if (existingMovie != null) {
                     val isNewLocalVideo = streamUrl.isNotBlank() && (streamUrl.startsWith("content://") || streamUrl.startsWith("file://"))
@@ -2160,7 +2172,7 @@ fun AdminAddEditMovieScreen(
                 } else {
                     adminViewModel.addMovieWithMultipartUpload(
                         context = context,
-                        title = title.ifBlank { if (isSeries) "Untitled Series" else "Untitled Movie" },
+                        title = title.ifBlank { if (isSeries || finalEpisodesList.isNotEmpty()) "Untitled Series" else "Untitled Movie" },
                         description = description.ifBlank { "A cinematic release." },
                         genres = selectedGenres,
                         coverUrl = finalCover,
@@ -2193,7 +2205,7 @@ fun AdminAddEditMovieScreen(
             )
             Spacer(modifier = Modifier.width(10.dp))
             Text(
-                text = if (isSeries) {
+                text = if (isSeries || episodesList.isNotEmpty()) {
                     if (existingMovie != null) "Update TV Series & Episodes" else "Publish TV Series & Episodes"
                 } else {
                     if (existingMovie != null) "Update Movie" else "Publish Movie"
@@ -2211,30 +2223,10 @@ fun AdminAddEditMovieScreen(
                     val year = releaseYear.toIntOrNull() ?: 2024
                     val rate = rating.toDoubleOrNull() ?: 8.0
                     val finalCover = coverUrl.trim()
-                    val finalEpisodesList = if (isSeries) {
-                        if (episodesList.none { it.seasonNumber == 1 && it.episodeNumber == 1 } && (streamUrl.isNotBlank() || selectedVideoUri != null)) {
-                            val s1e1Id = "ep_s1_e1_${java.util.UUID.randomUUID().toString().take(8)}"
-                            val synth = Episode(
-                                id = s1e1Id,
-                                movieId = "m_series",
-                                episodeNumber = 1,
-                                seasonNumber = 1,
-                                title = "Episode 1",
-                                description = "Season 1, Episode 1",
-                                videoStreamUrl = streamUrl,
-                                durationMinutes = 45,
-                                fileSizeMb = size
-                            )
-                            (listOf(synth) + episodesList).sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
-                        } else {
-                            episodesList.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
-                        }
-                    } else {
-                        episodesList
-                    }
+                    val finalEpisodesList = computeFinalEpisodes()
                     adminViewModel.publishMovieDirectly(
                         context = context,
-                        title = title.ifBlank { if (isSeries) "Untitled Series" else "Untitled Movie" },
+                        title = title.ifBlank { if (isSeries || finalEpisodesList.isNotEmpty()) "Untitled Series" else "Untitled Movie" },
                         description = description.ifBlank { "A cinematic release." },
                         genres = selectedGenres,
                         coverUrl = finalCover,
@@ -2293,6 +2285,7 @@ fun AdminAddEditMovieScreen(
                 }
                 val sorted = current.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
                 episodesList = sorted
+                isSeries = true
 
                 val effectiveUri = videoUri ?: if (ep.videoStreamUrl.startsWith("content://") || ep.videoStreamUrl.startsWith("file://")) {
                     try { android.net.Uri.parse(ep.videoStreamUrl) } catch (_: Exception) { null }
