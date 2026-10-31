@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for fixing TV series/season uploads in the Admin Panel and redesigning the episode selector on the Movie Detail page with MovieBox-inspired season pills, a 2-column episode card grid, direct player playback, and one-tap episode downloads.",
-  "updatedAt":  "2026-10-24T17:32:42.694444632Z",
+  "summary":  "Plan to enforce a strict 10-movie container card limit per row on the Home screen and Filtered views, sorting newest and trending movies first, with excess movies continuing in dedicated 'More [Category]' rows for a clean, balanced layout.",
+  "updatedAt":  "2026-10-31T12:45:17.683464002Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

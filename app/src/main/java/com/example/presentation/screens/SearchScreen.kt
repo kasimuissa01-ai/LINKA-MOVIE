@@ -52,6 +52,7 @@ import com.example.domain.model.Movie
 import com.example.presentation.components.MovieGridSkeleton
 import com.example.presentation.components.MoviePosterCard
 import com.example.presentation.viewmodel.MovieViewModel
+import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
 import com.example.ui.theme.ObsidianBlack
 import com.example.ui.theme.SurfaceDark
@@ -68,7 +69,8 @@ fun SearchScreen(
     modifier: Modifier = Modifier
 ) {
     val state by movieViewModel.uiState.collectAsState()
-    val genres = listOf("All", "Sci-Fi", "Action", "Adventure", "Drama", "Cyberpunk", "Nature", "Racing")
+    val genres = listOf("All", "Zilizotafsiriwa", "Trending", "Romance", "Zombies", "Action", "Horror", "Comedy", "Sci-Fi", "Animation", "Drama")
+    val countryFilters = listOf("All Countries" to null, "USA 🇺🇸" to "USA", "India 🇮🇳" to "India", "Korea 🇰🇷" to "Korea", "China 🇨🇳" to "China", "Tanzania 🇹🇿" to "Tanzania", "Nigeria 🇳🇬" to "Nigeria", "UK 🇬🇧" to "UK", "Japan 🇯🇵" to "Japan", "Turkey 🇹🇷" to "Turkey")
     val years = listOf(2026, 2025, 2024)
 
     Column(
@@ -121,9 +123,9 @@ fun SearchScreen(
                 .testTag("search_input_field")
         )
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        // Genre Filter Chips
+        // Genre / Category Filter Chips
         LazyRow(
             contentPadding = PaddingValues(horizontal = 20.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -139,11 +141,38 @@ fun SearchScreen(
                     colors = FilterChipDefaults.filterChipColors(
                         containerColor = SurfaceDark,
                         labelColor = TextSecondary,
-                        selectedContainerColor = CinematicRed,
-                        selectedLabelColor = Color.White
+                        selectedContainerColor = if (genre == "Zilizotafsiriwa") AmberGold else CinematicRed,
+                        selectedLabelColor = if (genre == "Zilizotafsiriwa") Color.Black else Color.White
                     ),
                     shape = CircleShape,
                     modifier = Modifier.testTag("filter_chip_$genre")
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Country Quick-Filter Chips
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(countryFilters) { (label, countryCode) ->
+                val isSelected = state.selectedCountry == countryCode
+                FilterChip(
+                    selected = isSelected,
+                    onClick = {
+                        movieViewModel.onCountrySelected(countryCode)
+                    },
+                    label = { Text(label, fontSize = 11.sp) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        containerColor = SurfaceDark,
+                        labelColor = TextSecondary,
+                        selectedContainerColor = Color(0xFF2196F3),
+                        selectedLabelColor = Color.White
+                    ),
+                    shape = CircleShape,
+                    modifier = Modifier.testTag("filter_country_$label")
                 )
             }
         }

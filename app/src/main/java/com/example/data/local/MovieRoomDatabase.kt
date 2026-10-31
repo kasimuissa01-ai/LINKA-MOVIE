@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DownloadEntity::class,
         UploadStateEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class MovieRoomDatabase : RoomDatabase() {

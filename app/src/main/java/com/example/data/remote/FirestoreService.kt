@@ -23,6 +23,9 @@ class FirestoreService {
         private const val COLLECTION_USERS = "users"
         private const val COLLECTION_MOVIES = "movies"
         private const val COLLECTION_DOWNLOADS = "downloads"
+        const val COLLECTION_ADMINS = "admins"
+        const val ROLE_MAIN_ADMIN = "main_admin"
+        const val ROLE_SUB_ADMIN = "sub_admin"
     }
 
     private val firestore: FirebaseFirestore? by lazy {
@@ -76,6 +79,76 @@ class FirestoreService {
         } catch (e: Exception) {
             Log.e(TAG, "saveUserProfile failed: ${e.message}", e)
             return@withContext false
+        }
+    }
+
+    /**
+     * Fetches all registered admins from Firestore `admins` collection.
+     * Maps normalized phone numbers to their role ("main_admin" or "sub_admin").
+     */
+    suspend fun fetchAdmins(): Map<String, String> = withContext(Dispatchers.IO) {
+        val adminMap = mutableMapOf<String, String>()
+        // Seed persistent main admins
+        adminMap["255696102700"] = ROLE_MAIN_ADMIN
+        adminMap["255716123283"] = ROLE_MAIN_ADMIN
+
+        try {
+            val db = firestore ?: return@withContext adminMap
+            val snapshot = db.collection(COLLECTION_ADMINS).get().await()
+            for (doc in snapshot.documents) {
+                val phone = doc.getString("phone") ?: doc.id
+                val role = doc.getString("role") ?: ROLE_SUB_ADMIN
+                val digits = phone.filter { it.isDigit() }
+                if (digits.isNotBlank()) {
+                    adminMap[digits] = role
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchAdmins error: ${e.message}")
+        }
+        adminMap
+    }
+
+    /**
+     * Adds or updates a sub-admin in Firestore `admins/{phone}`
+     */
+    suspend fun saveAdmin(phone: String, role: String, addedBy: String): Boolean = withContext(Dispatchers.IO) {
+        val digits = phone.filter { it.isDigit() }
+        if (digits.isBlank()) return@withContext false
+        try {
+            val db = firestore ?: return@withContext false
+            val data = hashMapOf(
+                "phone" to digits,
+                "role" to role,
+                "addedBy" to addedBy,
+                "updatedAt" to System.currentTimeMillis()
+            )
+            db.collection(COLLECTION_ADMINS).document(digits).set(data, SetOptions.merge()).await()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "saveAdmin failed for $digits: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * Removes an admin from Firestore `admins/{phone}`
+     */
+    suspend fun deleteAdmin(phone: String): Boolean = withContext(Dispatchers.IO) {
+        val digits = phone.filter { it.isDigit() }
+        if (digits.isBlank()) return@withContext false
+        // Prevent deleting permanent main admins
+        if (digits == "255696102700" || digits == "255716123283") {
+            Log.w(TAG, "Cannot delete primary main admin $digits")
+            return@withContext false
+        }
+        try {
+            val db = firestore ?: return@withContext false
+            db.collection(COLLECTION_ADMINS).document(digits).delete().await()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "deleteAdmin failed for $digits: ${e.message}", e)
+            false
         }
     }
 

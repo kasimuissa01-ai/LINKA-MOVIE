@@ -67,8 +67,12 @@ class AdminViewModel(
     private val _isCheckingConnection = MutableStateFlow(false)
     val isCheckingConnection: StateFlow<Boolean> = _isCheckingConnection.asStateFlow()
 
+    private val _isRefreshingCatalog = MutableStateFlow(false)
+    val isRefreshingCatalog: StateFlow<Boolean> = _isRefreshingCatalog.asStateFlow()
+
     init {
         checkBackendConnection()
+        refreshMovies()
     }
 
     fun checkSupabaseConnection() {
@@ -131,7 +135,9 @@ class AdminViewModel(
         isFeatured: Boolean = false,
         episodes: List<Episode> = emptyList(),
         episodeUris: Map<String, android.net.Uri> = emptyMap(),
-        isSwahiliTranslated: Boolean = true
+        isSwahiliTranslated: Boolean = true,
+        country: String = "USA",
+        isTrending: Boolean = false
     ) {
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
         val sanitizedTitle = title.lowercase().replace(Regex("[^a-z0-9]"), "_").replace(Regex("_+"), "_")
@@ -158,7 +164,9 @@ class AdminViewModel(
             uploadStatus = "completed",
             episodes = episodes.map { it.copy(movieId = movieId) }.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
             isSwahiliTranslated = isSwahiliTranslated,
-            phoneNumber = repository.userSession.value.phoneNumber
+            phoneNumber = repository.userSession.value.phoneNumber,
+            country = country.ifBlank { "USA" },
+            isTrending = isTrending
         )
 
         activeUploadJob?.cancel()
@@ -363,7 +371,9 @@ class AdminViewModel(
         isFeatured: Boolean = false,
         episodes: List<Episode> = emptyList(),
         episodeUris: Map<String, android.net.Uri> = emptyMap(),
-        isSwahiliTranslated: Boolean = true
+        isSwahiliTranslated: Boolean = true,
+        country: String = "USA",
+        isTrending: Boolean = false
     ) {
         val movieId = "m_adm_${UUID.randomUUID().toString().take(6)}"
         val sanitizedTitle = title.lowercase().replace(" ", "_")
@@ -426,7 +436,9 @@ class AdminViewModel(
                 uploadStatus = "completed",
                 episodes = mappedEpisodes,
                 isSwahiliTranslated = isSwahiliTranslated,
-                phoneNumber = repository.userSession.value.phoneNumber
+                phoneNumber = repository.userSession.value.phoneNumber,
+                country = country.ifBlank { "USA" },
+                isTrending = isTrending
             )
 
             try {
@@ -840,41 +852,83 @@ class AdminViewModel(
         }
     }
 
-    fun addSubAdmin(context: Context, phone: String) {
-        com.example.data.local.SessionManager(context).addSubAdminNumber(phone)
+    fun addSubAdmin(context: Context, phone: String, onResult: ((Boolean) -> Unit)? = null) {
+        val currentPhone = repository.userSession.value.phoneNumber.filter { it.isDigit() }
+        viewModelScope.launch {
+            val success = repository.addSubAdmin(phone, currentPhone)
+            onResult?.invoke(success)
+        }
     }
 
-    fun removeSubAdmin(context: Context, phone: String) {
-        com.example.data.local.SessionManager(context).removeSubAdminNumber(phone)
+    fun removeSubAdmin(context: Context, phone: String, onResult: ((Boolean) -> Unit)? = null) {
+        viewModelScope.launch {
+            val success = repository.removeSubAdmin(phone)
+            onResult?.invoke(success)
+        }
     }
 
     fun getSubAdmins(context: Context): List<String> {
         return com.example.data.local.SessionManager(context).getSubAdminNumbers().toList()
     }
 
+    fun canModifyMovie(movie: Movie, context: Context?): Boolean {
+        val currentPhone = repository.userSession.value.phoneNumber.filter { it.isDigit() }
+        val isMain = com.example.data.repository.AuthRepository.isMainAdmin(currentPhone) || 
+                     currentPhone == "255696102700" || 
+                     currentPhone == "255716123283"
+        if (isMain) return true
+        val moviePhone = movie.phoneNumber.filter { it.isDigit() }
+        return moviePhone.isNotBlank() && (moviePhone == currentPhone || moviePhone.endsWith(currentPhone) || currentPhone.endsWith(moviePhone))
+    }
+
+    fun toggleMovieTrending(movie: Movie, context: Context? = null, onResult: ((Boolean, String) -> Unit)? = null) {
+        if (!canModifyMovie(movie, context)) {
+            onResult?.invoke(false, "Access Denied: Only the uploader or Main Admin can modify trending status.")
+            return
+        }
+        val newStatus = !movie.isTrending
+        val updatedMovie = movie.copy(isTrending = newStatus)
+        viewModelScope.launch {
+            try {
+                repository.updateMovie(updatedMovie)
+                val statusText = if (newStatus) "added to Trending" else "removed from Trending"
+                onResult?.invoke(true, "'${movie.title}' $statusText.")
+            } catch (e: Exception) {
+                Log.e("AdminViewModel", "Failed to toggle trending: ${e.message}")
+                onResult?.invoke(false, "Failed to update trending: ${e.message}")
+            }
+        }
+    }
+
+    fun refreshMovies(onComplete: ((Int) -> Unit)? = null) {
+        viewModelScope.launch {
+            _isRefreshingCatalog.value = true
+            try {
+                repository.syncAdminsFromFirestore()
+                val list = repository.syncCatalogFromSupabase()
+                onComplete?.invoke(list.size)
+            } catch (e: Exception) {
+                Log.e("AdminViewModel", "Error refreshing movies: ${e.message}")
+                onComplete?.invoke(0)
+            } finally {
+                _isRefreshingCatalog.value = false
+            }
+        }
+    }
+
     fun deleteMovie(movieId: String, context: Context? = null, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         viewModelScope.launch {
             val movie = movies.value.find { it.id == movieId }
-            val currentSession = repository.userSession.value
-            val currentPhone = currentSession.phoneNumber.filter { it.isDigit() }
-            val isMain = com.example.data.repository.AuthRepository.isMainAdmin(currentPhone) || currentPhone == "255696102700"
-            val sessionManager = context?.let { com.example.data.local.SessionManager(it) }
-            val isSubAdmin = (sessionManager != null && sessionManager.isDynamicAdmin(currentPhone)) || currentPhone == "255716123283"
-
-            val canDelete = when {
-                isMain -> true
-                isSubAdmin -> {
-                    val moviePhone = movie?.phoneNumber?.filter { it.isDigit() } ?: ""
-                    moviePhone.isNotBlank() && moviePhone == currentPhone
-                }
-                else -> false
+            if (movie == null) {
+                onResult(false, "Movie not found.")
+                return@launch
             }
 
-            if (canDelete) {
+            if (canModifyMovie(movie, context)) {
                 repository.deleteMovie(movieId)
-                onResult(true, "Movie deleted successfully.")
+                onResult(true, "Movie '${movie.title}' deleted successfully.")
             } else {
-                onResult(false, "Access Denied: You can only delete movies that you uploaded yourself. Main Admin can delete any movie.")
+                onResult(false, "Access Denied: Sub-admins can only delete movies they uploaded themselves. Main Admin (255696102700) has full authority.")
             }
         }
     }

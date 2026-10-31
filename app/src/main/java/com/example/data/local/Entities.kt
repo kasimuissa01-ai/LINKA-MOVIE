@@ -32,7 +32,10 @@ data class MovieEntity(
     val uploadStatus: String = "completed",
     val uploadDate: Long = System.currentTimeMillis(),
     val episodesJson: String = "", // Serialized episodes list
-    val isSwahiliTranslated: Boolean = true
+    val isSwahiliTranslated: Boolean = true,
+    val phoneNumber: String = "",
+    val country: String = "USA",
+    val isTrending: Boolean = false
 ) {
     fun toDomain(): Movie {
         val parsedGenres = if (genres.isBlank()) emptyList() else genres.split(",").map { it.trim() }
@@ -90,7 +93,10 @@ data class MovieEntity(
             uploadStatus = uploadStatus,
             uploadDate = uploadDate,
             episodes = parsedEpisodes,
-            isSwahiliTranslated = isSwahiliTranslated
+            isSwahiliTranslated = isSwahiliTranslated,
+            phoneNumber = phoneNumber,
+            country = country.ifBlank { "USA" },
+            isTrending = isTrending
         )
     }
 
@@ -136,7 +142,10 @@ data class MovieEntity(
                 uploadStatus = movie.uploadStatus,
                 uploadDate = movie.uploadDate,
                 episodesJson = episodesJsonString,
-                isSwahiliTranslated = movie.isSwahiliTranslated
+                isSwahiliTranslated = movie.isSwahiliTranslated,
+                phoneNumber = movie.phoneNumber,
+                country = movie.country.ifBlank { "USA" },
+                isTrending = movie.isTrending
             )
         }
     }

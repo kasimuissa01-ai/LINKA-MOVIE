@@ -38,6 +38,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -260,110 +262,216 @@ fun HomeScreen(
             }
         }
 
+        item { Spacer(modifier = Modifier.height(14.dp)) }
+
+        // Category Filter Tabs
+        item {
+            val categories = listOf("All", "Zilizotafsiriwa", "Trending", "Romance", "Zombies", "Action", "Horror", "Comedy", "Sci-Fi", "Animation")
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth().testTag("home_category_filter_row")
+            ) {
+                items(categories) { cat ->
+                    val isSelected = if (cat == "All") state.selectedGenre == null else state.selectedGenre.equals(cat, ignoreCase = true)
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = {
+                            movieViewModel.onGenreSelected(if (cat == "All") null else cat)
+                        },
+                        label = { Text(cat, fontSize = 12.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = SurfaceDark,
+                            labelColor = TextSecondary,
+                            selectedContainerColor = if (cat == "Zilizotafsiriwa") AmberGold else CinematicRed,
+                            selectedLabelColor = if (cat == "Zilizotafsiriwa") Color.Black else Color.White
+                        ),
+                        shape = CircleShape
+                    )
+                }
+            }
+        }
+
+        item { Spacer(modifier = Modifier.height(8.dp)) }
+
+        // Country Quick-Filter Chips
+        item {
+            val countries = listOf(
+                "All Countries" to null,
+                "USA 🇺🇸" to "USA",
+                "India 🇮🇳" to "India",
+                "Korea 🇰🇷" to "Korea",
+                "China 🇨🇳" to "China",
+                "Tanzania 🇹🇿" to "Tanzania",
+                "Nigeria 🇳🇬" to "Nigeria",
+                "UK 🇬🇧" to "UK",
+                "Japan 🇯🇵" to "Japan",
+                "Turkey 🇹🇷" to "Turkey"
+            )
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth().testTag("home_country_filter_row")
+            ) {
+                items(countries) { (label, countryCode) ->
+                    val isSelected = state.selectedCountry == countryCode
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = {
+                            movieViewModel.onCountrySelected(countryCode)
+                        },
+                        label = { Text(label, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = SurfaceDark,
+                            labelColor = TextSecondary,
+                            selectedContainerColor = Color(0xFF2196F3),
+                            selectedLabelColor = Color.White
+                        ),
+                        shape = CircleShape
+                    )
+                }
+            }
+        }
+
         item { Spacer(modifier = Modifier.height(18.dp)) }
 
-        // 1. Trending Movie Shelf
-        if (state.trendingMovies.isNotEmpty()) {
-            item {
-                MovieRowSection(
-                    title = "Trending Movie",
-                    movies = state.trendingMovies,
-                    onMovieClick = onMovieClick,
-                    onMoreClick = { onCategoryClick?.invoke("Trending") }
-                )
+        // If an explicit filter is active, show the filtered results section (10 per row max, continuing in next row)
+        if (state.selectedGenre != null || state.selectedCountry != null) {
+            val activeTitle = buildString {
+                append("Filtered Movies")
+                if (state.selectedGenre != null) append(" • ${state.selectedGenre}")
+                if (state.selectedCountry != null) append(" • ${state.selectedCountry}")
             }
-            item { Spacer(modifier = Modifier.height(20.dp)) }
+            renderChunkedMovieShelves(
+                primaryTitle = activeTitle,
+                categoryKey = state.selectedGenre ?: "Filtered",
+                movies = state.searchResults,
+                onMovieClick = onMovieClick,
+                onCategoryClick = onCategoryClick
+            )
         }
 
-        // 2. 💖 Romance 💖 Shelf (Mutually Exclusive)
-        if (state.romanceMovies.isNotEmpty()) {
-            item {
-                MovieRowSection(
-                    title = "💖 Romance 💖",
-                    movies = state.romanceMovies,
-                    onMovieClick = onMovieClick,
-                    onMoreClick = { onCategoryClick?.invoke("Romance") }
-                )
-            }
-            item { Spacer(modifier = Modifier.height(20.dp)) }
-        }
+        // 0. Dedicated Swahili Translated Shelf ("Zilizotafsiriwa Kiswahili")
+        renderChunkedMovieShelves(
+            primaryTitle = "Zilizotafsiriwa Kiswahili (DJ Afro & Ma DJ)",
+            categoryKey = "Zilizotafsiriwa",
+            movies = state.swahiliMovies,
+            onMovieClick = onMovieClick,
+            onCategoryClick = onCategoryClick
+        )
 
-        // 3. Action Shelf (Mutually Exclusive)
-        if (state.actionMovies.isNotEmpty()) {
-            item {
-                MovieRowSection(
-                    title = "Action",
-                    movies = state.actionMovies,
-                    onMovieClick = onMovieClick,
-                    onMoreClick = { onCategoryClick?.invoke("Action") }
-                )
-            }
-            item { Spacer(modifier = Modifier.height(20.dp)) }
-        }
+        // 1. Trending Movie Shelf (Admin Curated)
+        renderChunkedMovieShelves(
+            primaryTitle = "Trending Movie",
+            categoryKey = "Trending",
+            movies = state.trendingMovies,
+            onMovieClick = onMovieClick,
+            onCategoryClick = onCategoryClick
+        )
 
-        // 4. Horror Shelf (Mutually Exclusive)
-        if (state.horrorMovies.isNotEmpty()) {
-            item {
-                MovieRowSection(
-                    title = "Horror",
-                    movies = state.horrorMovies,
-                    onMovieClick = onMovieClick,
-                    onMoreClick = { onCategoryClick?.invoke("Horror") }
-                )
-            }
-            item { Spacer(modifier = Modifier.height(20.dp)) }
-        }
+        // 2. Zombies Shelf
+        renderChunkedMovieShelves(
+            primaryTitle = "🧟 Zombies 🧟",
+            categoryKey = "Zombies",
+            movies = state.zombieMovies,
+            onMovieClick = onMovieClick,
+            onCategoryClick = onCategoryClick
+        )
 
-        // 5. Comedies Shelf (Mutually Exclusive)
-        if (state.comedyMovies.isNotEmpty()) {
-            item {
-                MovieRowSection(
-                    title = "Comedies",
-                    movies = state.comedyMovies,
-                    onMovieClick = onMovieClick,
-                    onMoreClick = { onCategoryClick?.invoke("Comedy") }
-                )
-            }
-            item { Spacer(modifier = Modifier.height(20.dp)) }
-        }
+        // 3. 💖 Romance 💖 Shelf (Mutually Exclusive)
+        renderChunkedMovieShelves(
+            primaryTitle = "💖 Romance 💖",
+            categoryKey = "Romance",
+            movies = state.romanceMovies,
+            onMovieClick = onMovieClick,
+            onCategoryClick = onCategoryClick
+        )
 
-        // 6. Animation Shelf (Mutually Exclusive)
-        if (state.animationMovies.isNotEmpty()) {
-            item {
-                MovieRowSection(
-                    title = "Animation",
-                    movies = state.animationMovies,
-                    onMovieClick = onMovieClick,
-                    onMoreClick = { onCategoryClick?.invoke("Animation") }
-                )
-            }
-            item { Spacer(modifier = Modifier.height(20.dp)) }
-        }
+        // 4. Action Shelf (Mutually Exclusive)
+        renderChunkedMovieShelves(
+            primaryTitle = "Action",
+            categoryKey = "Action",
+            movies = state.actionMovies,
+            onMovieClick = onMovieClick,
+            onCategoryClick = onCategoryClick
+        )
 
-        // 7. Sci-Fi & Cyberpunk Shelf (Mutually Exclusive)
-        if (state.sciFiMovies.isNotEmpty()) {
-            item {
-                MovieRowSection(
-                    title = "Sci-Fi & Cyberpunk",
-                    movies = state.sciFiMovies,
-                    onMovieClick = onMovieClick,
-                    onMoreClick = { onCategoryClick?.invoke("Sci-Fi") }
-                )
-            }
-            item { Spacer(modifier = Modifier.height(20.dp)) }
-        }
+        // 5. Horror Shelf (Mutually Exclusive)
+        renderChunkedMovieShelves(
+            primaryTitle = "Horror",
+            categoryKey = "Horror",
+            movies = state.horrorMovies,
+            onMovieClick = onMovieClick,
+            onCategoryClick = onCategoryClick
+        )
 
-        // 8. Cinematic Epics Shelf (Mutually Exclusive)
-        if (state.dramaMovies.isNotEmpty()) {
-            item {
-                MovieRowSection(
-                    title = "Cinematic Epics",
-                    movies = state.dramaMovies,
-                    onMovieClick = onMovieClick,
-                    onMoreClick = { onCategoryClick?.invoke("Drama") }
-                )
-            }
-            item { Spacer(modifier = Modifier.height(20.dp)) }
+        // 6. Comedies Shelf (Mutually Exclusive)
+        renderChunkedMovieShelves(
+            primaryTitle = "Comedies",
+            categoryKey = "Comedy",
+            movies = state.comedyMovies,
+            onMovieClick = onMovieClick,
+            onCategoryClick = onCategoryClick
+        )
+
+        // 7. Animation Shelf (Mutually Exclusive)
+        renderChunkedMovieShelves(
+            primaryTitle = "Animation",
+            categoryKey = "Animation",
+            movies = state.animationMovies,
+            onMovieClick = onMovieClick,
+            onCategoryClick = onCategoryClick
+        )
+
+        // 8. Sci-Fi & Cyberpunk Shelf (Mutually Exclusive)
+        renderChunkedMovieShelves(
+            primaryTitle = "Sci-Fi & Cyberpunk",
+            categoryKey = "Sci-Fi",
+            movies = state.sciFiMovies,
+            onMovieClick = onMovieClick,
+            onCategoryClick = onCategoryClick
+        )
+
+        // 9. Cinematic Epics Shelf (Mutually Exclusive)
+        renderChunkedMovieShelves(
+            primaryTitle = "Cinematic Epics",
+            categoryKey = "Drama",
+            movies = state.dramaMovies,
+            onMovieClick = onMovieClick,
+            onCategoryClick = onCategoryClick
+        )
+    }
+}
+
+/**
+ * Helper to render movie rows in clean chunks of at most 10 container cards per row.
+ * Any continuing movies from the same category are placed into subsequent rows labeled "More [Category]".
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.renderChunkedMovieShelves(
+    primaryTitle: String,
+    categoryKey: String,
+    movies: List<Movie>,
+    onMovieClick: (Movie) -> Unit,
+    onCategoryClick: ((String) -> Unit)? = null
+) {
+    if (movies.isEmpty()) return
+    val chunks = movies.chunked(10)
+    chunks.forEachIndexed { index, chunkMovies ->
+        val rowTitle = when (index) {
+            0 -> primaryTitle
+            1 -> "More $categoryKey"
+            else -> "More $categoryKey (Part ${index + 1})"
+        }
+        item(key = "row_${categoryKey}_$index") {
+            MovieRowSection(
+                title = rowTitle,
+                movies = chunkMovies,
+                onMovieClick = onMovieClick,
+                onMoreClick = { onCategoryClick?.invoke(categoryKey) }
+            )
+        }
+        item(key = "spacer_${categoryKey}_$index") {
+            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 }
@@ -708,7 +816,7 @@ fun MovieRowSection(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.testTag("movie_row_${title.replace(" ", "_")}")
         ) {
-            items(movies, key = { it.id }) { movie ->
+            items(movies.take(10), key = { it.id }) { movie ->
                 MoviePosterCard(
                     movie = movie,
                     onClick = { onMovieClick(movie) }

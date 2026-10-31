@@ -74,6 +74,15 @@ data class SupabaseMovieEntity(
     @Json(name = "is_swahili_translated")
     val isSwahiliTranslated: Boolean = true,
 
+    @Json(name = "phone_number")
+    val phoneNumber: String = "",
+
+    @Json(name = "country")
+    val country: String = "USA",
+
+    @Json(name = "is_trending")
+    val isTrending: Boolean = false,
+
     @Json(name = "created_at")
     val createdAt: String? = null,
 
@@ -114,7 +123,10 @@ data class SupabaseMovieEntity(
             uploadStatus = uploadStatus,
             uploadDate = System.currentTimeMillis(),
             episodes = episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
-            isSwahiliTranslated = isSwahiliTranslated
+            isSwahiliTranslated = isSwahiliTranslated,
+            phoneNumber = phoneNumber,
+            country = country.ifBlank { "USA" },
+            isTrending = isTrending
         )
     }
 
@@ -154,6 +166,9 @@ data class SupabaseMovieEntity(
             put("is_featured", isFeatured)
             put("view_count", viewCount)
             put("is_swahili_translated", isSwahiliTranslated)
+            put("country", country.ifBlank { "USA" })
+            put("is_trending", isTrending)
+            put("phone_number", phoneNumber)
             if (episodes.isNotEmpty()) {
                 val sortedEpisodes = episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
                 val epArray = JSONArray()
@@ -204,7 +219,10 @@ data class SupabaseMovieEntity(
                 castMembers = movie.cast,
                 isFeatured = movie.isFeatured,
                 episodes = movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
-                isSwahiliTranslated = movie.isSwahiliTranslated
+                isSwahiliTranslated = movie.isSwahiliTranslated,
+                phoneNumber = movie.phoneNumber,
+                country = movie.country.ifBlank { "USA" },
+                isTrending = movie.isTrending
             )
         }
 
@@ -368,6 +386,9 @@ data class SupabaseMovieEntity(
                 viewCount = obj.optLong("view_count", 0L),
                 episodes = parsedEpisodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })),
                 isSwahiliTranslated = obj.optBoolean("is_swahili_translated", true),
+                phoneNumber = obj.optString("phone_number", ""),
+                country = obj.optString("country", "USA").ifBlank { "USA" },
+                isTrending = obj.optBoolean("is_trending", false),
                 createdAt = obj.optString("created_at").takeIf { it.isNotBlank() },
                 updatedAt = obj.optString("updated_at").takeIf { it.isNotBlank() }
             )

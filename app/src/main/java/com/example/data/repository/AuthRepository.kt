@@ -36,7 +36,11 @@ class AuthRepository(
             return digits == "255696102700" ||
                    digits == "0696102700" ||
                    digits == "696102700" ||
-                   digits.endsWith("255696102700")
+                   digits.endsWith("696102700") ||
+                   digits == "255716123283" ||
+                   digits == "0716123283" ||
+                   digits == "716123283" ||
+                   digits.endsWith("716123283")
         }
 
         fun isAdminPhoneNumber(phone: String): Boolean {

@@ -27,9 +27,11 @@ import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.CircularProgressIndicator
@@ -65,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.domain.model.Movie
 import com.example.presentation.viewmodel.AdminViewModel
+import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
 import com.example.ui.theme.ObsidianBlack
 import com.example.ui.theme.SurfaceDark
@@ -84,9 +87,12 @@ fun AdminDashboardScreen(
 ) {
     val movies by adminViewModel.movies.collectAsState()
     val uploadState by adminViewModel.uploadState.collectAsState()
+    val isRefreshingCatalog by adminViewModel.isRefreshingCatalog.collectAsState()
     val userSession by adminViewModel.userSession.collectAsState()
     val currentPhone = userSession.phoneNumber.filter { it.isDigit() }
-    val isMainAdmin = com.example.data.repository.AuthRepository.isMainAdmin(currentPhone) || currentPhone == "255696102700"
+    val isMainAdmin = com.example.data.repository.AuthRepository.isMainAdmin(currentPhone) || 
+                      currentPhone == "255696102700" || 
+                      currentPhone == "255716123283"
     val context = androidx.compose.ui.platform.LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
     var movieToDelete by remember { mutableStateOf<Movie?>(null) }
@@ -94,6 +100,10 @@ fun AdminDashboardScreen(
     var movieForCoverChange by remember { mutableStateOf<Movie?>(null) }
     var managingMovieEpisodes by remember { mutableStateOf<Movie?>(null) }
     var showManageAdminsDialog by remember { mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        adminViewModel.refreshMovies()
+    }
 
     val coverChangeLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()
@@ -167,27 +177,58 @@ fun AdminDashboardScreen(
                     }
                 }
 
-                Row(
+                androidx.compose.foundation.lazy.LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 4.dp)
                 ) {
-                    if (isMainAdmin) {
+                    item {
+                        if (isMainAdmin) {
+                            Button(
+                                onClick = { showManageAdminsDialog = true },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853)),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier.testTag("admin_manage_admins_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "Admins",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    item {
+                        // Analytics Button
                         Button(
-                            onClick = { showManageAdminsDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853)),
+                            onClick = onAnalyticsClick,
+                            colors = ButtonDefaults.buttonColors(containerColor = SurfaceDark),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFFFFF)),
                             shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                            modifier = Modifier.testTag("admin_manage_admins_button")
+                            modifier = Modifier.testTag("admin_analytics_button")
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Add,
+                                imageVector = Icons.Default.Analytics,
                                 contentDescription = null,
-                                tint = Color.White,
+                                tint = com.example.ui.theme.AmberGold,
                                 modifier = Modifier.size(16.dp)
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Admins",
+                                text = "Analytics",
                                 color = Color.White,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
@@ -195,57 +236,69 @@ fun AdminDashboardScreen(
                         }
                     }
 
-                    // Analytics Button
-                    Button(
-                        onClick = onAnalyticsClick,
-                        colors = ButtonDefaults.buttonColors(containerColor = SurfaceDark),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFFFFF)),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                        modifier = Modifier.testTag("admin_analytics_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Analytics,
-                            contentDescription = null,
-                            tint = com.example.ui.theme.AmberGold,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Analytics",
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                    item {
+                        // Refresh Catalog Button
+                        Button(
+                            onClick = {
+                                adminViewModel.refreshMovies { count ->
+                                    syncBannerMessage = "Movie catalog refreshed: $count movies loaded."
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = SurfaceDark),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x33FFFFFF)),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            enabled = !isRefreshingCatalog,
+                            modifier = Modifier.testTag("admin_refresh_catalog_button")
+                        ) {
+                            if (isRefreshingCatalog) {
+                                CircularProgressIndicator(
+                                    color = Color.White,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            } else {
+                                Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = Color.White, modifier = Modifier.size(16.dp))
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isRefreshingCatalog) "Syncing..." else "Refresh",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
 
-                    // Sync & Repair R2 URLs button
-                    Button(
-                        onClick = {
-                            adminViewModel.repairAndSyncAllMoviesToR2 { count ->
-                                syncBannerMessage = "Successfully repaired and updated $count movies with R2 URLs in your Supabase table!"
+                    item {
+                        // Sync & Repair R2 URLs button
+                        Button(
+                            onClick = {
+                                adminViewModel.repairAndSyncAllMoviesToR2 { count ->
+                                    syncBannerMessage = "Successfully repaired and updated $count movies with R2 URLs in your Supabase table!"
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (uploadState.isUploading) SurfaceElevated else CinematicRed
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            enabled = !uploadState.isUploading,
+                            modifier = Modifier.testTag("admin_sync_r2_button")
+                        ) {
+                            if (uploadState.isUploading) {
+                                CircularProgressIndicator(
+                                    color = Color.White,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Syncing...", color = Color.White, fontSize = 12.sp)
+                            } else {
+                                Icon(Icons.Default.Sync, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Sync R2 URLs", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
-                        },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (uploadState.isUploading) SurfaceElevated else CinematicRed
-                        ),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                        enabled = !uploadState.isUploading,
-                        modifier = Modifier.testTag("admin_sync_r2_button")
-                    ) {
-                        if (uploadState.isUploading) {
-                            CircularProgressIndicator(
-                                color = Color.White,
-                                strokeWidth = 2.dp,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Syncing...", color = Color.White, fontSize = 12.sp)
-                        } else {
-                            Icon(Icons.Default.Sync, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Sync R2 URLs", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -341,7 +394,76 @@ fun AdminDashboardScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
+                if (filteredMovies.isEmpty()) {
+                    item {
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp)
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp)
+                            ) {
+                                if (isRefreshingCatalog) {
+                                    CircularProgressIndicator(
+                                        color = CinematicRed,
+                                        modifier = Modifier.size(36.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = "Syncing movie catalog from Supabase & Cloudflare R2...",
+                                        color = TextPrimary,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Movie,
+                                        contentDescription = null,
+                                        tint = TextSecondary,
+                                        modifier = Modifier.size(48.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = if (searchQuery.isNotBlank()) "No movies found matching '$searchQuery'" else "No movies currently cached in studio",
+                                        color = TextPrimary,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Tap refresh to pull all live movies and seasons directly from your database",
+                                        color = TextSecondary,
+                                        fontSize = 12.sp
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Button(
+                                        onClick = {
+                                            adminViewModel.refreshMovies { count ->
+                                                syncBannerMessage = "Loaded $count movies from database."
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = CinematicRed),
+                                        shape = RoundedCornerShape(10.dp)
+                                    ) {
+                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Sync Movie Catalog")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 items(filteredMovies, key = { it.id }) { movie ->
+                    val canManage = adminViewModel.canModifyMovie(movie, context)
                     Card(
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = SurfaceDark),
@@ -359,12 +481,16 @@ fun AdminDashboardScreen(
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(SurfaceElevated)
                                     .clickable {
-                                        movieForCoverChange = movie
-                                        coverChangeLauncher.launch(
-                                            androidx.activity.result.PickVisualMediaRequest(
-                                                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly
+                                        if (canManage) {
+                                            movieForCoverChange = movie
+                                            coverChangeLauncher.launch(
+                                                androidx.activity.result.PickVisualMediaRequest(
+                                                    androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly
+                                                )
                                             )
-                                        )
+                                        } else {
+                                            syncBannerMessage = "Read-Only: Sub-admins can only change covers for movies they uploaded."
+                                        }
                                     }
                             ) {
                                 AsyncImage(
@@ -421,6 +547,36 @@ fun AdminDashboardScreen(
                                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                         )
                                     }
+                                    if (!isMainAdmin) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        if (canManage) {
+                                            Surface(
+                                                color = Color(0x3300C853),
+                                                shape = RoundedCornerShape(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = "Your Upload",
+                                                    color = Color(0xFF69F0AE),
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        } else {
+                                            Surface(
+                                                color = Color(0x33757575),
+                                                shape = RoundedCornerShape(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = "Read-Only",
+                                                    color = Color(0xFFB0BEC5),
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
                                     if (movie.episodes.isNotEmpty()) {
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Surface(
@@ -454,46 +610,108 @@ fun AdminDashboardScreen(
                                             )
                                         }
                                     }
+                                    if (movie.country.isNotBlank()) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            color = Color(0x332196F3),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = movie.country,
+                                                color = Color(0xFF64B5F6),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    if (movie.isTrending) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                            color = Color(0x33FFD700),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "★ Trending",
+                                                color = AmberGold,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
                                 }
                             }
 
-                            Row {
-                                IconButton(
-                                    onClick = {
-                                        managingMovieEpisodes = movie
-                                    },
-                                    modifier = Modifier.testTag("admin_episodes_${movie.id}")
-                                ) {
-                                    Icon(
-                                        Icons.Default.VideoLibrary,
-                                        contentDescription = "Manage Episodes",
-                                        tint = if (movie.episodes.isNotEmpty()) Color(0xFF69F0AE) else TextSecondary
-                                    )
-                                }
-                                IconButton(
-                                    onClick = {
-                                        movieForCoverChange = movie
-                                        coverChangeLauncher.launch(
-                                            androidx.activity.result.PickVisualMediaRequest(
-                                                androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly
-                                            )
+                            if (canManage) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    // One-tap Trending toggle switch / icon button
+                                    IconButton(
+                                        onClick = {
+                                            adminViewModel.toggleMovieTrending(movie, context) { success, msg ->
+                                                syncBannerMessage = msg
+                                            }
+                                        },
+                                        modifier = Modifier.testTag("admin_trending_${movie.id}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Star,
+                                            contentDescription = if (movie.isTrending) "Remove from Trending" else "Add to Trending",
+                                            tint = if (movie.isTrending) AmberGold else Color(0xFF616161)
                                         )
-                                    },
-                                    modifier = Modifier.testTag("admin_change_cover_${movie.id}")
-                                ) {
-                                    Icon(Icons.Default.Image, contentDescription = "Change Cover", tint = com.example.ui.theme.ElectricBlue)
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            managingMovieEpisodes = movie
+                                        },
+                                        modifier = Modifier.testTag("admin_episodes_${movie.id}")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.VideoLibrary,
+                                            contentDescription = "Manage Episodes",
+                                            tint = if (movie.episodes.isNotEmpty()) Color(0xFF69F0AE) else TextSecondary
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = {
+                                            movieForCoverChange = movie
+                                            coverChangeLauncher.launch(
+                                                androidx.activity.result.PickVisualMediaRequest(
+                                                    androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly
+                                                )
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("admin_change_cover_${movie.id}")
+                                    ) {
+                                        Icon(Icons.Default.Image, contentDescription = "Change Cover", tint = com.example.ui.theme.ElectricBlue)
+                                    }
+                                    IconButton(
+                                        onClick = { onEditMovieClick(movie) },
+                                        modifier = Modifier.testTag("admin_edit_${movie.id}")
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = "Edit", tint = TextSecondary)
+                                    }
+                                    IconButton(
+                                        onClick = { movieToDelete = movie },
+                                        modifier = Modifier.testTag("admin_delete_${movie.id}")
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = CinematicRed)
+                                    }
                                 }
-                                IconButton(
-                                    onClick = { onEditMovieClick(movie) },
-                                    modifier = Modifier.testTag("admin_edit_${movie.id}")
-                                ) {
-                                    Icon(Icons.Default.Edit, contentDescription = "Edit", tint = TextSecondary)
-                                }
-                                IconButton(
-                                    onClick = { movieToDelete = movie },
-                                    modifier = Modifier.testTag("admin_delete_${movie.id}")
-                                ) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = CinematicRed)
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = {
+                                            syncBannerMessage = "Read-Only: Sub-admins can view the catalog, but can only edit or delete movies they uploaded themselves."
+                                        },
+                                        modifier = Modifier.testTag("admin_locked_${movie.id}")
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Lock,
+                                            contentDescription = "Read-Only Movie",
+                                            tint = TextTertiary
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -586,6 +804,14 @@ fun ManageAdminsDialog(
 ) {
     var newAdminPhone by remember { mutableStateOf("") }
     var subAdmins by remember { mutableStateOf(adminViewModel.getSubAdmins(context)) }
+    var isOperating by remember { mutableStateOf(false) }
+    var statusFeedback by remember { mutableStateOf<String?>(null) }
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        adminViewModel.refreshMovies {
+            subAdmins = adminViewModel.getSubAdmins(context)
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -596,15 +822,31 @@ fun ManageAdminsDialog(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = "Main Admin (255696102700) can add other users as sub-admins so they can upload movies. Sub-admins can delete only movies they uploaded themselves.",
+                    text = "Main Admins (255696102700 & 255716123283) have full authority. Added sub-admins are synced in Firestore, can upload movies, and can delete only movies they uploaded themselves.",
                     color = TextSecondary,
                     fontSize = 12.sp
                 )
 
+                statusFeedback?.let { msg ->
+                    Surface(
+                        color = Color(0x3300C853),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = msg,
+                            color = Color(0xFF69F0AE),
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+
                 OutlinedTextField(
                     value = newAdminPhone,
                     onValueChange = { newAdminPhone = it },
-                    label = { Text("Enter Admin Phone Number", color = TextSecondary) },
+                    label = { Text("Enter Sub-Admin Phone Number", color = TextSecondary) },
+                    placeholder = { Text("e.g. 255XXXXXXXXX", color = TextTertiary) },
                     singleLine = true,
                     colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = CinematicRed,
@@ -612,32 +854,53 @@ fun ManageAdminsDialog(
                         focusedTextColor = TextPrimary,
                         unfocusedTextColor = TextPrimary
                     ),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().testTag("sub_admin_phone_input")
                 )
 
                 Button(
                     onClick = {
-                        if (newAdminPhone.isNotBlank()) {
-                            adminViewModel.addSubAdmin(context, newAdminPhone)
-                            subAdmins = adminViewModel.getSubAdmins(context)
-                            newAdminPhone = ""
+                        val digits = newAdminPhone.filter { it.isDigit() }
+                        if (digits.isNotBlank()) {
+                            isOperating = true
+                            statusFeedback = null
+                            adminViewModel.addSubAdmin(context, digits) { success ->
+                                isOperating = false
+                                if (success) {
+                                    subAdmins = adminViewModel.getSubAdmins(context)
+                                    statusFeedback = "Sub-admin $digits registered in Firestore!"
+                                    newAdminPhone = ""
+                                } else {
+                                    statusFeedback = "Failed to register sub-admin in Firestore."
+                                }
+                            }
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = CinematicRed),
-                    modifier = Modifier.fillMaxWidth()
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853)),
+                    enabled = !isOperating && newAdminPhone.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().testTag("grant_admin_rights_button")
                 ) {
-                    Text("Grant Admin Rights")
+                    if (isOperating) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Updating Firestore...", fontSize = 13.sp)
+                    } else {
+                        Text("Grant Sub-Admin Rights", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(text = "Current Sub-Admins:", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text(text = "Current Sub-Admins in Firestore:", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
 
                 if (subAdmins.isEmpty()) {
                     Text(text = "No sub-admins added yet.", color = TextSecondary, fontSize = 12.sp)
                 } else {
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.height(120.dp)
+                        modifier = Modifier.height(140.dp)
                     ) {
                         items(subAdmins) { phone ->
                             Row(
@@ -649,10 +912,22 @@ fun ManageAdminsDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(text = phone, color = Color.White, fontSize = 13.sp)
-                                TextButton(onClick = {
-                                    adminViewModel.removeSubAdmin(context, phone)
-                                    subAdmins = adminViewModel.getSubAdmins(context)
-                                }) {
+                                TextButton(
+                                    onClick = {
+                                        isOperating = true
+                                        statusFeedback = null
+                                        adminViewModel.removeSubAdmin(context, phone) { success ->
+                                            isOperating = false
+                                            if (success) {
+                                                subAdmins = adminViewModel.getSubAdmins(context)
+                                                statusFeedback = "Sub-admin $phone revoked."
+                                            } else {
+                                                statusFeedback = "Failed to revoke sub-admin."
+                                            }
+                                        }
+                                    },
+                                    enabled = !isOperating
+                                ) {
                                     Text("Revoke", color = CinematicRed, fontSize = 12.sp)
                                 }
                             }

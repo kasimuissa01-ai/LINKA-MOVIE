@@ -49,6 +49,15 @@
             android:enabled="true"
             android:exported="false" />
 
+        <receiver
+            android:name=".util.PackageInstallerStatusReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.ACTION_INSTALL_STATUS" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name=".data.download.OfflineDownloadService"
             android:foregroundServiceType="dataSync"

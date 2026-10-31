@@ -143,13 +143,29 @@ fun AdminAddEditMovieScreen(
     // Form fields
     var title by remember { mutableStateOf(existingMovie?.title ?: "") }
     var description by remember { mutableStateOf(existingMovie?.description ?: "") }
-    val allGenres = listOf(
-        "Action", "Sci-Fi", "Adventure", "Thriller", "Drama",
-        "Horror", "Comedy", "Crime", "Fantasy", "Animation", "Cyberpunk"
+    val predefinedGenres = listOf(
+        "Action", "Romance", "Zombies", "Sci-Fi", "Adventure", "Thriller", "Drama",
+        "Horror", "Comedy", "Crime", "Fantasy", "Animation", "Cyberpunk",
+        "Martial Arts", "Mystery", "Anime", "Swahiliwood", "War", "Historical", "Documentary"
     )
+    var customGenresList by remember { mutableStateOf<List<String>>(emptyList()) }
+    val allGenres = (predefinedGenres + customGenresList + (existingMovie?.genres ?: emptyList())).distinct()
+    var newCustomGenreText by remember { mutableStateOf("") }
+
     var selectedGenres by remember {
         mutableStateOf(existingMovie?.genres ?: listOf("Action", "Sci-Fi"))
     }
+
+    val popularCountries = listOf(
+        "USA", "India", "Korea", "China", "Tanzania", "Nigeria", "UK", "Japan", "Turkey", "South Africa", "France", "Spain"
+    )
+    var country by remember(existingMovie?.id) {
+        mutableStateOf(existingMovie?.country?.ifBlank { "USA" } ?: "USA")
+    }
+    var isTrending by remember(existingMovie?.id) {
+        mutableStateOf(existingMovie?.isTrending ?: false)
+    }
+
     var coverUrl by remember {
         mutableStateOf(
             existingMovie?.coverUrl?.ifBlank {
@@ -882,6 +898,102 @@ fun AdminAddEditMovieScreen(
             }
         }
 
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = newCustomGenreText,
+                onValueChange = { newCustomGenreText = it },
+                placeholder = { Text("Add custom category (e.g. Zombies, Anime...)", color = TextTertiary, fontSize = 12.sp) },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = CinematicRed,
+                    unfocusedBorderColor = Color(0x33FFFFFF),
+                    focusedContainerColor = SurfaceDark,
+                    unfocusedContainerColor = SurfaceDark,
+                    focusedTextColor = TextPrimary,
+                    unfocusedTextColor = TextPrimary
+                ),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(50.dp)
+                    .testTag("input_custom_genre")
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Button(
+                onClick = {
+                    val trimmed = newCustomGenreText.trim()
+                    if (trimmed.isNotBlank()) {
+                        if (trimmed !in selectedGenres) {
+                            selectedGenres = selectedGenres + trimmed
+                        }
+                        customGenresList = (customGenresList + trimmed).distinct()
+                        newCustomGenreText = ""
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = CinematicRed),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.height(50.dp).testTag("btn_add_custom_genre")
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Add", fontSize = 12.sp)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Country / Nation of Origin
+        Text(text = "Country / Nation of Origin", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(modifier = Modifier.height(6.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            popularCountries.forEach { c ->
+                val isSelected = country.equals(c, ignoreCase = true)
+                FilterChip(
+                    selected = isSelected,
+                    onClick = { country = c },
+                    label = {
+                        Text(
+                            text = c,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                        )
+                    },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Color(0xFF2196F3),
+                        selectedLabelColor = Color.White,
+                        containerColor = SurfaceDark,
+                        labelColor = TextSecondary
+                    )
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        OutlinedTextField(
+            value = country,
+            onValueChange = { country = it },
+            placeholder = { Text("Or type country name (e.g. USA, India, Korea, Tanzania...)", color = TextTertiary, fontSize = 12.sp) },
+            singleLine = true,
+            label = { Text("Selected Country", color = TextSecondary, fontSize = 12.sp) },
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = Color(0xFF2196F3),
+                unfocusedBorderColor = Color(0x33FFFFFF),
+                focusedContainerColor = SurfaceDark,
+                unfocusedContainerColor = SurfaceDark,
+                focusedTextColor = TextPrimary,
+                unfocusedTextColor = TextPrimary
+            ),
+            shape = RoundedCornerShape(10.dp),
+            modifier = Modifier.fillMaxWidth().testTag("input_movie_country")
+        )
+
         Spacer(modifier = Modifier.height(14.dp))
 
         // Description / Synopsis
@@ -1514,6 +1626,59 @@ fun AdminAddEditMovieScreen(
             }
         }
 
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Feature on Trending Shelf Switch
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Star,
+                        contentDescription = null,
+                        tint = if (isTrending) AmberGold else TextSecondary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Trending Movie Control",
+                            color = TextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (isTrending) "Movie is marked as Trending on Home screen" else "Normal catalog release (Not on Trending)",
+                            color = if (isTrending) AmberGold else TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+                Switch(
+                    checked = isTrending,
+                    onCheckedChange = { isTrending = it },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = AmberGold,
+                        uncheckedTrackColor = SurfaceElevated
+                    ),
+                    modifier = Modifier.testTag("toggle_movie_trending")
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(14.dp))
 
         // Year, Rating & File Size Row
@@ -2055,7 +2220,9 @@ fun AdminAddEditMovieScreen(
                                     isFeatured = isFeaturedOnCarousel,
                                     episodes = finalEpisodes,
                                     episodeUris = pendingEpisodeUris,
-                                    isSwahiliTranslated = isSwahiliTranslated
+                                    isSwahiliTranslated = isSwahiliTranslated,
+                                    country = country.ifBlank { "USA" },
+                                    isTrending = isTrending
                                 )
                             },
                             modifier = Modifier.weight(1f),
@@ -2084,7 +2251,9 @@ fun AdminAddEditMovieScreen(
                                     isFeatured = isFeaturedOnCarousel,
                                     episodes = finalEpisodes,
                                     episodeUris = pendingEpisodeUris,
-                                    isSwahiliTranslated = isSwahiliTranslated
+                                    isSwahiliTranslated = isSwahiliTranslated,
+                                    country = country.ifBlank { "USA" },
+                                    isTrending = isTrending
                                 )
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = CinematicRed),
@@ -2131,7 +2300,9 @@ fun AdminAddEditMovieScreen(
                             isFeatured = isFeaturedOnCarousel,
                             episodes = finalEpisodesList,
                             episodeUris = pendingEpisodeUris,
-                            isSwahiliTranslated = isSwahiliTranslated
+                            isSwahiliTranslated = isSwahiliTranslated,
+                            country = country.ifBlank { "USA" },
+                            isTrending = isTrending
                         )
                     } else {
                         // Updating metadata or direct stream URL
@@ -2165,7 +2336,9 @@ fun AdminAddEditMovieScreen(
                             rating = rate,
                             isFeatured = isFeaturedOnCarousel,
                             episodes = finalEpisodesList,
-                            isSwahiliTranslated = isSwahiliTranslated
+                            isSwahiliTranslated = isSwahiliTranslated,
+                            country = country.ifBlank { "USA" },
+                            isTrending = isTrending
                         )
                         adminViewModel.updateMovie(updated, context = context, episodeUris = pendingEpisodeUris)
                     }
@@ -2183,7 +2356,9 @@ fun AdminAddEditMovieScreen(
                         isFeatured = isFeaturedOnCarousel,
                         episodes = finalEpisodesList,
                         episodeUris = pendingEpisodeUris,
-                        isSwahiliTranslated = isSwahiliTranslated
+                        isSwahiliTranslated = isSwahiliTranslated,
+                        country = country.ifBlank { "USA" },
+                        isTrending = isTrending
                     )
                 }
             },
@@ -2237,7 +2412,9 @@ fun AdminAddEditMovieScreen(
                         isFeatured = isFeaturedOnCarousel,
                         episodes = finalEpisodesList,
                         episodeUris = pendingEpisodeUris,
-                        isSwahiliTranslated = isSwahiliTranslated
+                        isSwahiliTranslated = isSwahiliTranslated,
+                        country = country.ifBlank { "USA" },
+                        isTrending = isTrending
                     )
                 },
                 shape = RoundedCornerShape(12.dp),

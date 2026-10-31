@@ -458,5 +458,8 @@ fun AppNavigation(
 
         // Detailed In-App Update Dialog Modal
         AppUpdateDialog(updateViewModel = updateViewModel)
+
+        // Prompt once on first launch for silent/seamless in-app updates
+        com.example.presentation.components.FirstLaunchInstallPermissionDialog()
     }
 }

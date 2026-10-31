@@ -88,6 +88,11 @@ class SessionManager(private val context: Context) {
         return adminPrefs.getStringSet("sub_admins", emptySet()) ?: emptySet()
     }
 
+    fun setSubAdminNumbers(numbers: Set<String>) {
+        val adminPrefs = context.getSharedPreferences("movieroom_admin_prefs", Context.MODE_PRIVATE)
+        adminPrefs.edit().putStringSet("sub_admins", numbers).apply()
+    }
+
     fun addSubAdminNumber(phone: String) {
         val digits = phone.filter { it.isDigit() }
         if (digits.isNotBlank()) {

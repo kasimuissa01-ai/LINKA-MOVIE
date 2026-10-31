@@ -51,9 +51,9 @@ class MovieRepository(
     private val r2Client: CloudflareR2PresignedClient = CloudflareR2PresignedClient(),
     val r2UploadManager: R2UploadManager = R2UploadManager(),
     private val authService: FirebaseAuthService? = null,
-    private val firestoreService: FirestoreService = FirestoreService(),
+    val firestoreService: FirestoreService = FirestoreService(),
     private val authRepository: AuthRepository = AuthRepository(),
-    private val sessionManager: com.example.data.local.SessionManager? = null,
+    val sessionManager: com.example.data.local.SessionManager? = null,
     private val appContext: Context? = null,
     val supabaseDbClient: com.example.data.remote.SupabaseDatabaseClient = com.example.data.remote.SupabaseDatabaseClient()
 ) {
@@ -512,6 +512,34 @@ class MovieRepository(
         } catch (e: Exception) {
             Log.w(TAG, "Supabase delete warning: ${e.message}")
         }
+    }
+
+    /**
+     * Synchronizes admins from Firestore `admins` collection into local SessionManager cache
+     */
+    suspend fun syncAdminsFromFirestore(): Map<String, String> = withContext(Dispatchers.IO) {
+        val adminMap = firestoreService.fetchAdmins()
+        sessionManager?.let { sm ->
+            val subAdminPhones = adminMap.filter { it.value == FirestoreService.ROLE_SUB_ADMIN }.keys
+            sm.setSubAdminNumbers(subAdminPhones)
+        }
+        adminMap
+    }
+
+    suspend fun addSubAdmin(phone: String, addedBy: String): Boolean = withContext(Dispatchers.IO) {
+        val success = firestoreService.saveAdmin(phone, FirestoreService.ROLE_SUB_ADMIN, addedBy)
+        if (success) {
+            sessionManager?.addSubAdminNumber(phone)
+        }
+        success
+    }
+
+    suspend fun removeSubAdmin(phone: String): Boolean = withContext(Dispatchers.IO) {
+        val success = firestoreService.deleteAdmin(phone)
+        if (success) {
+            sessionManager?.removeSubAdminNumber(phone)
+        }
+        success
     }
 
     /**

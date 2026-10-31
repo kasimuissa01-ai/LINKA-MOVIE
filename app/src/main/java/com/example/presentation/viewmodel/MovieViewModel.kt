@@ -17,6 +17,8 @@ data class MovieUiState(
     val allMovies: List<Movie> = emptyList(),
     val trendingMovies: List<Movie> = emptyList(),
     val popularMovies: List<Movie> = emptyList(),
+    val swahiliMovies: List<Movie> = emptyList(),
+    val zombieMovies: List<Movie> = emptyList(),
     val romanceMovies: List<Movie> = emptyList(),
     val actionMovies: List<Movie> = emptyList(),
     val horrorMovies: List<Movie> = emptyList(),
@@ -25,6 +27,7 @@ data class MovieUiState(
     val sciFiMovies: List<Movie> = emptyList(),
     val dramaMovies: List<Movie> = emptyList(),
     val selectedGenre: String? = null,
+    val selectedCountry: String? = null,
     val selectedYear: Int? = null,
     val searchQuery: String = "",
     val searchResults: List<Movie> = emptyList(),
@@ -40,6 +43,9 @@ class MovieViewModel(
 
     private val _selectedGenre = MutableStateFlow<String?>(null)
     val selectedGenre = _selectedGenre.asStateFlow()
+
+    private val _selectedCountry = MutableStateFlow<String?>(null)
+    val selectedCountry = _selectedCountry.asStateFlow()
 
     private val _selectedYear = MutableStateFlow<Int?>(null)
     val selectedYear = _selectedYear.asStateFlow()
@@ -62,13 +68,31 @@ class MovieViewModel(
         }
     }
 
+    private data class MovieFilters(
+        val query: String = "",
+        val genre: String? = null,
+        val country: String? = null,
+        val year: Int? = null
+    )
+
+    private val _filtersFlow = combine(
+        _searchQuery,
+        _selectedGenre,
+        _selectedCountry,
+        _selectedYear
+    ) { query, genre, country, year ->
+        MovieFilters(query, genre, country, year)
+    }
+
     private val _catalogFlow = combine(
         repository.getAllMovies(),
         repository.getFeaturedMovies(),
-        _searchQuery,
-        _selectedGenre,
-        _selectedYear
-    ) { rawAllMovies, rawFeatured, query, genre, year ->
+        _filtersFlow
+    ) { rawAllMovies, rawFeatured, filters ->
+        val query = filters.query
+        val genre = filters.genre
+        val country = filters.country
+        val year = filters.year
         val allMovies = rawAllMovies.map { movie ->
             if (movie.episodes.isNotEmpty()) {
                 movie.copy(episodes = movie.episodes.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber })))
@@ -85,18 +109,36 @@ class MovieViewModel(
                     movie.title.contains(query, ignoreCase = true) ||
                     movie.description.contains(query, ignoreCase = true) ||
                     movie.genres.any { it.contains(query, ignoreCase = true) }
-            val matchesGenre = genre == null || movie.genres.any { it.equals(genre, ignoreCase = true) }
+            val matchesGenre = when {
+                genre == null || genre.equals("All", ignoreCase = true) -> true
+                genre.equals("Zilizotafsiriwa", ignoreCase = true) -> movie.isSwahiliTranslated
+                genre.equals("Trending", ignoreCase = true) -> movie.isTrending
+                else -> movie.genres.any { it.contains(genre, ignoreCase = true) }
+            }
+            val matchesCountry = country == null || country.equals("All", ignoreCase = true) ||
+                    movie.country.equals(country, ignoreCase = true)
             val matchesYear = year == null || movie.releaseYear == year
-            matchesQuery && matchesGenre && matchesYear
+            matchesQuery && matchesGenre && matchesCountry && matchesYear
         }
 
-        // Trending shelf: Top rated & featured movies (distinct, up to 10)
-        val trending = (featured + allMovies.sortedByDescending { it.rating })
-            .distinctBy { it.id }
-            .take(10)
+        // Admin-curated Trending Shelf: Only movies marked as isTrending
+        val explicitlyTrending = allMovies.filter { it.isTrending }
+        val trending = if (explicitlyTrending.isNotEmpty()) {
+            explicitlyTrending
+        } else {
+            // Graceful fallback to top-rated / featured if admin hasn't toggled specific movies yet
+            (featured + allMovies.sortedByDescending { it.rating }).distinctBy { it.id }.take(5)
+        }
+
+        // Dedicated Swahili Translated Movies
+        val swahiliTranslated = allMovies.filter { it.isSwahiliTranslated }
+
+        // Zombies Movies
+        val zombies = allMovies.filter { m ->
+            m.genres.any { it.contains("Zombie", ignoreCase = true) }
+        }
 
         // Strict deduplication across genre shelves:
-        // A movie can appear in Trending, but only in EXACTLY ONE specific genre category shelf.
         val usedInGenres = mutableSetOf<String>()
 
         fun takeUniqueForGenre(predicate: (Movie) -> Boolean): List<Movie> {
@@ -131,22 +173,32 @@ class MovieViewModel(
         val remainingUnassigned = allMovies.filter { it.id !in usedInGenres }
         val drama = dramaMatches + remainingUnassigned
 
+        fun sortShelf(list: List<Movie>): List<Movie> = list.sortedWith(
+            compareByDescending<Movie> { it.isTrending }
+                .thenByDescending { it.releaseYear }
+                .thenByDescending { it.uploadDate }
+                .thenByDescending { it.rating }
+        )
+
         MovieUiState(
             featuredMovies = featured.ifEmpty { allMovies.take(3) },
             allMovies = allMovies,
-            trendingMovies = trending,
-            popularMovies = trending,
-            romanceMovies = romance,
-            actionMovies = action,
-            horrorMovies = horror,
-            comedyMovies = comedy,
-            animationMovies = animation,
-            sciFiMovies = sciFi,
-            dramaMovies = drama,
+            trendingMovies = sortShelf(trending),
+            popularMovies = sortShelf(trending),
+            swahiliMovies = sortShelf(swahiliTranslated),
+            zombieMovies = sortShelf(zombies),
+            romanceMovies = sortShelf(romance),
+            actionMovies = sortShelf(action),
+            horrorMovies = sortShelf(horror),
+            comedyMovies = sortShelf(comedy),
+            animationMovies = sortShelf(animation),
+            sciFiMovies = sortShelf(sciFi),
+            dramaMovies = sortShelf(drama),
             selectedGenre = genre,
+            selectedCountry = country,
             selectedYear = year,
             searchQuery = query,
-            searchResults = filteredForSearch,
+            searchResults = sortShelf(filteredForSearch),
             isLoading = false
         )
     }
@@ -168,6 +220,10 @@ class MovieViewModel(
 
     fun onGenreSelected(genre: String?) {
         _selectedGenre.value = if (_selectedGenre.value == genre) null else genre
+    }
+
+    fun onCountrySelected(country: String?) {
+        _selectedCountry.value = if (_selectedCountry.value == country) null else country
     }
 
     fun onYearSelected(year: Int?) {
