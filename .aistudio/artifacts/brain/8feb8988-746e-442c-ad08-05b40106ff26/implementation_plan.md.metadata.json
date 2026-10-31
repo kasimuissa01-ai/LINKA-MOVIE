@@ -1,6 +1,6 @@
 {
-  "summary":  "Plan to enforce a strict 10-movie container card limit per row on the Home screen and Filtered views, sorting newest and trending movies first, with excess movies continuing in dedicated 'More [Category]' rows for a clean, balanced layout.",
-  "updatedAt":  "2026-10-31T12:45:17.683464002Z",
+  "summary":  "Plan to fix the Admin Dashboard layout by decoupling the header from the scrollable action bar, adopting a unified Scaffold with a single root LazyColumn to eliminate layout height collapse and vertical centering bugs, and ensuring total movie metrics, search, and full movie cards with edit/delete controls render clearly.",
+  "updatedAt":  "2026-10-31T13:31:12.352437576Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

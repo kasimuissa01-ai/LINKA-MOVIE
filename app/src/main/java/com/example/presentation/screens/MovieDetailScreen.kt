@@ -361,18 +361,26 @@ fun MovieDetailScreen(
         }
 
         if (mediaUri.isNotBlank()) {
-            inlinePlayer.setMediaItem(MediaItem.fromUri(mediaUri))
-            inlinePlayer.prepare()
-            val resumeKey = if (selectedEpisodeId != null) "${movie.id}_$selectedEpisodeId" else movie.id
-            val resumePos = playerViewModel?.getMovieLastPosition(resumeKey) ?: 0L
-            if (resumePos > 0L) {
-                inlinePlayer.seekTo(resumePos)
+            try {
+                inlinePlayer.setMediaItem(MediaItem.fromUri(mediaUri))
+                inlinePlayer.prepare()
+                val resumeKey = if (selectedEpisodeId != null) "${movie.id}_$selectedEpisodeId" else movie.id
+                val resumePos = playerViewModel?.getMovieLastPosition(resumeKey) ?: 0L
+                if (resumePos > 0L) {
+                    inlinePlayer.seekTo(resumePos)
+                }
+                inlinePlayer.play()
+            } catch (e: Exception) {
+                streamError = e.message
+                isBuffering = false
             }
-            inlinePlayer.play()
+        } else {
+            isBuffering = false
         }
     }
 
     DisposableEffect(movie.id) {
+        var playerRetryAttempts = 0
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 isBuffering = (state == Player.STATE_BUFFERING)
@@ -387,6 +395,15 @@ fun MovieDetailScreen(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                android.util.Log.e("MovieDetailScreen", "Playback error: ${error.message} (code: ${error.errorCodeName})")
+                if (playerRetryAttempts >= 2) {
+                    streamError = error.message ?: "Video preview currently unavailable"
+                    isBuffering = false
+                    try { inlinePlayer.pause() } catch (_: Exception) {}
+                    return
+                }
+                playerRetryAttempts++
+
                 // If playback failed on a broken local file, purge it so it doesn't block playback
                 val destDir = context.getExternalFilesDir(null) ?: context.filesDir
                 val localFile = java.io.File(destDir, "movie_${movie.id}.mp4")
@@ -404,9 +421,17 @@ fun MovieDetailScreen(
                 val workingStream = candidateStreams.firstOrNull { it.isNotBlank() && it.startsWith("http") && it != currentFailed }
 
                 if (!workingStream.isNullOrBlank()) {
-                    inlinePlayer.setMediaItem(MediaItem.fromUri(workingStream))
-                    inlinePlayer.prepare()
-                    inlinePlayer.play()
+                    try {
+                        inlinePlayer.setMediaItem(MediaItem.fromUri(workingStream))
+                        inlinePlayer.prepare()
+                        inlinePlayer.play()
+                    } catch (e: Exception) {
+                        streamError = e.message
+                        isBuffering = false
+                    }
+                } else {
+                    streamError = "Video stream is currently unavailable"
+                    isBuffering = false
                 }
             }
         }
@@ -821,24 +846,16 @@ fun MovieDetailScreen(
 
                     Spacer(modifier = Modifier.height(20.dp))
 
-                    // Synopsis
+                    // Synopsis & Swahili Translation
                     Text(
                         text = "Storyline",
                         color = TextPrimary,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = movie.description,
-                        color = TextSecondary,
-                        fontSize = 14.sp,
-                        lineHeight = 22.sp
-                    )
+                    Spacer(modifier = Modifier.height(10.dp))
 
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // DJ Afro Swahili Section
+                    // Instagram-style Synopsis with on-demand Swahili translation toggle
                     SwahiliDescriptionSection(
                         originalDescription = movie.description,
                         movieTitle = movie.title

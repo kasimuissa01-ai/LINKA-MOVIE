@@ -18,6 +18,7 @@ data class MovieUiState(
     val trendingMovies: List<Movie> = emptyList(),
     val popularMovies: List<Movie> = emptyList(),
     val swahiliMovies: List<Movie> = emptyList(),
+    val untranslatedMovies: List<Movie> = emptyList(),
     val zombieMovies: List<Movie> = emptyList(),
     val romanceMovies: List<Movie> = emptyList(),
     val actionMovies: List<Movie> = emptyList(),
@@ -110,10 +111,11 @@ class MovieViewModel(
                     movie.description.contains(query, ignoreCase = true) ||
                     movie.genres.any { it.contains(query, ignoreCase = true) }
             val matchesGenre = when {
-                genre == null || genre.equals("All", ignoreCase = true) -> true
+                genre.isNullOrBlank() || genre.equals("All", ignoreCase = true) -> true
                 genre.equals("Zilizotafsiriwa", ignoreCase = true) -> movie.isSwahiliTranslated
+                genre.equals("Zisizotafsiriwa", ignoreCase = true) -> !movie.isSwahiliTranslated
                 genre.equals("Trending", ignoreCase = true) -> movie.isTrending
-                else -> movie.genres.any { it.contains(genre, ignoreCase = true) }
+                else -> movie.genres.any { it.equals(genre, ignoreCase = true) || it.contains(genre, ignoreCase = true) }
             }
             val matchesCountry = country == null || country.equals("All", ignoreCase = true) ||
                     movie.country.equals(country, ignoreCase = true)
@@ -132,6 +134,9 @@ class MovieViewModel(
 
         // Dedicated Swahili Translated Movies
         val swahiliTranslated = allMovies.filter { it.isSwahiliTranslated }
+
+        // Dedicated Untranslated Movies ("Zisizotafsiriwa" / Original Audio)
+        val untranslated = allMovies.filter { !it.isSwahiliTranslated }
 
         // Zombies Movies
         val zombies = allMovies.filter { m ->
@@ -186,6 +191,7 @@ class MovieViewModel(
             trendingMovies = sortShelf(trending),
             popularMovies = sortShelf(trending),
             swahiliMovies = sortShelf(swahiliTranslated),
+            untranslatedMovies = sortShelf(untranslated),
             zombieMovies = sortShelf(zombies),
             romanceMovies = sortShelf(romance),
             actionMovies = sortShelf(action),

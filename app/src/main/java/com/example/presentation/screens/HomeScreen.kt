@@ -73,6 +73,7 @@ import com.example.presentation.viewmodel.DownloadViewModel
 import com.example.presentation.viewmodel.MovieViewModel
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
+import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.ObsidianBlack
 import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.SurfaceElevated
@@ -266,7 +267,7 @@ fun HomeScreen(
 
         // Category Filter Tabs
         item {
-            val categories = listOf("All", "Zilizotafsiriwa", "Trending", "Romance", "Zombies", "Action", "Horror", "Comedy", "Sci-Fi", "Animation")
+            val categories = listOf("All", "Zilizotafsiriwa", "Zisizotafsiriwa", "Trending", "Romance", "Zombies", "Action", "Horror", "Comedy", "Sci-Fi", "Animation")
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -283,8 +284,16 @@ fun HomeScreen(
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = SurfaceDark,
                             labelColor = TextSecondary,
-                            selectedContainerColor = if (cat == "Zilizotafsiriwa") AmberGold else CinematicRed,
-                            selectedLabelColor = if (cat == "Zilizotafsiriwa") Color.Black else Color.White
+                            selectedContainerColor = when (cat) {
+                                "Zilizotafsiriwa" -> AmberGold
+                                "Zisizotafsiriwa" -> ElectricBlue
+                                else -> CinematicRed
+                            },
+                            selectedLabelColor = when (cat) {
+                                "Zilizotafsiriwa" -> Color.Black
+                                "Zisizotafsiriwa" -> Color.Black
+                                else -> Color.White
+                            }
                         ),
                         shape = CircleShape
                     )
@@ -356,6 +365,15 @@ fun HomeScreen(
             primaryTitle = "Zilizotafsiriwa Kiswahili (DJ Afro & Ma DJ)",
             categoryKey = "Zilizotafsiriwa",
             movies = state.swahiliMovies,
+            onMovieClick = onMovieClick,
+            onCategoryClick = onCategoryClick
+        )
+
+        // 0b. Dedicated Untranslated Shelf ("Zisizotafsiriwa (Original Audio)")
+        renderChunkedMovieShelves(
+            primaryTitle = "Zisizotafsiriwa (Original Audio)",
+            categoryKey = "Zisizotafsiriwa",
+            movies = state.untranslatedMovies,
             onMovieClick = onMovieClick,
             onCategoryClick = onCategoryClick
         )
@@ -457,11 +475,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.renderChunkedMovieShe
     if (movies.isEmpty()) return
     val chunks = movies.chunked(10)
     chunks.forEachIndexed { index, chunkMovies ->
-        val rowTitle = when (index) {
-            0 -> primaryTitle
-            1 -> "More $categoryKey"
-            else -> "More $categoryKey (Part ${index + 1})"
-        }
+        val rowTitle = if (index == 0) primaryTitle else "More $categoryKey"
         item(key = "row_${categoryKey}_$index") {
             MovieRowSection(
                 title = rowTitle,

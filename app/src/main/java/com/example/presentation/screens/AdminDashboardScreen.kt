@@ -44,6 +44,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -125,27 +126,19 @@ fun AdminDashboardScreen(
 
     val totalSizeMb = movies.sumOf { it.fileSizeMb }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(ObsidianBlack)
-            .statusBarsPadding()
-            .testTag("admin_dashboard_screen")
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 20.dp, vertical = 16.dp)
-        ) {
-            // Top Bar
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
+    Scaffold(
+        topBar = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(ObsidianBlack)
+                    .statusBarsPadding()
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
             ) {
+                // Row 1: Back Button & Header Title
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     IconButton(
                         onClick = onBackClick,
@@ -177,12 +170,13 @@ fun AdminDashboardScreen(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Row 2: Modern Scrollable Action Bar across top
                 androidx.compose.foundation.lazy.LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp, bottom = 4.dp)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     item {
                         if (isMainAdmin) {
@@ -303,97 +297,124 @@ fun AdminDashboardScreen(
                     }
                 }
             }
-
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = onAddMovieClick,
+                containerColor = CinematicRed,
+                contentColor = Color.White,
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .padding(16.dp)
+                    .testTag("admin_add_movie_fab")
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Upload")
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Add Movie", fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        containerColor = ObsidianBlack,
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("admin_dashboard_screen")
+    ) { innerPadding ->
+        LazyColumn(
+            contentPadding = PaddingValues(
+                start = 20.dp,
+                end = 20.dp,
+                top = innerPadding.calculateTopPadding() + 8.dp,
+                bottom = innerPadding.calculateBottomPadding() + 80.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
             // Sync Status Notification Banner
             syncBannerMessage?.let { msg ->
-                Spacer(modifier = Modifier.height(12.dp))
-                Surface(
-                    color = Color(0x224CAF50),
-                    shape = RoundedCornerShape(8.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x664CAF50)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(12.dp)
+                item {
+                    Surface(
+                        color = Color(0x224CAF50),
+                        shape = RoundedCornerShape(8.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x664CAF50)),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = msg,
-                            color = Color(0xFF81C784),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(onClick = { syncBannerMessage = null }) {
-                            Text("OK", color = Color.White, fontSize = 12.sp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(12.dp)
+                        ) {
+                            Text(
+                                text = msg,
+                                color = Color(0xFF81C784),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            TextButton(onClick = { syncBannerMessage = null }) {
+                                Text("OK", color = Color.White, fontSize = 12.sp)
+                            }
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
-
             // Metrics Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Card(
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-                    modifier = Modifier.weight(1f)
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text("TOTAL MOVIES", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("${movies.size}", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text("TOTAL MOVIES", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("${movies.size}", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                        }
                     }
-                }
 
-                Card(
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = SurfaceDark),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text("R2 STORAGE", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text("${String.format("%.1f", totalSizeMb / 1024.0)} GB", color = CinematicRed, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = SurfaceDark),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text("R2 STORAGE", color = TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text("${String.format("%.1f", totalSizeMb / 1024.0)} GB", color = CinematicRed, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                        }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
             // Search Bar
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text("Filter movies by title or tag...", color = TextTertiary) },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary) },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = SurfaceDark,
-                    unfocusedContainerColor = SurfaceDark,
-                    focusedBorderColor = CinematicRed,
-                    unfocusedBorderColor = Color(0x33FFFFFF),
-                    focusedTextColor = TextPrimary,
-                    unfocusedTextColor = TextPrimary
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("admin_search_input")
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Movie Management List
-            LazyColumn(
-                contentPadding = PaddingValues(bottom = 100.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxSize()
-            ) {
+            item {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Filter movies by title or tag...", color = TextTertiary) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = SurfaceDark,
+                        unfocusedContainerColor = SurfaceDark,
+                        focusedBorderColor = CinematicRed,
+                        unfocusedBorderColor = Color(0x33FFFFFF),
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("admin_search_input")
+                )
+            }
                 if (filteredMovies.isEmpty()) {
                     item {
                         Card(
@@ -719,28 +740,6 @@ fun AdminDashboardScreen(
                 }
             }
         }
-
-        // Floating Action Button to Add / Upload Movie
-        FloatingActionButton(
-            onClick = onAddMovieClick,
-            containerColor = CinematicRed,
-            contentColor = Color.White,
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(24.dp)
-                .testTag("admin_add_movie_fab")
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "Upload")
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Add Movie", fontWeight = FontWeight.Bold)
-            }
-        }
-    }
 
     // Manage Episodes Modal Dialog
     managingMovieEpisodes?.let { selectedMovie ->

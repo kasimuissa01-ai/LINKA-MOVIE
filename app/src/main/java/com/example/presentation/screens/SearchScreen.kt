@@ -54,6 +54,7 @@ import com.example.presentation.components.MoviePosterCard
 import com.example.presentation.viewmodel.MovieViewModel
 import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
+import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.ObsidianBlack
 import com.example.ui.theme.SurfaceDark
 import com.example.ui.theme.SurfaceElevated
@@ -69,7 +70,7 @@ fun SearchScreen(
     modifier: Modifier = Modifier
 ) {
     val state by movieViewModel.uiState.collectAsState()
-    val genres = listOf("All", "Zilizotafsiriwa", "Trending", "Romance", "Zombies", "Action", "Horror", "Comedy", "Sci-Fi", "Animation", "Drama")
+    val genres = listOf("All", "Zilizotafsiriwa", "Zisizotafsiriwa", "Trending", "Romance", "Zombies", "Action", "Horror", "Comedy", "Sci-Fi", "Animation", "Drama")
     val countryFilters = listOf("All Countries" to null, "USA 🇺🇸" to "USA", "India 🇮🇳" to "India", "Korea 🇰🇷" to "Korea", "China 🇨🇳" to "China", "Tanzania 🇹🇿" to "Tanzania", "Nigeria 🇳🇬" to "Nigeria", "UK 🇬🇧" to "UK", "Japan 🇯🇵" to "Japan", "Turkey 🇹🇷" to "Turkey")
     val years = listOf(2026, 2025, 2024)
 
@@ -131,7 +132,7 @@ fun SearchScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(genres) { genre ->
-                val isSelected = if (genre == "All") state.selectedGenre == null else state.selectedGenre == genre
+                val isSelected = if (genre == "All") state.selectedGenre == null else state.selectedGenre?.equals(genre, ignoreCase = true) == true
                 FilterChip(
                     selected = isSelected,
                     onClick = {
@@ -141,8 +142,16 @@ fun SearchScreen(
                     colors = FilterChipDefaults.filterChipColors(
                         containerColor = SurfaceDark,
                         labelColor = TextSecondary,
-                        selectedContainerColor = if (genre == "Zilizotafsiriwa") AmberGold else CinematicRed,
-                        selectedLabelColor = if (genre == "Zilizotafsiriwa") Color.Black else Color.White
+                        selectedContainerColor = when (genre) {
+                            "Zilizotafsiriwa" -> AmberGold
+                            "Zisizotafsiriwa" -> ElectricBlue
+                            else -> CinematicRed
+                        },
+                        selectedLabelColor = when (genre) {
+                            "Zilizotafsiriwa" -> Color.Black
+                            "Zisizotafsiriwa" -> Color.Black
+                            else -> Color.White
+                        }
                     ),
                     shape = CircleShape,
                     modifier = Modifier.testTag("filter_chip_$genre")

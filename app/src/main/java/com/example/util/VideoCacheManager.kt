@@ -164,7 +164,6 @@ object VideoCacheManager {
             init {
                 setExtensionRendererMode(EXTENSION_RENDERER_MODE_ON)
                 setEnableDecoderFallback(true)
-                forceEnableMediaCodecAsynchronousQueueing()
             }
 
             override fun buildVideoRenderers(
@@ -220,11 +219,13 @@ object VideoCacheManager {
                                     format.colorInfo?.colorTransfer == C.COLOR_TRANSFER_HLG
 
                             if (isHdrContent && !isDisplayHdr) {
-                                // Request hardware MediaCodec tone mapping to SDR video
-                                mediaFormat.setInteger(
-                                    MediaFormat.KEY_COLOR_TRANSFER_REQUEST,
-                                    MediaFormat.COLOR_TRANSFER_SDR_VIDEO
-                                )
+                                // Request hardware MediaCodec tone mapping to SDR video (guarded against unsupported keys)
+                                runCatching {
+                                    mediaFormat.setInteger(
+                                        MediaFormat.KEY_COLOR_TRANSFER_REQUEST,
+                                        MediaFormat.COLOR_TRANSFER_SDR_VIDEO
+                                    )
+                                }
                                 Log.d(TAG, "ExoPlayer HDR Tone Mapping enabled (COLOR_TRANSFER_SDR_VIDEO) for ${format.sampleMimeType}")
                             } else if (isDisplayHdr) {
                                 Log.d(TAG, "ExoPlayer Native HDR output enabled on HDR-supported display for ${format.sampleMimeType}")
@@ -245,29 +246,34 @@ object VideoCacheManager {
      * high-capacity buffering for 2GB+ streams, and HDR tone mapping support.
      */
     fun buildFastPlayer(context: Context): ExoPlayer {
-        val smartDataSourceFactory = createSmartDataSourceFactory(context)
-        val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
-        val mediaSourceFactory = DefaultMediaSourceFactory(context.applicationContext, extractorsFactory)
-            .setDataSourceFactory(smartDataSourceFactory)
+        return try {
+            val smartDataSourceFactory = createSmartDataSourceFactory(context)
+            val extractorsFactory = androidx.media3.extractor.DefaultExtractorsFactory()
+            val mediaSourceFactory = DefaultMediaSourceFactory(context.applicationContext, extractorsFactory)
+                .setDataSourceFactory(smartDataSourceFactory)
 
-        // Aggressively optimize LoadControl for instant first-frame playback and smooth multi-GB streaming
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                /* minBufferMs = */ 15000,
-                /* maxBufferMs = */ 60000,
-                /* bufferForPlaybackMs = */ 1000, // Starts as soon as 1s of video is buffered
-                /* bufferForPlaybackAfterRebufferMs = */ 2000
-            )
-            .setTargetBufferBytes(120 * 1024 * 1024) // 120MB buffer allocation for large 2GB videos
-            .setPrioritizeTimeOverSizeThresholds(true)
-            .build()
+            // Aggressively optimize LoadControl for instant first-frame playback and smooth multi-GB streaming
+            val loadControl = DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    /* minBufferMs = */ 15000,
+                    /* maxBufferMs = */ 60000,
+                    /* bufferForPlaybackMs = */ 1000, // Starts as soon as 1s of video is buffered
+                    /* bufferForPlaybackAfterRebufferMs = */ 2000
+                )
+                .setTargetBufferBytes(120 * 1024 * 1024) // 120MB buffer allocation for large 2GB videos
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
 
-        val renderersFactory = buildRenderersFactory(context)
+            val renderersFactory = buildRenderersFactory(context)
 
-        return ExoPlayer.Builder(context.applicationContext, renderersFactory)
-            .setMediaSourceFactory(mediaSourceFactory)
-            .setLoadControl(loadControl)
-            .build()
+            ExoPlayer.Builder(context.applicationContext, renderersFactory)
+                .setMediaSourceFactory(mediaSourceFactory)
+                .setLoadControl(loadControl)
+                .build()
+        } catch (e: Exception) {
+            Log.w(TAG, "Fast player construction encountered exception; falling back to standard ExoPlayer: ${e.message}")
+            ExoPlayer.Builder(context.applicationContext).build()
+        }
     }
 
     /**
