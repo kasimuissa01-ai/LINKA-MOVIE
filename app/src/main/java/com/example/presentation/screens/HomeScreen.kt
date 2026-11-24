@@ -90,6 +90,9 @@ import android.os.Build
 import android.Manifest
 import androidx.core.content.ContextCompat
 import android.content.pm.PackageManager
+import com.example.data.local.WatchHistoryItem
+import com.example.data.local.WatchHistoryManager
+import com.example.domain.model.DownloadStatus
 import com.example.presentation.viewmodel.AppUpdateViewModel
 import com.example.util.VideoCacheManager
 
@@ -101,11 +104,26 @@ fun HomeScreen(
     onPlayClick: (Movie) -> Unit,
     updateViewModel: AppUpdateViewModel? = null,
     onCategoryClick: ((String) -> Unit)? = null,
+    onContinueWatchingClick: ((Movie, Long, String?) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val state by movieViewModel.uiState.collectAsState()
+    val downloads by downloadViewModel.downloads.collectAsState()
+    val userSession by downloadViewModel.userSession.collectAsState()
     val updateInfo by updateViewModel?.updateInfo?.collectAsState() ?: remember { mutableStateOf(null) }
     val context = LocalContext.current
+
+    val watchHistoryManager = remember { WatchHistoryManager.getInstance(context) }
+    LaunchedEffect(userSession.uid) {
+        watchHistoryManager.setUser(userSession.uid)
+    }
+    val watchHistory by watchHistoryManager.historyFlow.collectAsState()
+    val continueWatchingItems = remember(watchHistory) {
+        watchHistory.filter { item ->
+            item.lastPositionMs >= WatchHistoryManager.MIN_RESUME_POSITION_MS &&
+                !WatchHistoryManager.isPlaybackCompleted(item.lastPositionMs, item.durationMs)
+        }
+    }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -132,12 +150,117 @@ fun HomeScreen(
         }
     }
 
+    val resolveContinueWatchingMovie: (WatchHistoryItem) -> Movie = { item ->
+        val catalogMatch = state.allMovies.find { it.id == item.movieId }
+        val offlineMatch = downloads.find { dl ->
+            dl.movieId == item.movieId &&
+                dl.status == DownloadStatus.COMPLETED &&
+                (if (!item.episodeId.isNullOrBlank()) dl.episodeId == item.episodeId else dl.episodeId.isNullOrBlank())
+        }
+        catalogMatch ?: offlineMatch?.let { dl ->
+            Movie(
+                id = dl.movieId,
+                title = dl.movieTitle,
+                description = "Downloaded movie ready for offline playback",
+                genres = emptyList(),
+                coverUrl = dl.coverUrl,
+                videoKey = "",
+                videoStreamUrl = dl.localFilePath,
+                durationMinutes = (item.durationMs / 60_000L).toInt().coerceAtLeast(1),
+                fileSizeMb = (dl.totalBytes / (1024L * 1024L)).coerceAtLeast(1L),
+                releaseYear = 2025,
+                rating = 8.5,
+                cast = emptyList(),
+                isFeatured = false
+            )
+        } ?: Movie(
+            id = item.movieId,
+            title = item.movieTitle,
+            description = "",
+            genres = emptyList(),
+            coverUrl = item.coverUrl,
+            videoKey = "",
+            videoStreamUrl = "",
+            durationMinutes = (item.durationMs / 60_000L).toInt().coerceAtLeast(1),
+            fileSizeMb = 100L,
+            releaseYear = 2025,
+            rating = 8.5,
+            cast = emptyList(),
+            isFeatured = false
+        )
+    }
+
     if (state.isLoading) {
         HomeScreenSkeleton(modifier = modifier)
         return
     }
 
     if (state.allMovies.isEmpty()) {
+        if (continueWatchingItems.isNotEmpty()) {
+            LazyColumn(
+                modifier = modifier
+                    .fillMaxSize()
+                    .background(ObsidianBlack)
+                    .statusBarsPadding()
+                    .testTag("home_offline_continue_column"),
+                contentPadding = PaddingValues(vertical = 20.dp)
+            ) {
+                item {
+                    ContinueWatchingSection(
+                        items = continueWatchingItems,
+                        onItemClick = { item ->
+                            val resolved = resolveContinueWatchingMovie(item)
+                            if (onContinueWatchingClick != null) {
+                                onContinueWatchingClick(resolved, item.lastPositionMs, item.episodeId)
+                            } else {
+                                onMovieClick(resolved)
+                            }
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(28.dp))
+                }
+                item {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Movie,
+                            contentDescription = null,
+                            tint = TextSecondary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Catalog Unavailable Offline",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = TextPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Resume your saved videos above or reconnect and refresh.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = { movieViewModel.refreshCatalog() },
+                            colors = ButtonDefaults.buttonColors(containerColor = CinematicRed)
+                        ) {
+                            Icon(imageVector = Icons.Default.Refresh, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Refresh Catalog")
+                        }
+                    }
+                }
+            }
+            return
+        }
+
         Box(
             modifier = modifier
                 .fillMaxSize()
@@ -343,6 +466,24 @@ fun HomeScreen(
         }
 
         item { Spacer(modifier = Modifier.height(18.dp)) }
+
+        // Continue Watching Shelf (Offline-safe local watch progress)
+        if (continueWatchingItems.isNotEmpty()) {
+            item(key = "home_continue_watching_section") {
+                ContinueWatchingSection(
+                    items = continueWatchingItems,
+                    onItemClick = { item ->
+                        val resolved = resolveContinueWatchingMovie(item)
+                        if (onContinueWatchingClick != null) {
+                            onContinueWatchingClick(resolved, item.lastPositionMs, item.episodeId)
+                        } else {
+                            onMovieClick(resolved)
+                        }
+                    }
+                )
+                Spacer(modifier = Modifier.height(22.dp))
+            }
+        }
 
         // If an explicit filter is active, show the filtered results section (10 per row max, continuing in next row)
         if (state.selectedGenre != null || state.selectedCountry != null) {
@@ -837,5 +978,158 @@ fun MovieRowSection(
                 )
             }
         }
+    }
+}
+
+@Composable
+fun ContinueWatchingSection(
+    items: List<WatchHistoryItem>,
+    onItemClick: (WatchHistoryItem) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (items.isEmpty()) return
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            Text(
+                text = "Continue Watching",
+                color = TextPrimary,
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "${items.size} in progress",
+                color = TextSecondary,
+                fontSize = 12.sp
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.testTag("home_continue_watching_row")
+        ) {
+            items(
+                items = items.take(15),
+                key = { WatchHistoryManager.buildPositionKey(it.movieId, it.episodeId) }
+            ) { historyItem ->
+                ContinueWatchingCard(
+                    item = historyItem,
+                    onClick = { onItemClick(historyItem) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContinueWatchingCard(
+    item: WatchHistoryItem,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .width(156.dp)
+            .clickable(onClick = onClick)
+            .testTag("continue_watching_card_${item.movieId}")
+    ) {
+        Box(
+            modifier = Modifier
+                .width(156.dp)
+                .height(92.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(SurfaceElevated)
+        ) {
+            AsyncImage(
+                model = com.example.util.MovieCoverUtils.resolveCoverUrl(item.movieTitle, item.coverUrl, emptyList()),
+                contentDescription = item.movieTitle,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.65f))
+                        )
+                    )
+            )
+
+            // Center Play Icon
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(34.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.72f))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = "Resume ${item.movieTitle}",
+                    tint = Color.White,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            // Bottom-Left Resume Timestamp Pill
+            Surface(
+                color = Color.Black.copy(alpha = 0.78f),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 6.dp, bottom = 7.dp)
+            ) {
+                Text(
+                    text = "Resume • ${item.formattedPosition}",
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                )
+            }
+
+            // Red Progress Bar
+            val fraction = if (item.durationMs > 0L) {
+                (item.lastPositionMs.toFloat() / item.durationMs.toFloat()).coerceIn(0.03f, 1f)
+            } else {
+                0.15f
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .align(Alignment.BottomCenter)
+                    .background(Color.White.copy(alpha = 0.25f))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(fraction = fraction)
+                        .height(3.dp)
+                        .background(CinematicRed)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = item.episodeTitle?.takeIf { !item.episodeId.isNullOrBlank() } ?: item.movieTitle,
+            color = TextPrimary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }

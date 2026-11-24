@@ -129,21 +129,21 @@ class EpisodeDownloadProgressManager(
     /**
      * Cancels the active WorkManager job and cleans up database/temp files.
      */
-    fun cancelEpisodeDownload(movieId: String, episodeId: String) {
-        val workName = getWorkName(movieId, episodeId)
-        val downloadId = "${movieId}_ep_${episodeId}"
+    fun cancelEpisodeDownload(movieId: String, episodeId: String, userId: String = "") {
+        val uid = if (userId.isNotBlank()) userId else com.example.data.local.SessionManager(context).getSession()?.uid.orEmpty()
+        val cleanUser = uid.ifBlank { "guest" }
+        val workName = if (uid.isNotBlank()) "${uid}_${movieId}_${episodeId}" else getWorkName(movieId, episodeId)
+        val downloadId = "${cleanUser}_${movieId}_ep_${episodeId}"
         Log.d(TAG, "Cancelling WorkManager task: $workName")
 
         workManager.cancelUniqueWork(workName)
+        workManager.cancelUniqueWork(getWorkName(movieId, episodeId))
 
         scope.launch {
             downloadDao.deleteById(downloadId)
-            val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-            val baseFileName = "movie_${movieId}_ep_${episodeId}.mp4"
-            val tempFile = File(destDir, "$baseFileName.download")
-            val finalFile = File(destDir, baseFileName)
-            runCatching { if (tempFile.exists()) tempFile.delete() }
-            runCatching { if (finalFile.exists()) finalFile.delete() }
+            OfflineStoragePaths.getAllCleanupTargets(context, cleanUser, movieId, episodeId).forEach { file ->
+                runCatching { if (file.exists()) file.delete() }
+            }
         }
     }
 
@@ -158,15 +158,27 @@ class EpisodeDownloadProgressManager(
     /**
      * Pauses the active WorkManager job.
      */
-    fun pauseEpisodeDownload(movieId: String, episodeId: String) {
-        val workName = getWorkName(movieId, episodeId)
-        val downloadId = "${movieId}_ep_${episodeId}"
+    fun pauseEpisodeDownload(movieId: String, episodeId: String, userId: String = "") {
+        val uid = if (userId.isNotBlank()) userId else com.example.data.local.SessionManager(context).getSession()?.uid.orEmpty()
+        val cleanUser = uid.ifBlank { "guest" }
+        val workName = if (uid.isNotBlank()) "${uid}_${movieId}_${episodeId}" else getWorkName(movieId, episodeId)
+        val downloadId = "${cleanUser}_${movieId}_ep_${episodeId}"
         Log.d(TAG, "Pausing WorkManager task: $workName")
 
         workManager.cancelUniqueWork(workName)
+        workManager.cancelUniqueWork(getWorkName(movieId, episodeId))
         scope.launch {
             downloadDao.updateStatus(downloadId, DownloadStatus.PAUSED.name)
         }
+    }
+
+    private fun hasVerifiedLocalEpisodeFile(localFilePath: String, movieId: String, episodeId: String, userId: String): Boolean {
+        val cleanPath = localFilePath.trim()
+        if (cleanPath.isNotBlank() && !cleanPath.startsWith("content://")) {
+            val f = File(cleanPath.removePrefix("file://"))
+            if (f.exists() && f.length() >= OfflineStoragePaths.MIN_VALID_VIDEO_BYTES) return true
+        }
+        return OfflineStoragePaths.findVerifiedFileForUser(context, userId, movieId, episodeId) != null
     }
 
     /**
@@ -183,8 +195,9 @@ class EpisodeDownloadProgressManager(
             // 1. Seed from Room DB (handles completed offline items & previous sessions)
             for (entity in roomList) {
                 val epId = entity.episodeId ?: continue
-                val status = runCatching { DownloadStatus.valueOf(entity.status) }.getOrDefault(DownloadStatus.QUEUED)
-                val isCompleted = status == DownloadStatus.COMPLETED
+                val rawStatus = runCatching { DownloadStatus.valueOf(entity.status) }.getOrDefault(DownloadStatus.QUEUED)
+                val verifiedFile = rawStatus == DownloadStatus.COMPLETED && hasVerifiedLocalEpisodeFile(entity.localFilePath, entity.movieId, epId, entity.userId)
+                val effectiveStatus = if (rawStatus == DownloadStatus.COMPLETED && !verifiedFile) DownloadStatus.FAILED else rawStatus
                 val pct = (entity.progress * 100).toInt().coerceIn(0, 100)
 
                 progressMap[epId] = EpisodeDownloadProgress(
@@ -192,12 +205,12 @@ class EpisodeDownloadProgressManager(
                     movieId = entity.movieId,
                     episodeTitle = entity.episodeTitle.orEmpty(),
                     movieTitle = entity.movieTitle,
-                    progressPercent = pct,
-                    progressFraction = entity.progress,
+                    progressPercent = if (verifiedFile) 100 else pct.coerceAtMost(99),
+                    progressFraction = if (verifiedFile) 1.0f else entity.progress.coerceIn(0f, 0.99f),
                     bytesDownloaded = entity.downloadedBytes,
                     totalBytes = entity.totalBytes,
-                    status = status,
-                    isCachedLocally = isCompleted
+                    status = effectiveStatus,
+                    isCachedLocally = verifiedFile
                 )
             }
 
@@ -231,20 +244,21 @@ class EpisodeDownloadProgressManager(
             // 1. Seed from Room DB
             for (entity in roomList) {
                 val epId = entity.episodeId ?: continue
-                val status = runCatching { DownloadStatus.valueOf(entity.status) }.getOrDefault(DownloadStatus.QUEUED)
-                val isCompleted = status == DownloadStatus.COMPLETED
+                val rawStatus = runCatching { DownloadStatus.valueOf(entity.status) }.getOrDefault(DownloadStatus.QUEUED)
+                val verifiedFile = rawStatus == DownloadStatus.COMPLETED && hasVerifiedLocalEpisodeFile(entity.localFilePath, entity.movieId, epId, entity.userId)
+                val effectiveStatus = if (rawStatus == DownloadStatus.COMPLETED && !verifiedFile) DownloadStatus.FAILED else rawStatus
 
                 progressMap[epId] = EpisodeDownloadProgress(
                     episodeId = epId,
                     movieId = entity.movieId,
                     episodeTitle = entity.episodeTitle.orEmpty(),
                     movieTitle = entity.movieTitle,
-                    progressPercent = (entity.progress * 100).toInt().coerceIn(0, 100),
-                    progressFraction = entity.progress,
+                    progressPercent = if (verifiedFile) 100 else (entity.progress * 100).toInt().coerceIn(0, 99),
+                    progressFraction = if (verifiedFile) 1.0f else entity.progress.coerceIn(0f, 0.99f),
                     bytesDownloaded = entity.downloadedBytes,
                     totalBytes = entity.totalBytes,
-                    status = status,
-                    isCachedLocally = isCompleted
+                    status = effectiveStatus,
+                    isCachedLocally = verifiedFile
                 )
             }
 

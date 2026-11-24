@@ -19,12 +19,21 @@ class SessionManager(private val context: Context) {
         private const val KEY_ROLE = "key_role"
         private const val KEY_TOKEN = "key_token"
         private const val KEY_FIRST_ACCOUNT_UID = "key_first_account_uid"
+        private const val KEY_GUEST_UID = "key_guest_uid"
         private const val KEY_WATCHED_COUNT = "key_watched_count"
         private const val KEY_FAVORITE_COUNT = "key_favorite_count"
     }
 
     val isLoggedIn: Boolean
         get() = prefs.getBoolean(KEY_IS_LOGGED_IN, false)
+
+    fun getOrCreateGuestUid(): String {
+        val existing = prefs.getString(KEY_GUEST_UID, null)
+        if (!existing.isNullOrBlank()) return existing
+        val generated = "usr_guest_" + java.util.UUID.randomUUID().toString().take(6)
+        prefs.edit().putString(KEY_GUEST_UID, generated).apply()
+        return generated
+    }
 
     fun getFirstAccountUid(): String? = prefs.getString(KEY_FIRST_ACCOUNT_UID, null)
 

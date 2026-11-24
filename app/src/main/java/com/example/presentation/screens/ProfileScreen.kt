@@ -114,7 +114,7 @@ fun ProfileScreen(
         downloadViewModel?.formatStorageSize(totalStorageBytes) ?: "0 MB"
     }
     val completedCount = remember(downloads) {
-        downloads.count { it.status == DownloadStatus.COMPLETED }
+        downloads.count { isDownloadVerifiedComplete(it, context) }
     }
     var showClearStorageDialog by remember { mutableStateOf(false) }
 

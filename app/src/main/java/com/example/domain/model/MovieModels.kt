@@ -59,7 +59,9 @@ data class DownloadItem(
     val episodeTitle: String? = null,
     val seasonNumber: Int? = null,
     val episodeNumber: Int? = null,
-    val userId: String = ""
+    val userId: String = "",
+    val isFileVerified: Boolean = false,
+    val lastVerifiedAt: Long = 0L
 )
 
 data class UploadPart(

@@ -83,7 +83,10 @@ data class PlayerUiState(
     val isResolvingStreamUrl: Boolean = true,
     val loadingStage: String = "Buffering cinema stream...",
     val isFullscreen: Boolean = true,
-    val orientationMode: OrientationMode = OrientationMode.USER_LANDSCAPE
+    val orientationMode: OrientationMode = OrientationMode.USER_LANDSCAPE,
+    val pendingResumePositionMs: Long = 0L,
+    val showResumePrompt: Boolean = false,
+    val resumedFromLabel: String? = null
 )
 
 @OptIn(UnstableApi::class)
@@ -108,14 +111,25 @@ class PlayerViewModel(
     private var accumulatedVolume: Float = -1f
     private var accumulatedBrightness: Float = -1f
 
+    private var resumeBannerDismissJob: Job? = null
+
     fun saveMoviePosition(movieId: String, positionMs: Long) {
         if (positionMs > 0L) {
             moviePositions[movieId] = positionMs
+        } else {
+            moviePositions.remove(movieId)
         }
     }
 
     fun getMovieLastPosition(movieId: String): Long {
-        return moviePositions[movieId] ?: 0L
+        val memPos = moviePositions[movieId] ?: 0L
+        if (memPos > 0L) return memPos
+        val ctx = applicationContext ?: return 0L
+        val parts = movieId.split("_ep_", limit = 2)
+        val mId = parts[0]
+        val epId = parts.getOrNull(1)
+        return com.example.data.local.WatchHistoryManager.getInstance(ctx)
+            .getResumablePositionMs(repository.userSession.value.uid, mId, epId)
     }
 
     private var currentEpisodeId: String? = null
@@ -144,16 +158,66 @@ class PlayerViewModel(
             }
         }.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
 
-        val effectiveEpisodeId = episodeId ?: if (sortedEpisodes.isNotEmpty()) sortedEpisodes.firstOrNull()?.id else null
+        val rawEffectiveEpisodeId = episodeId ?: if (sortedEpisodes.isNotEmpty()) sortedEpisodes.firstOrNull()?.id else null
+        val preCheckUid = repository.userSession.value.uid.ifBlank { "guest" }
+        val hasEpisodeOfflineFile = if (rawEffectiveEpisodeId != null) {
+            com.example.data.download.OfflineStoragePaths.findVerifiedFileForUser(
+                context = context,
+                userId = preCheckUid,
+                movieId = movie.id,
+                episodeId = rawEffectiveEpisodeId
+            ) != null
+        } else false
+        val hasWholeMovieOfflineFile = if (episodeId == null || episodeId.startsWith("synth_s1_e1_")) {
+            com.example.data.download.OfflineStoragePaths.findVerifiedFileForUser(
+                context = context,
+                userId = preCheckUid,
+                movieId = movie.id,
+                episodeId = null
+            ) != null || ((movie.videoStreamUrl.startsWith("file:") || movie.videoStreamUrl.startsWith("/")) &&
+                java.io.File(movie.videoStreamUrl.removePrefix("file://")).let {
+                    it.exists() && it.length() >= com.example.data.download.OfflineStoragePaths.MIN_VALID_VIDEO_BYTES
+                })
+        } else false
+
+        val effectiveEpisodeId = if ((episodeId == null || episodeId.startsWith("synth_s1_e1_")) && !hasEpisodeOfflineFile && hasWholeMovieOfflineFile) {
+            null
+        } else {
+            rawEffectiveEpisodeId
+        }
         val isSameMovie = (currentMovieId == movie.id && currentEpisodeId == effectiveEpisodeId)
         currentMovieId = movie.id
         currentEpisodeId = effectiveEpisodeId
-        val positionKey = if (effectiveEpisodeId != null) "${movie.id}_ep_${effectiveEpisodeId}" else movie.id
-        val targetStartPos = if (initialPositionMs > 0L) {
+        val positionKey = com.example.data.local.WatchHistoryManager.buildPositionKey(movie.id, effectiveEpisodeId)
+        val historyMgr = com.example.data.local.WatchHistoryManager.getInstance(context)
+        historyMgr.setUser(preCheckUid)
+        val savedDiskPos = historyMgr.getResumablePositionMs(preCheckUid, movie.id, effectiveEpisodeId)
+        val savedMemPos = moviePositions[positionKey] ?: 0L
+        val recoveredPos = if (savedDiskPos >= com.example.data.local.WatchHistoryManager.MIN_RESUME_POSITION_MS) {
+            savedDiskPos
+        } else if (savedMemPos >= com.example.data.local.WatchHistoryManager.MIN_RESUME_POSITION_MS) {
+            savedMemPos
+        } else 0L
+
+        val askResume: Boolean
+        val resumedBanner: String?
+        val targetStartPos: Long
+        if (initialPositionMs > 0L) {
             saveMoviePosition(positionKey, initialPositionMs)
-            initialPositionMs
+            targetStartPos = initialPositionMs
+            askResume = false
+            resumedBanner = if (initialPositionMs >= com.example.data.local.WatchHistoryManager.MIN_RESUME_POSITION_MS) {
+                "Resumed from ${com.example.data.local.WatchHistoryManager.formatTimestamp(initialPositionMs)}"
+            } else null
+        } else if (recoveredPos > 0L) {
+            saveMoviePosition(positionKey, recoveredPos)
+            targetStartPos = recoveredPos
+            askResume = true
+            resumedBanner = null
         } else {
-            getMovieLastPosition(positionKey)
+            targetStartPos = 0L
+            askResume = false
+            resumedBanner = null
         }
 
         // Initialize or update PlaybackWatchTracker for genuine watch time analytics
@@ -165,7 +229,7 @@ class PlayerViewModel(
             }
         }
 
-        // If player already exists for THIS SAME movie, seek to target and ensure playback is active
+        // If player already exists for THIS SAME movie, seek to target and apply resume behavior
         if (exoPlayer != null && isSameMovie) {
             exoPlayer?.let { player ->
                 if (player.playbackState == Player.STATE_IDLE) {
@@ -174,17 +238,25 @@ class PlayerViewModel(
                 if (targetStartPos > 0L && Math.abs(player.currentPosition - targetStartPos) > 1500L) {
                     player.seekTo(targetStartPos)
                 }
-                player.playWhenReady = true
-                player.play()
+                player.playWhenReady = !askResume
+                if (!askResume) {
+                    player.play()
+                } else {
+                    player.pause()
+                }
                 _uiState.value = _uiState.value.copy(
                     isLoading = player.playbackState == Player.STATE_BUFFERING || player.playbackState == Player.STATE_IDLE,
                     isResolvingStreamUrl = false,
                     loadingStage = "Buffering cinema stream...",
-                    isPlaying = true,
-                    currentPositionMs = player.currentPosition.coerceAtLeast(0L),
+                    isPlaying = !askResume,
+                    currentPositionMs = if (targetStartPos > 0L) targetStartPos else player.currentPosition.coerceAtLeast(0L),
                     durationMs = player.duration.coerceAtLeast(0L),
-                    errorMessage = null
+                    errorMessage = null,
+                    pendingResumePositionMs = if (askResume) targetStartPos else 0L,
+                    showResumePrompt = askResume,
+                    resumedFromLabel = resumedBanner
                 )
+                if (resumedBanner != null) scheduleResumeBannerDismiss()
                 startProgressTracker()
             }
             return
@@ -225,6 +297,7 @@ class PlayerViewModel(
                     startControlsHideTimer()
                 } else {
                     watchTracker?.onPause(player)
+                    persistCurrentPlaybackPosition(commitNow = true)
                 }
             }
 
@@ -239,6 +312,20 @@ class PlayerViewModel(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 val isLoading = playbackState == Player.STATE_BUFFERING
                 val isReady = playbackState == Player.STATE_READY
+                if (playbackState == Player.STATE_ENDED && !_uiState.value.showResumePrompt) {
+                    activeMovie?.let { m ->
+                        val posKey = com.example.data.local.WatchHistoryManager.buildPositionKey(m.id, currentEpisodeId)
+                        moviePositions.remove(posKey)
+                        applicationContext?.let { ctx ->
+                            com.example.data.local.WatchHistoryManager.getInstance(ctx).clearPlaybackPosition(
+                                userId = repository.userSession.value.uid,
+                                movieId = m.id,
+                                episodeId = currentEpisodeId,
+                                commitNow = true
+                            )
+                        }
+                    }
+                }
                 _uiState.value = _uiState.value.copy(
                     isLoading = isLoading,
                     isResolvingStreamUrl = if (isReady) false else _uiState.value.isResolvingStreamUrl,
@@ -257,35 +344,87 @@ class PlayerViewModel(
                 android.util.Log.e("PlayerViewModel", "Playback error on $currentUrl: ${error.message} (code: ${error.errorCodeName})")
                 watchTracker?.onError(error.errorCodeName, error.message)
 
-                // 1. If it was playing a local offline file (file://) and failed:
-                // The local file on disk is corrupted, partial, or unreadable.
-                // Purge the bad file and seamlessly switch to online stream.
-                if (currentUrl.startsWith("file://") || currentUrl.startsWith("/")) {
-                    android.util.Log.w("PlayerViewModel", "Corrupted or unreadable local file detected. Purging file and seamlessly failing over to online stream...")
-                    viewModelScope.launch {
-                        val currentUid = repository.userSession.value.uid
-                        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-                        val targetFilename = if (episodeId != null) "movie_${movie.id}_ep_${episodeId}.mp4" else "movie_${movie.id}.mp4"
-                        val localFile = java.io.File(java.io.File(destDir, "users/$currentUid"), targetFilename)
-                        val legacyFile = java.io.File(destDir, targetFilename)
-                        runCatching { if (localFile.exists()) localFile.delete() }
-                        runCatching { if (legacyFile.exists()) legacyFile.delete() }
+                val activeEpId = currentEpisodeId ?: episodeId
 
-                        val onlineUrl = if (episodeId != null) {
-                            val ep = movie.episodes.firstOrNull { it.id == episodeId }
-                            if (ep != null) repository.resolveEpisodeOnlineStreamUri(movie, ep) else repository.resolveOnlineStreamUri(movie)
-                        } else {
-                            repository.resolveOnlineStreamUri(movie)
+                // 1. If playing a local offline file failed:
+                // Never delete the user's already-downloaded file!
+                // First normalize schemeless paths or check Room for another verified local copy,
+                // and only attempt online fallback if the device actually has internet connectivity.
+                if (currentUrl.startsWith("file://") || currentUrl.startsWith("/") || currentUrl.startsWith("content://")) {
+                    viewModelScope.launch {
+                        if (currentUrl.startsWith("/")) {
+                            val normalizedUri = android.net.Uri.fromFile(java.io.File(currentUrl)).toString()
+                            if (normalizedUri != currentUrl) {
+                                _uiState.value = _uiState.value.copy(
+                                    isOfflinePlayback = true,
+                                    currentPlaybackUrl = normalizedUri,
+                                    errorMessage = null,
+                                    isLoading = true,
+                                    loadingStage = "Preparing offline playback..."
+                                )
+                                player.setMediaItem(MediaItem.fromUri(android.net.Uri.parse(normalizedUri)))
+                                player.prepare()
+                                player.playWhenReady = true
+                                return@launch
+                            }
                         }
-                        _uiState.value = _uiState.value.copy(
-                            isOfflinePlayback = false,
-                            currentPlaybackUrl = onlineUrl,
-                            errorMessage = null,
-                            isLoading = true
+
+                        val currentUid = repository.userSession.value.uid
+                        val downloadMgr = repository.getDownloadManager(context)
+                        val altLocalUri = (if (!activeEpId.isNullOrBlank()) {
+                            downloadMgr.getVerifiedOfflinePlaybackUri(movie.id, activeEpId, currentUid)
+                        } else null) ?: downloadMgr.getVerifiedOfflinePlaybackUri(movie.id, null, currentUid)
+
+                        if (altLocalUri != null && altLocalUri != currentUrl) {
+                            _uiState.value = _uiState.value.copy(
+                                isOfflinePlayback = true,
+                                currentPlaybackUrl = altLocalUri,
+                                errorMessage = null,
+                                isLoading = true,
+                                loadingStage = "Preparing offline playback..."
+                            )
+                            player.setMediaItem(MediaItem.fromUri(normalizeMediaUri(altLocalUri)))
+                            player.prepare()
+                            player.playWhenReady = true
+                            return@launch
+                        }
+
+                        if (isNetworkAvailable(context)) {
+                            val onlineUrl = if (activeEpId != null) {
+                                val ep = movie.episodes.firstOrNull { it.id == activeEpId }
+                                if (ep != null) repository.resolveEpisodeOnlineStreamUri(movie, ep) else repository.resolveOnlineStreamUri(movie)
+                            } else {
+                                repository.resolveOnlineStreamUri(movie)
+                            }
+                            if (onlineUrl.startsWith("http://") || onlineUrl.startsWith("https://")) {
+                                _uiState.value = _uiState.value.copy(
+                                    isOfflinePlayback = false,
+                                    currentPlaybackUrl = onlineUrl,
+                                    errorMessage = null,
+                                    isLoading = true
+                                )
+                                player.setMediaItem(MediaItem.fromUri(onlineUrl))
+                                player.prepare()
+                                player.playWhenReady = true
+                                return@launch
+                            }
+                        }
+
+                        val localDiagnostic = StreamDiagnosticInfo(
+                            streamUrl = currentUrl,
+                            errorCodeName = error.errorCodeName,
+                            failureSummary = "Unable to play this downloaded video file.",
+                            brokenLayer = "Offline Playback",
+                            actionGuide = "The downloaded file is preserved on your device. Tap Retry to try again."
                         )
-                        player.setMediaItem(MediaItem.fromUri(onlineUrl))
-                        player.prepare()
-                        player.playWhenReady = true
+                        _uiState.value = _uiState.value.copy(
+                            isPlaying = false,
+                            isLoading = false,
+                            isResolvingStreamUrl = false,
+                            isOfflinePlayback = true,
+                            errorMessage = localDiagnostic.failureSummary,
+                            streamDiagnostic = localDiagnostic
+                        )
                     }
                     return
                 }
@@ -345,7 +484,12 @@ class PlayerViewModel(
                 viewModelScope.launch {
                     val fallbackOffline = try {
                         val currentUid = repository.userSession.value.uid
-                        repository.getDownloadManager(context).getVerifiedOfflinePlaybackUri(movie.id, episodeId, currentUid)
+                        val downloadMgr = repository.getDownloadManager(context)
+                        (if (!activeEpId.isNullOrBlank()) {
+                            downloadMgr.getVerifiedOfflinePlaybackUri(movie.id, activeEpId, currentUid)
+                        } else null) ?: if (activeEpId.isNullOrBlank() || activeEpId.startsWith("synth_s1_e1_")) {
+                            downloadMgr.getVerifiedOfflinePlaybackUri(movie.id, null, currentUid)
+                        } else null
                     } catch (_: Exception) { null }
                     if (fallbackOffline != null && fallbackOffline != currentUrl) {
                         android.util.Log.i("PlayerViewModel", "Switching to verified offline video: $fallbackOffline")
@@ -357,13 +501,13 @@ class PlayerViewModel(
                             isLoading = true,
                             loadingStage = "Playing offline video..."
                         )
-                        player.setMediaItem(MediaItem.fromUri(fallbackOffline))
+                        player.setMediaItem(MediaItem.fromUri(normalizeMediaUri(fallbackOffline)))
                         player.prepare()
                         player.playWhenReady = true
                         return@launch
                     }
 
-                    if (episodeId == null) {
+                    if (activeEpId == null) {
                         val fallbackUrl = repository.resolveOnlineStreamUri(movie, excludeUrl = currentUrl)
                         if (fallbackUrl.isNotBlank() && fallbackUrl != currentUrl) {
                             android.util.Log.w("PlayerViewModel", "Switching to verified stream source: $fallbackUrl")
@@ -381,7 +525,7 @@ class PlayerViewModel(
                         }
                     } else {
                         // For a specific episode: NEVER fall back to Episode 1 / Movie stream URL!
-                        val targetEp = movie.episodes.firstOrNull { it.id == episodeId }
+                        val targetEp = movie.episodes.firstOrNull { it.id == activeEpId }
                         val epNumber = targetEp?.episodeNumber ?: 2
                         val epTitle = targetEp?.title ?: "Episode $epNumber"
                         val isLocal = currentUrl.startsWith("content:") || currentUrl.startsWith("file:")
@@ -409,120 +553,229 @@ class PlayerViewModel(
             }
         })
 
-        // 1. Check if verified offline file exists for zero-delay offline playback for the CURRENT USER
-        val currentUid = repository.userSession.value.uid
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-
+        // Always verify offline availability from Room + all storage paths BEFORE picking an online URL
         val targetEpisode = if (effectiveEpisodeId != null) {
             sortedEpisodes.firstOrNull { it.id == effectiveEpisodeId }
         } else {
-            sortedEpisodes.firstOrNull()
+            null
         }
         activeEpisode = targetEpisode
 
-        val filename = if (effectiveEpisodeId != null) "movie_${movie.id}_ep_${effectiveEpisodeId}.mp4" else "movie_${movie.id}.mp4"
-        val userFile = java.io.File(java.io.File(destDir, "users/$currentUid"), filename)
-        val internalUserFile = java.io.File(java.io.File(context.filesDir, "users/$currentUid"), filename)
+        viewModelScope.launch {
+            val currentUid = repository.userSession.value.uid
+            val downloadMgr = repository.getDownloadManager(context)
 
-        val passedFile = if (targetEpisode == null && (movie.videoStreamUrl.startsWith("file:") || movie.videoStreamUrl.startsWith("/"))) {
-            val f = java.io.File(movie.videoStreamUrl.removePrefix("file://"))
-            if (f.exists() && f.length() >= 1024 * 1024L && (f.absolutePath.contains("/users/$currentUid/") || f.absolutePath.contains("/$currentUid/"))) f else null
-        } else null
+            val verifiedEpisodeOffline = if (effectiveEpisodeId != null) {
+                downloadMgr.getVerifiedOfflinePlaybackUri(movie.id, effectiveEpisodeId, currentUid)
+            } else null
 
-        val localCandidate = when {
-            userFile.exists() && userFile.length() >= 1024 * 1024L -> userFile
-            internalUserFile.exists() && internalUserFile.length() >= 1024 * 1024L -> internalUserFile
-            passedFile != null -> passedFile
-            else -> null
-        }
+            val allowWholeMovieCheck = episodeId == null ||
+                effectiveEpisodeId.isNullOrBlank() ||
+                effectiveEpisodeId.startsWith("synth_s1_e1_") ||
+                (targetEpisode?.seasonNumber == 1 && targetEpisode.episodeNumber == 1)
 
-        val directUrl = if (targetEpisode != null) {
-            val epKey = targetEpisode.videoKey
-            val epStream = targetEpisode.videoStreamUrl
-            when {
-                localCandidate != null -> android.net.Uri.fromFile(localCandidate).toString()
-                epStream.startsWith("content:") || epStream.startsWith("file:") -> epStream
-                epKey.isNotBlank() || epStream.isNotBlank() -> R2UrlUtils.canonicalizeStreamUrl(epStream, epKey)
-                targetEpisode.seasonNumber == 1 && targetEpisode.episodeNumber == 1 && movie.videoStreamUrl.isNotBlank() -> {
-                    R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+            val verifiedWholeOffline = if (verifiedEpisodeOffline == null && allowWholeMovieCheck) {
+                downloadMgr.getVerifiedOfflinePlaybackUri(movie.id, null, currentUid)
+            } else null
+
+            val explicitLocalUri = if (verifiedEpisodeOffline == null && verifiedWholeOffline == null) {
+                val rawExplicit = when {
+                    targetEpisode != null && (targetEpisode.videoStreamUrl.startsWith("content:") || targetEpisode.videoStreamUrl.startsWith("file:") || targetEpisode.videoStreamUrl.startsWith("/")) -> targetEpisode.videoStreamUrl
+                    targetEpisode == null && (movie.videoStreamUrl.startsWith("content:") || movie.videoStreamUrl.startsWith("file:") || movie.videoStreamUrl.startsWith("/")) -> movie.videoStreamUrl
+                    else -> ""
                 }
-                else -> ""
-            }
-        } else {
-            when {
-                localCandidate != null -> android.net.Uri.fromFile(localCandidate).toString()
-                movie.videoStreamUrl.startsWith("content:") -> movie.videoStreamUrl
-                else -> R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
-            }
-        }
+                if (rawExplicit.startsWith("content:")) {
+                    rawExplicit
+                } else if (rawExplicit.isNotBlank()) {
+                    val f = java.io.File(rawExplicit.removePrefix("file://"))
+                    if (f.exists() && f.length() >= 1024 * 1024L && (f.absolutePath.contains("/users/$currentUid/") || f.absolutePath.contains("/$currentUid/"))) {
+                        android.net.Uri.fromFile(f).toString()
+                    } else null
+                } else null
+            } else null
 
-        if (directUrl.isNotBlank() && (directUrl.startsWith("http://") || directUrl.startsWith("https://") || directUrl.startsWith("file:") || directUrl.startsWith("content:") || directUrl.startsWith("/"))) {
-            val isOffline = directUrl.startsWith("file:") || directUrl.startsWith("content:") || directUrl.startsWith("/")
-            val parsedMediaUri = if (directUrl.startsWith("/")) {
-                android.net.Uri.fromFile(java.io.File(directUrl))
+            val offlineUri = verifiedEpisodeOffline ?: verifiedWholeOffline ?: explicitLocalUri
+
+            val playbackUrl = if (!offlineUri.isNullOrBlank()) {
+                if (verifiedEpisodeOffline == null && verifiedWholeOffline != null) {
+                    currentEpisodeId = null
+                    activeEpisode = null
+                }
+                offlineUri
             } else {
-                android.net.Uri.parse(directUrl)
-            }
-            _uiState.value = _uiState.value.copy(
-                isOfflinePlayback = isOffline,
-                currentPlaybackUrl = directUrl,
-                isResolvingStreamUrl = false,
-                isLoading = true,
-                loadingStage = if (isOffline) "Preparing offline playback..." else "Buffering cinema stream...",
-                errorMessage = null
-            )
-            player.setMediaItem(MediaItem.fromUri(parsedMediaUri))
-            if (targetStartPos > 0L) {
-                player.seekTo(targetStartPos)
-                _uiState.value = _uiState.value.copy(currentPositionMs = targetStartPos)
-            }
-            player.prepare()
-            player.playWhenReady = true
-            player.play()
-            startProgressTracker()
-        } else {
-            viewModelScope.launch {
                 _uiState.value = _uiState.value.copy(
                     isResolvingStreamUrl = true,
                     loadingStage = "Resolving video stream..."
                 )
-                val playbackUrl = repository.resolvePlaybackUri(movie, context, episodeId)
-                if (playbackUrl.isBlank()) {
-                    val label = targetEpisode?.title ?: movie.title
-                    _uiState.value = _uiState.value.copy(
-                        isPlaying = false,
-                        isLoading = false,
-                        isResolvingStreamUrl = false,
-                        errorMessage = "No video stream is available for '$label'. Please upload a video or configure a stream URL."
-                    )
-                    return@launch
-                }
-                val isOffline = playbackUrl.startsWith("file:") || playbackUrl.startsWith("/") || playbackUrl.startsWith("content:")
-                _uiState.value = _uiState.value.copy(
-                    isOfflinePlayback = isOffline,
-                    currentPlaybackUrl = playbackUrl,
-                    isResolvingStreamUrl = false,
-                    loadingStage = if (isOffline) "Preparing offline playback..." else "Buffering cinema stream...",
-                    errorMessage = null
-                )
-
-                val mediaUri = if (playbackUrl.startsWith("/")) {
-                    android.net.Uri.fromFile(java.io.File(playbackUrl))
+                if (targetEpisode != null) {
+                    val epKey = targetEpisode.videoKey
+                    val epStream = targetEpisode.videoStreamUrl
+                    val candidate = when {
+                        epKey.isNotBlank() || epStream.isNotBlank() -> R2UrlUtils.canonicalizeStreamUrl(epStream, epKey)
+                        targetEpisode.seasonNumber == 1 && targetEpisode.episodeNumber == 1 && movie.videoStreamUrl.isNotBlank() -> {
+                            R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+                        }
+                        else -> ""
+                    }
+                    candidate.ifBlank { repository.resolveEpisodeOnlineStreamUri(movie, targetEpisode) }
                 } else {
-                    android.net.Uri.parse(playbackUrl)
+                    val candidate = R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey)
+                    candidate.ifBlank { repository.resolveOnlineStreamUri(movie) }
                 }
-                val mediaItem = MediaItem.fromUri(mediaUri)
-                player.setMediaItem(mediaItem)
-                if (targetStartPos > 0L) {
-                    player.seekTo(targetStartPos)
-                    _uiState.value = _uiState.value.copy(currentPositionMs = targetStartPos)
-                }
-                player.prepare()
-                player.playWhenReady = true
-                player.play()
-
-                startProgressTracker()
             }
+
+            if (playbackUrl.isBlank()) {
+                val label = targetEpisode?.title ?: movie.title
+                _uiState.value = _uiState.value.copy(
+                    isPlaying = false,
+                    isLoading = false,
+                    isResolvingStreamUrl = false,
+                    errorMessage = "No video stream is available for '$label'. Please upload a video or configure a stream URL."
+                )
+                return@launch
+            }
+
+            val isOffline = playbackUrl.startsWith("file:") || playbackUrl.startsWith("/") || playbackUrl.startsWith("content:")
+            val mediaUri = normalizeMediaUri(playbackUrl)
+            val normalizedPlaybackUrl = mediaUri.toString()
+
+            _uiState.value = _uiState.value.copy(
+                isOfflinePlayback = isOffline,
+                currentPlaybackUrl = normalizedPlaybackUrl,
+                isResolvingStreamUrl = false,
+                isLoading = true,
+                loadingStage = if (isOffline) "Preparing offline playback..." else "Buffering cinema stream...",
+                errorMessage = null,
+                currentPositionMs = if (targetStartPos > 0L) targetStartPos else _uiState.value.currentPositionMs,
+                pendingResumePositionMs = if (askResume) targetStartPos else 0L,
+                showResumePrompt = askResume,
+                resumedFromLabel = resumedBanner
+            )
+
+            player.setMediaItem(MediaItem.fromUri(mediaUri), targetStartPos.coerceAtLeast(0L))
+            player.prepare()
+            player.playWhenReady = !askResume
+            if (!askResume) {
+                player.play()
+                if (resumedBanner != null) scheduleResumeBannerDismiss()
+            }
+
+            startProgressTracker()
+        }
+    }
+
+    fun confirmResumePlayback() {
+        val resumePos = _uiState.value.pendingResumePositionMs
+        val label = if (resumePos > 0L) {
+            "Resumed from ${com.example.data.local.WatchHistoryManager.formatTimestamp(resumePos)}"
+        } else null
+        _uiState.value = _uiState.value.copy(
+            showResumePrompt = false,
+            pendingResumePositionMs = 0L,
+            resumedFromLabel = label,
+            isPlaying = true
+        )
+        exoPlayer?.let { player ->
+            if (resumePos > 0L && Math.abs(player.currentPosition - resumePos) > 1500L) {
+                player.seekTo(resumePos)
+            }
+            player.playWhenReady = true
+            player.play()
+        }
+        if (label != null) scheduleResumeBannerDismiss()
+        startControlsHideTimer()
+    }
+
+    fun restartPlaybackFromBeginning() {
+        _uiState.value = _uiState.value.copy(
+            showResumePrompt = false,
+            pendingResumePositionMs = 0L,
+            resumedFromLabel = null,
+            currentPositionMs = 0L,
+            isPlaying = true
+        )
+        val movie = activeMovie
+        val epId = currentEpisodeId
+        if (movie != null) {
+            val posKey = com.example.data.local.WatchHistoryManager.buildPositionKey(movie.id, epId)
+            moviePositions.remove(posKey)
+            applicationContext?.let { ctx ->
+                com.example.data.local.WatchHistoryManager.getInstance(ctx).clearPlaybackPosition(
+                    userId = repository.userSession.value.uid,
+                    movieId = movie.id,
+                    episodeId = epId,
+                    commitNow = true
+                )
+            }
+        }
+        exoPlayer?.let { player ->
+            player.seekTo(0L)
+            player.playWhenReady = true
+            player.play()
+        }
+        startControlsHideTimer()
+    }
+
+    private fun scheduleResumeBannerDismiss() {
+        resumeBannerDismissJob?.cancel()
+        resumeBannerDismissJob = viewModelScope.launch {
+            delay(3500)
+            _uiState.value = _uiState.value.copy(resumedFromLabel = null)
+        }
+    }
+
+    private fun persistCurrentPlaybackPosition(commitNow: Boolean = false) {
+        if (_uiState.value.showResumePrompt) return
+        val player = exoPlayer ?: return
+        val pos = player.currentPosition.coerceAtLeast(0L)
+        val dur = player.duration.coerceAtLeast(0L)
+        val m = activeMovie ?: return
+        if (pos < 1000L) return
+
+        val posKey = com.example.data.local.WatchHistoryManager.buildPositionKey(m.id, currentEpisodeId)
+        val ctx = applicationContext ?: return
+        val currentUid = repository.userSession.value.uid
+        val mgr = com.example.data.local.WatchHistoryManager.getInstance(ctx)
+        if (com.example.data.local.WatchHistoryManager.isPlaybackCompleted(pos, dur)) {
+            moviePositions.remove(posKey)
+            mgr.clearPlaybackPosition(
+                userId = currentUid,
+                movieId = m.id,
+                episodeId = currentEpisodeId,
+                commitNow = commitNow
+            )
+            return
+        }
+        moviePositions[posKey] = pos
+        mgr.recordWatchProgress(
+            userId = currentUid,
+            movie = m,
+            episode = activeEpisode,
+            positionMs = pos,
+            durationMs = dur,
+            commitNow = commitNow
+        )
+    }
+
+    private fun normalizeMediaUri(rawPathOrUri: String): android.net.Uri {
+        val trimmed = rawPathOrUri.trim()
+        return if (trimmed.startsWith("/")) {
+            android.net.Uri.fromFile(java.io.File(trimmed))
+        } else if (trimmed.startsWith("file://")) {
+            android.net.Uri.fromFile(java.io.File(trimmed.removePrefix("file://")))
+        } else {
+            android.net.Uri.parse(trimmed)
+        }
+    }
+
+    private fun isNetworkAvailable(context: Context): Boolean {
+        return try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return false
+            val network = cm.activeNetwork ?: return false
+            val caps = cm.getNetworkCapabilities(network) ?: return false
+            caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -627,29 +880,25 @@ class PlayerViewModel(
                     val pos = player.currentPosition.coerceAtLeast(0L)
                     val dur = player.duration.coerceAtLeast(0L)
                     watchTracker?.onProgressTick(player)
-                    _uiState.value = _uiState.value.copy(
-                        currentPositionMs = pos,
-                        bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L),
-                        durationMs = dur
-                    )
-                    currentMovieId?.let { id ->
-                        if (pos > 0L) moviePositions[id] = pos
+                    if (!_uiState.value.showResumePrompt && (player.playbackState == Player.STATE_READY || pos > 0L)) {
+                        _uiState.value = _uiState.value.copy(
+                            currentPositionMs = pos,
+                            bufferedPositionMs = player.bufferedPosition.coerceAtLeast(0L),
+                            durationMs = dur
+                        )
+                    } else if (dur > 0L) {
+                        _uiState.value = _uiState.value.copy(durationMs = dur)
                     }
-                    // Record watch history periodically (every ~3 seconds = 10 ticks) or if near end
-                    tickCount++
-                    if (tickCount % 10 == 0 || (dur > 0L && pos >= dur - 1000L)) {
-                        val m = activeMovie
-                        val ctx = applicationContext
-                        if (m != null && ctx != null && pos > 1000L) {
-                            val currentUid = repository.userSession.value.uid
-                            com.example.data.local.WatchHistoryManager.getInstance(ctx).recordWatchProgress(
-                                userId = currentUid,
-                                movie = m,
-                                episode = activeEpisode,
-                                positionMs = pos,
-                                durationMs = dur
-                            )
+                    activeMovie?.let { m ->
+                        if (!_uiState.value.showResumePrompt && pos > 0L) {
+                            val posKey = com.example.data.local.WatchHistoryManager.buildPositionKey(m.id, currentEpisodeId)
+                            moviePositions[posKey] = pos
                         }
+                    }
+                    // Record watch history locally every ~2.4 seconds (8 ticks) or if near end
+                    tickCount++
+                    if (tickCount % 8 == 0 || (dur > 0L && pos >= dur - 1000L)) {
+                        persistCurrentPlaybackPosition(commitNow = false)
                     }
                 }
                 delay(300)
@@ -661,20 +910,7 @@ class PlayerViewModel(
         exoPlayer?.pause()
         exoPlayer?.let { player ->
             watchTracker?.onPause(player)
-            val pos = player.currentPosition.coerceAtLeast(0L)
-            val dur = player.duration.coerceAtLeast(0L)
-            val m = activeMovie
-            val ctx = applicationContext
-            if (m != null && ctx != null && pos > 1000L) {
-                val currentUid = repository.userSession.value.uid
-                com.example.data.local.WatchHistoryManager.getInstance(ctx).recordWatchProgress(
-                    userId = currentUid,
-                    movie = m,
-                    episode = activeEpisode,
-                    positionMs = pos,
-                    durationMs = dur
-                )
-            }
+            persistCurrentPlaybackPosition(commitNow = true)
         }
         _uiState.value = _uiState.value.copy(isPlaying = false)
         showControls(keepVisible = true)
@@ -735,7 +971,8 @@ class PlayerViewModel(
 
     fun seekTo(positionMs: Long) {
         exoPlayer?.seekTo(positionMs)
-        _uiState.value = _uiState.value.copy(currentPositionMs = positionMs)
+        _uiState.value = _uiState.value.copy(currentPositionMs = positionMs, showResumePrompt = false, pendingResumePositionMs = 0L)
+        persistCurrentPlaybackPosition(commitNow = false)
         restartControlsHideTimer()
     }
 
@@ -753,8 +990,11 @@ class PlayerViewModel(
 
             _uiState.value = _uiState.value.copy(
                 doubleTapSeek = DoubleTapSeekState(isForward = isForward, visible = true, seconds = currentSeconds),
-                currentPositionMs = target
+                currentPositionMs = target,
+                showResumePrompt = false,
+                pendingResumePositionMs = 0L
             )
+            persistCurrentPlaybackPosition(commitNow = false)
 
             doubleTapDismissJob?.cancel()
             doubleTapDismissJob = viewModelScope.launch {
@@ -981,11 +1221,15 @@ class PlayerViewModel(
     }
 
     fun releasePlayer(movieId: String? = null) {
+        persistCurrentPlaybackPosition(commitNow = true)
         exoPlayer?.let { player ->
             val pos = player.currentPosition.coerceAtLeast(0L)
-            if (pos > 0L) {
-                movieId?.let { id -> moviePositions[id] = pos }
-                currentMovieId?.let { id -> moviePositions[id] = pos }
+            if (pos > 0L && !_uiState.value.showResumePrompt) {
+                val activeId = currentMovieId ?: movieId
+                if (activeId != null) {
+                    val posKey = com.example.data.local.WatchHistoryManager.buildPositionKey(activeId, currentEpisodeId)
+                    moviePositions[posKey] = pos
+                }
             }
         }
         watchTracker?.onRelease(exoPlayer)
@@ -994,9 +1238,13 @@ class PlayerViewModel(
         controlsTimeoutJob?.cancel()
         hudDismissJob?.cancel()
         doubleTapDismissJob?.cancel()
+        resumeBannerDismissJob?.cancel()
         exoPlayer?.release()
         exoPlayer = null
         currentMovieId = null
+        currentEpisodeId = null
+        activeMovie = null
+        activeEpisode = null
         _uiState.value = PlayerUiState(
             orientationMode = OrientationMode.USER_LANDSCAPE,
             loadingStage = "Buffering cinema stream..."

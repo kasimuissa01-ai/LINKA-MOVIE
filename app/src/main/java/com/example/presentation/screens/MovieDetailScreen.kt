@@ -110,6 +110,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -138,6 +139,7 @@ import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import com.example.data.local.WatchHistoryManager
 import com.example.data.repository.MovieRepository
 import com.example.domain.model.DownloadItem
 import com.example.data.download.EpisodeDownloadProgress
@@ -175,14 +177,21 @@ fun MovieDetailScreen(
 ) {
     val downloads by downloadViewModel.downloads.collectAsState()
     val episodeProgressMap by downloadViewModel.episodeProgressMap.collectAsState()
+    val userSession by downloadViewModel.userSession.collectAsState()
     val downloadItem = downloads.find { it.movieId == movie.id && it.episodeId.isNullOrBlank() }
     val context = LocalContext.current
     val activity = context as? Activity
     val configuration = androidx.compose.ui.platform.LocalConfiguration.current
     val scrollState = rememberScrollState()
 
+    val watchHistoryManager = remember { WatchHistoryManager.getInstance(context) }
+    val watchHistory by watchHistoryManager.historyFlow.collectAsState()
+    LaunchedEffect(userSession.uid) {
+        watchHistoryManager.setUser(userSession.uid)
+    }
+
     // Dedicated Inline ExoPlayer for instantaneous automatic playback
-    var isPlaying by remember { mutableStateOf(true) }
+    var isPlaying by remember { mutableStateOf(false) }
     var isBuffering by remember { mutableStateOf(true) }
     var isMuted by remember { mutableStateOf(false) }
     var currentPositionMs by remember { mutableLongStateOf(0L) }
@@ -307,48 +316,128 @@ fun MovieDetailScreen(
         sortedEpisodes.firstOrNull { it.id == selectedEpisodeId } ?: sortedEpisodes.firstOrNull()
     }
 
+    var pendingInlineResumeMs by remember(movie.id, selectedEpisodeId) { mutableLongStateOf(0L) }
+    var showInlineResumePrompt by remember(movie.id, selectedEpisodeId) { mutableStateOf(false) }
+    var resumeChoiceResolved by remember(movie.id, selectedEpisodeId) { mutableStateOf(false) }
+
+    val currentActiveEpisode by rememberUpdatedState(activeEpisode)
+    val currentShowInlineResumePrompt by rememberUpdatedState(showInlineResumePrompt)
+    val currentUserId by rememberUpdatedState(userSession.uid.ifBlank { "guest" })
+
+    val flushInlineProgress: (Boolean) -> Unit = { commitNow ->
+        val pos = try {
+            inlinePlayer.currentPosition.coerceAtLeast(0L)
+        } catch (_: Exception) {
+            currentPositionMs
+        }
+        val dur = try {
+            inlinePlayer.duration.coerceAtLeast(0L)
+        } catch (_: Exception) {
+            durationMs
+        }
+        val ep = currentActiveEpisode
+        val uid = currentUserId
+        val posKey = WatchHistoryManager.buildPositionKey(movie.id, ep?.id)
+
+        if (!currentShowInlineResumePrompt && pos >= 1000L) {
+            if (WatchHistoryManager.isPlaybackCompleted(pos, dur)) {
+                playerViewModel?.saveMoviePosition(posKey, 0L)
+                watchHistoryManager.clearPlaybackPosition(uid, movie.id, ep?.id, commitNow = commitNow)
+            } else {
+                playerViewModel?.saveMoviePosition(posKey, pos)
+                watchHistoryManager.recordWatchProgress(
+                    userId = uid,
+                    movie = movie,
+                    episode = ep,
+                    positionMs = pos,
+                    durationMs = dur,
+                    commitNow = commitNow
+                )
+            }
+        }
+    }
+
     // Auto-hide player controls overlay after 3 seconds
-    LaunchedEffect(showPlayerControls, isPlaying) {
-        if (showPlayerControls && isPlaying) {
+    LaunchedEffect(showPlayerControls, isPlaying, showInlineResumePrompt) {
+        if (showPlayerControls && isPlaying && !showInlineResumePrompt) {
             delay(3500)
             showPlayerControls = false
         }
     }
 
-    // Periodic time progress tracker
-    LaunchedEffect(inlinePlayer, isPlaying) {
+    // Periodic time progress tracker + durable local persistence every ~2.5s
+    LaunchedEffect(inlinePlayer, isPlaying, selectedEpisodeId) {
+        var lastPersistedAt = 0L
         while (true) {
-            if (inlinePlayer.isPlaying) {
-                currentPositionMs = inlinePlayer.currentPosition.coerceAtLeast(0L)
-                durationMs = inlinePlayer.duration.coerceAtLeast(0L)
+            if (!currentShowInlineResumePrompt && inlinePlayer.isPlaying) {
+                val pos = inlinePlayer.currentPosition.coerceAtLeast(0L)
+                val dur = inlinePlayer.duration.coerceAtLeast(0L)
+                currentPositionMs = pos
+                if (dur > 0L) durationMs = dur
+                val now = System.currentTimeMillis()
+                if (pos >= 1000L && now - lastPersistedAt >= 2500L) {
+                    lastPersistedAt = now
+                    flushInlineProgress(false)
+                }
             }
             delay(500)
         }
     }
 
-    // Dynamic stream loading whenever selectedEpisodeId or movie changes
-    LaunchedEffect(movie.id, selectedEpisodeId) {
+    // Compute verified offline readiness reactively so late Room emissions update the inline player cleanly
+    val isAnyOfflineCompleted = remember(downloads, movie.id, selectedEpisodeId, userSession.uid) {
+        downloads.any {
+            it.movieId == movie.id &&
+                it.status == DownloadStatus.COMPLETED &&
+                (it.episodeId == selectedEpisodeId || it.episodeId.isNullOrBlank())
+        }
+    }
+
+    // Dynamic stream loading whenever selectedEpisodeId, movie, or verified offline status changes
+    LaunchedEffect(movie.id, selectedEpisodeId, downloads, isAnyOfflineCompleted, userSession.uid) {
         val targetEpisode = sortedEpisodes.firstOrNull { it.id == selectedEpisodeId } ?: sortedEpisodes.firstOrNull()
-        val epDownload = if (targetEpisode != null) {
-            downloads.find { (it.episodeId == targetEpisode.id || it.id == "${movie.id}_ep_${targetEpisode.id}") && it.movieId == movie.id }
-        } else downloadItem
+        val epSpecificDownload = if (targetEpisode != null) {
+            downloads.find { it.movieId == movie.id && it.episodeId == targetEpisode.id }
+        } else null
+        val epDownload = epSpecificDownload ?: if (targetEpisode == null || (targetEpisode.seasonNumber == 1 && targetEpisode.episodeNumber == 1)) {
+            downloadItem
+        } else null
 
         val isEpOffline = epDownload?.status == DownloadStatus.COMPLETED
         val storedEpPath = epDownload?.localFilePath?.trim().orEmpty()
+        val uid = userSession.uid.ifBlank { "guest" }
 
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val baseFileName = if (targetEpisode != null) "movie_${movie.id}_ep_${targetEpisode.id}.mp4" else "movie_${movie.id}.mp4"
-        val directLocalFile = java.io.File(destDir, baseFileName)
-        val internalLocalFile = java.io.File(context.filesDir, baseFileName)
-        val directOfflineCandidate = when {
-            directLocalFile.exists() && directLocalFile.length() >= 1024 * 1024L -> directLocalFile.absolutePath
-            internalLocalFile.exists() && internalLocalFile.length() >= 1024 * 1024L -> internalLocalFile.absolutePath
-            else -> null
+        val normalizedStoredLocalUri = if (storedEpPath.isNotBlank()) {
+            if (storedEpPath.startsWith("content://")) {
+                val valid = try {
+                    context.contentResolver.openFileDescriptor(android.net.Uri.parse(storedEpPath), "r")?.use { pfd ->
+                        pfd.statSize >= com.example.data.download.OfflineStoragePaths.MIN_VALID_VIDEO_BYTES
+                    } == true
+                } catch (_: Exception) {
+                    false
+                }
+                if (valid) storedEpPath else null
+            } else {
+                val f = java.io.File(storedEpPath.removePrefix("file://"))
+                if (f.exists() && f.length() >= com.example.data.download.OfflineStoragePaths.MIN_VALID_VIDEO_BYTES) {
+                    android.net.Uri.fromFile(f).toString()
+                } else null
+            }
+        } else null
+
+        val verifiedEpFile = if (targetEpisode != null) {
+            com.example.data.download.OfflineStoragePaths.findVerifiedFileForUser(context, uid, movie.id, targetEpisode.id)
+        } else null
+        val verifiedWholeFile = if (epDownload == downloadItem) {
+            com.example.data.download.OfflineStoragePaths.findVerifiedFileForUser(context, uid, movie.id, null)
+        } else null
+
+        val directOfflineCandidate = (verifiedEpFile ?: verifiedWholeFile)?.let {
+            android.net.Uri.fromFile(it).toString()
         }
 
         val mediaUri = when {
-            isEpOffline && storedEpPath.startsWith("content://") -> storedEpPath
-            isEpOffline && storedEpPath.isNotBlank() && java.io.File(storedEpPath.removePrefix("file://")).exists() -> storedEpPath
+            isEpOffline && normalizedStoredLocalUri != null -> normalizedStoredLocalUri
             isEpOffline && directOfflineCandidate != null -> directOfflineCandidate
             targetEpisode != null -> {
                 val epKey = R2UrlUtils.extractCleanVideoKey(targetEpisode.videoKey, targetEpisode.videoStreamUrl)
@@ -360,21 +449,59 @@ fun MovieDetailScreen(
             }
         }
 
-        if (mediaUri.isNotBlank()) {
+        val currentUri = inlinePlayer.currentMediaItem?.localConfiguration?.uri?.toString()
+        if (mediaUri.isNotBlank() && mediaUri != currentUri) {
             try {
-                inlinePlayer.setMediaItem(MediaItem.fromUri(mediaUri))
-                inlinePlayer.prepare()
-                val resumeKey = if (selectedEpisodeId != null) "${movie.id}_$selectedEpisodeId" else movie.id
-                val resumePos = playerViewModel?.getMovieLastPosition(resumeKey) ?: 0L
-                if (resumePos > 0L) {
-                    inlinePlayer.seekTo(resumePos)
+                val parsedUri = if (mediaUri.startsWith("/")) {
+                    android.net.Uri.fromFile(java.io.File(mediaUri))
+                } else {
+                    android.net.Uri.parse(mediaUri)
                 }
-                inlinePlayer.play()
+
+                val posKey = WatchHistoryManager.buildPositionKey(movie.id, targetEpisode?.id)
+                val localSavedPos = watchHistoryManager.getResumablePositionMs(uid, movie.id, targetEpisode?.id)
+                val vmSavedPos = playerViewModel?.getMovieLastPosition(posKey) ?: 0L
+                val savedResumePos = maxOf(localSavedPos, vmSavedPos)
+                val inProgressPos = if (resumeChoiceResolved) {
+                    try { inlinePlayer.currentPosition.coerceAtLeast(0L) } catch (_: Exception) { 0L }
+                } else 0L
+
+                val initialSeekPos = when {
+                    inProgressPos >= WatchHistoryManager.MIN_RESUME_POSITION_MS -> inProgressPos
+                    savedResumePos >= WatchHistoryManager.MIN_RESUME_POSITION_MS && !resumeChoiceResolved -> savedResumePos
+                    else -> 0L
+                }
+
+                inlinePlayer.setMediaItem(MediaItem.fromUri(parsedUri), initialSeekPos)
+                inlinePlayer.prepare()
+
+                when {
+                    inProgressPos >= WatchHistoryManager.MIN_RESUME_POSITION_MS -> {
+                        currentPositionMs = inProgressPos
+                        inlinePlayer.playWhenReady = true
+                        inlinePlayer.play()
+                    }
+                    savedResumePos >= WatchHistoryManager.MIN_RESUME_POSITION_MS && !resumeChoiceResolved -> {
+                        currentPositionMs = savedResumePos
+                        pendingInlineResumeMs = savedResumePos
+                        showInlineResumePrompt = true
+                        showPlayerControls = false
+                        inlinePlayer.playWhenReady = false
+                        inlinePlayer.pause()
+                        isPlaying = false
+                    }
+                    else -> {
+                        pendingInlineResumeMs = 0L
+                        showInlineResumePrompt = false
+                        inlinePlayer.playWhenReady = true
+                        inlinePlayer.play()
+                    }
+                }
             } catch (e: Exception) {
                 streamError = e.message
                 isBuffering = false
             }
-        } else {
+        } else if (mediaUri.isBlank()) {
             isBuffering = false
         }
     }
@@ -387,11 +514,19 @@ fun MovieDetailScreen(
                 if (state == Player.STATE_READY) {
                     durationMs = inlinePlayer.duration.coerceAtLeast(0L)
                     streamError = null
+                } else if (state == Player.STATE_ENDED && !currentShowInlineResumePrompt) {
+                    val ep = currentActiveEpisode
+                    val posKey = WatchHistoryManager.buildPositionKey(movie.id, ep?.id)
+                    playerViewModel?.saveMoviePosition(posKey, 0L)
+                    watchHistoryManager.clearPlaybackPosition(currentUserId, movie.id, ep?.id, commitNow = true)
                 }
             }
 
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
+                if (!playing && !currentShowInlineResumePrompt) {
+                    flushInlineProgress(true)
+                }
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
@@ -404,15 +539,24 @@ fun MovieDetailScreen(
                 }
                 playerRetryAttempts++
 
-                // If playback failed on a broken local file, purge it so it doesn't block playback
-                val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-                val localFile = java.io.File(destDir, "movie_${movie.id}.mp4")
-                if (localFile.exists() && downloadItem?.status != DownloadStatus.COMPLETED) {
-                    runCatching { localFile.delete() }
+                // Never fall back to online URLs when playing a local file without internet
+                val currentFailed = inlinePlayer.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty()
+                val isLocalPlayback = currentFailed.startsWith("file:") || currentFailed.startsWith("/") || currentFailed.startsWith("content:")
+                val hasInternet = try {
+                    val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+                    val net = cm?.activeNetwork
+                    val caps = cm?.getNetworkCapabilities(net)
+                    caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+                } catch (_: Exception) {
+                    false
+                }
+                if (isLocalPlayback && !hasInternet) {
+                    streamError = "Unable to play downloaded video offline"
+                    isBuffering = false
+                    return
                 }
 
                 // Try alternative verified movie stream URL from public R2 CDN (excluding current failed URI)
-                val currentFailed = inlinePlayer.currentMediaItem?.localConfiguration?.uri?.toString().orEmpty()
                 val candidateStreams = listOf(
                     R2UrlUtils.canonicalizeStreamUrl(movie.videoStreamUrl, movie.videoKey),
                     "https://${R2UrlUtils.PUBLIC_R2_DOMAIN}/videos/1789152583701-snippe_fierce_.mp4",
@@ -424,7 +568,9 @@ fun MovieDetailScreen(
                     try {
                         inlinePlayer.setMediaItem(MediaItem.fromUri(workingStream))
                         inlinePlayer.prepare()
-                        inlinePlayer.play()
+                        if (!currentShowInlineResumePrompt) {
+                            inlinePlayer.play()
+                        }
                     } catch (e: Exception) {
                         streamError = e.message
                         isBuffering = false
@@ -438,11 +584,7 @@ fun MovieDetailScreen(
         inlinePlayer.addListener(listener)
 
         onDispose {
-            val lastPos = inlinePlayer.currentPosition.coerceAtLeast(0L)
-            val saveKey = if (selectedEpisodeId != null) "${movie.id}_$selectedEpisodeId" else movie.id
-            if (lastPos > 0L) {
-                playerViewModel?.saveMoviePosition(saveKey, lastPos)
-            }
+            flushInlineProgress(true)
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             inlinePlayer.removeListener(listener)
             inlinePlayer.release()
@@ -455,6 +597,7 @@ fun MovieDetailScreen(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> {
+                    flushInlineProgress(true)
                     inlinePlayer.pause()
                     isPlaying = false
                     activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -709,14 +852,60 @@ fun MovieDetailScreen(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Action Area: Download Movie Button
-                    val isMovieActuallyDownloaded = downloadItem?.status == DownloadStatus.COMPLETED &&
-                            downloadItem.localFilePath.isNotBlank() &&
-                            java.io.File(downloadItem.localFilePath.removePrefix("file://")).let { it.exists() && it.length() >= 1024 * 1024L }
+                    // Action Area: Resume Playback Banner (when local progress is saved) + Download Movie Button
+                    val savedItemForDisplay = remember(watchHistory, movie.id, activeEpisode?.id) {
+                        val normEp = activeEpisode?.id?.takeIf { !it.startsWith("synth_s1_e1_") }
+                        watchHistory.firstOrNull {
+                            if (normEp != null) it.movieId == movie.id && it.episodeId == normEp
+                            else it.movieId == movie.id && it.episodeId.isNullOrBlank()
+                        }
+                    }
+                    val displayResumePos = maxOf(
+                        pendingInlineResumeMs,
+                        savedItemForDisplay?.takeIf {
+                            it.lastPositionMs >= WatchHistoryManager.MIN_RESUME_POSITION_MS &&
+                                !WatchHistoryManager.isPlaybackCompleted(it.lastPositionMs, it.durationMs)
+                        }?.lastPositionMs ?: 0L
+                    )
+                    if (displayResumePos >= WatchHistoryManager.MIN_RESUME_POSITION_MS) {
+                        Button(
+                            onClick = {
+                                resumeChoiceResolved = true
+                                showInlineResumePrompt = false
+                                inlinePlayer.seekTo(displayResumePos)
+                                currentPositionMs = displayResumePos
+                                inlinePlayer.playWhenReady = true
+                                inlinePlayer.play()
+                                isPlaying = true
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = CinematicRed,
+                                contentColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("detail_inline_resume_cta")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Resume Watching"
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Resume Watching • ${WatchHistoryManager.formatTimestamp(displayResumePos)}",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
+                    val isMovieActuallyDownloaded = downloadItem != null && isDownloadVerifiedComplete(downloadItem, context)
 
                     Button(
                         onClick = {
-                            if (!isMovieActuallyDownloaded) {
+                            if (!isMovieActuallyDownloaded && downloadItem?.status != DownloadStatus.DOWNLOADING) {
                                 downloadViewModel.startDownload(movie, context)
                             }
                         },
@@ -733,14 +922,14 @@ fun MovieDetailScreen(
                         when {
                             downloadItem?.status == DownloadStatus.DOWNLOADING -> {
                                 CircularProgressIndicator(
-                                    progress = downloadItem.progress,
+                                    progress = { downloadItem.progress },
                                     color = CinematicRed,
                                     modifier = Modifier.size(18.dp),
                                     strokeWidth = 2.dp
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "${(downloadItem.progress * 100).toInt()}%",
+                                    text = "Downloading ${(downloadItem.progress * 100).toInt()}%",
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -751,17 +940,26 @@ fun MovieDetailScreen(
                                     tint = Color(0xFF4CAF50)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Downloaded", fontWeight = FontWeight.SemiBold)
+                                Text("Downloaded (Offline Ready)", fontWeight = FontWeight.SemiBold)
                             }
                             downloadItem?.status == DownloadStatus.PAUSED -> {
-                                Icon(Icons.Default.Download, contentDescription = "Resume Download")
+                                Icon(Icons.Default.Download, contentDescription = "Resume Download", tint = AmberGold)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Resume Download", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    text = "Not Complete (${(downloadItem.progress * 100).toInt()}%) • Resume",
+                                    color = AmberGold,
+                                    fontWeight = FontWeight.SemiBold
+                                )
                             }
-                            downloadItem?.status == DownloadStatus.FAILED -> {
-                                Icon(Icons.Default.Refresh, contentDescription = "Retry Download")
+                            downloadItem?.status == DownloadStatus.QUEUED -> {
+                                Icon(Icons.Default.Download, contentDescription = "Queued Download", tint = ElectricBlue)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Retry Download", fontWeight = FontWeight.SemiBold)
+                                Text("Queued • Not Complete", color = ElectricBlue, fontWeight = FontWeight.SemiBold)
+                            }
+                            downloadItem?.status == DownloadStatus.FAILED || downloadItem?.status == DownloadStatus.COMPLETED -> {
+                                Icon(Icons.Default.Refresh, contentDescription = "Retry Download", tint = CinematicRed)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Not Complete • Retry Download", color = CinematicRed, fontWeight = FontWeight.SemiBold)
                             }
                             else -> {
                                 Icon(Icons.Default.Download, contentDescription = "Download")
@@ -802,10 +1000,16 @@ fun MovieDetailScreen(
                             episodeProgressMap = episodeProgressMap,
                             selectedEpisodeId = selectedEpisodeId,
                             onSelectEpisode = { ep ->
-                                selectedEpisodeId = ep.id
+                                if (ep.id != selectedEpisodeId) {
+                                    flushInlineProgress(true)
+                                    selectedEpisodeId = ep.id
+                                }
                             },
                             onPlayEpisode = { ep ->
-                                selectedEpisodeId = ep.id
+                                if (ep.id != selectedEpisodeId) {
+                                    flushInlineProgress(true)
+                                    selectedEpisodeId = ep.id
+                                }
                             },
                             onDownloadEpisode = { ep ->
                                 downloadViewModel.startDownload(movie, context, ep)
@@ -939,7 +1143,9 @@ fun MovieDetailScreen(
             Media3GestureOverlay(
                 player = inlinePlayer,
                 onSingleTap = {
-                    showPlayerControls = !showPlayerControls
+                    if (!showInlineResumePrompt) {
+                        showPlayerControls = !showPlayerControls
+                    }
                 },
                 onSeekRelative = { seconds, isForward ->
                     val step = if (isForward) 10 else -10
@@ -947,11 +1153,12 @@ fun MovieDetailScreen(
                     val target = (inlinePlayer.currentPosition + (step * 1000L)).coerceIn(0L, maxDur)
                     inlinePlayer.seekTo(target)
                     currentPositionMs = target
+                    flushInlineProgress(true)
                 },
                 modifier = Modifier.fillMaxSize()
             ) {
                 // Shimmer skeleton when content is fetching / buffering
-            val isShowingLoadingLayer = !isPlaying || isBuffering || streamError != null
+            val isShowingLoadingLayer = (!isPlaying && !showInlineResumePrompt) || isBuffering || streamError != null
             if (isShowingLoadingLayer && streamError == null) {
                 val shimmerTransition = rememberInfiniteTransition(label = "player_shimmer")
                 val shimmerTranslate by shimmerTransition.animateFloat(
@@ -1083,9 +1290,127 @@ fun MovieDetailScreen(
                 }
             }
 
+            // Resume Playback Prompt Card (Shown when local saved position >= 3s is found)
+            if (showInlineResumePrompt && pendingInlineResumeMs > 0L && streamError == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.68f))
+                ) {
+                    // Keep Back button accessible while Resume prompt is open
+                    IconButton(
+                        onClick = {
+                            if (isFullscreen) {
+                                exitFullscreen()
+                            } else {
+                                onBackClick()
+                            }
+                        },
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .statusBarsPadding()
+                            .padding(12.dp)
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(Color(0x88000000))
+                            .testTag("detail_resume_back_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White
+                        )
+                    }
+
+                    Surface(
+                        color = Color(0xEE18181F),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, Color(0x33FFFFFF)),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = 20.dp)
+                            .testTag("detail_resume_prompt")
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)
+                        ) {
+                            Text(
+                                text = "Resume Watching?",
+                                color = Color.White,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = buildString {
+                                    append("Saved at ${WatchHistoryManager.formatTimestamp(pendingInlineResumeMs)}")
+                                    if (isAnyOfflineCompleted) append(" • Offline")
+                                },
+                                color = Color(0xFFCCCCCC),
+                                fontSize = 12.sp
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        val ep = activeEpisode
+                                        val posKey = WatchHistoryManager.buildPositionKey(movie.id, ep?.id)
+                                        val uid = userSession.uid.ifBlank { "guest" }
+                                        resumeChoiceResolved = true
+                                        showInlineResumePrompt = false
+                                        pendingInlineResumeMs = 0L
+                                        currentPositionMs = 0L
+                                        watchHistoryManager.clearPlaybackPosition(uid, movie.id, ep?.id, commitNow = true)
+                                        playerViewModel?.saveMoviePosition(posKey, 0L)
+                                        inlinePlayer.seekTo(0L)
+                                        inlinePlayer.playWhenReady = true
+                                        inlinePlayer.play()
+                                        isPlaying = true
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, Color(0x44FFFFFF)),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                    modifier = Modifier.testTag("detail_start_over_button")
+                                ) {
+                                    Text("Start Over", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                }
+                                Button(
+                                    onClick = {
+                                        val targetPos = pendingInlineResumeMs
+                                        resumeChoiceResolved = true
+                                        showInlineResumePrompt = false
+                                        inlinePlayer.seekTo(targetPos)
+                                        currentPositionMs = targetPos
+                                        inlinePlayer.playWhenReady = true
+                                        inlinePlayer.play()
+                                        isPlaying = true
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = CinematicRed, contentColor = Color.White),
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                    modifier = Modifier.testTag("detail_resume_confirm_button")
+                                ) {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Resume ${WatchHistoryManager.formatTimestamp(pendingInlineResumeMs)}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Video Controls Scrim Overlay
             AnimatedVisibility(
-                visible = showPlayerControls,
+                visible = showPlayerControls && !showInlineResumePrompt,
                 enter = fadeIn(),
                 exit = fadeOut(),
                 modifier = Modifier.fillMaxSize()
@@ -1181,6 +1506,7 @@ fun MovieDetailScreen(
                                     val target = (inlinePlayer.currentPosition - 10000L).coerceAtLeast(0L)
                                     inlinePlayer.seekTo(target)
                                     currentPositionMs = target
+                                    flushInlineProgress(true)
                                 },
                                 modifier = Modifier
                                     .size(48.dp)
@@ -1200,6 +1526,7 @@ fun MovieDetailScreen(
                             IconButton(
                                 onClick = {
                                     if (inlinePlayer.isPlaying) {
+                                        flushInlineProgress(true)
                                         inlinePlayer.pause()
                                     } else {
                                         inlinePlayer.play()
@@ -1226,6 +1553,7 @@ fun MovieDetailScreen(
                                     val target = (inlinePlayer.currentPosition + 10000L).coerceAtMost(maxDur)
                                     inlinePlayer.seekTo(target)
                                     currentPositionMs = target
+                                    flushInlineProgress(true)
                                 },
                                 modifier = Modifier
                                     .size(48.dp)
@@ -1328,6 +1656,9 @@ fun MovieDetailScreen(
                                     inlinePlayer.seekTo(seekPos)
                                     currentPositionMs = seekPos
                                 },
+                                onValueChangeFinished = {
+                                    flushInlineProgress(true)
+                                },
                                 colors = SliderDefaults.colors(
                                     thumbColor = CinematicRed,
                                     activeTrackColor = CinematicRed,
@@ -1360,6 +1691,7 @@ fun MovieDetailScreen(
                                     if (isFullscreen) {
                                         exitFullscreen()
                                     } else {
+                                        flushInlineProgress(true)
                                         onBackClick()
                                     }
                                 },
@@ -1401,6 +1733,7 @@ fun MovieDetailScreen(
                         IconButton(
                             onClick = {
                                 if (inlinePlayer.isPlaying) {
+                                    flushInlineProgress(true)
                                     inlinePlayer.pause()
                                 } else {
                                     inlinePlayer.play()
@@ -1493,6 +1826,9 @@ fun MovieDetailScreen(
                                     val seekPos = (fraction * duration).toLong()
                                     inlinePlayer.seekTo(seekPos)
                                     currentPositionMs = seekPos
+                                },
+                                onValueChangeFinished = {
+                                    flushInlineProgress(true)
                                 },
                                 colors = SliderDefaults.colors(
                                     thumbColor = CinematicRed,
@@ -2068,13 +2404,21 @@ fun EpisodeBoxCard(
     onCancelDownload: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val isDownloading = workProgress?.isDownloading == true || downloadItem?.status == DownloadStatus.DOWNLOADING
-    val isCompleted = workProgress?.isCompleted == true || downloadItem?.status == DownloadStatus.COMPLETED
+    val isCompleted = (downloadItem != null && isDownloadVerifiedComplete(downloadItem, context)) ||
+        (downloadItem == null && workProgress?.isCompleted == true)
+    val isPaused = !isDownloading && !isCompleted && (workProgress?.isPaused == true || downloadItem?.status == DownloadStatus.PAUSED)
+    val isFailedOrMissing = !isDownloading && !isCompleted && (
+        workProgress?.isFailed == true ||
+            downloadItem?.status == DownloadStatus.FAILED ||
+            downloadItem?.status == DownloadStatus.COMPLETED
+        )
 
     val progressFraction = when {
         isCompleted -> 1.0f
         workProgress?.isDownloading == true -> workProgress.progressFraction
-        downloadItem?.status == DownloadStatus.DOWNLOADING -> downloadItem.progress
+        downloadItem != null -> downloadItem.progress
         else -> 0f
     }.coerceIn(0f, 1f)
 
@@ -2187,6 +2531,34 @@ fun EpisodeBoxCard(
                             ) {
                                 Text(
                                     text = "Downloading $progressPercent%",
+                                    color = CinematicRed,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
+                        } else if (isPaused) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                color = AmberGold.copy(alpha = 0.18f),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = "Paused ($progressPercent%)",
+                                    color = AmberGold,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
+                        } else if (isFailedOrMissing) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                color = CinematicRed.copy(alpha = 0.18f),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = "Not Complete",
                                     color = CinematicRed,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
@@ -2493,9 +2865,10 @@ fun MovieEpisodesSection(
         Spacer(modifier = Modifier.height(16.dp))
 
         // Centered Floating Download Season Button
+        val seasonContext = LocalContext.current
         val seasonHasUndownloaded = episodesInSeason.any { ep ->
             downloads.none {
-                (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.status == DownloadStatus.COMPLETED
+                (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && isDownloadVerifiedComplete(it, seasonContext)
             }
         }
 
@@ -2513,7 +2886,7 @@ fun MovieEpisodesSection(
                     .clickable {
                         episodesInSeason.forEach { ep ->
                             val isDownloaded = downloads.any {
-                                (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.status == DownloadStatus.COMPLETED
+                                (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && isDownloadVerifiedComplete(it, seasonContext)
                             }
                             if (!isDownloaded) {
                                 onDownloadEpisode(ep)
@@ -2581,8 +2954,10 @@ fun MovieBoxEpisodeGridCard(
     onCancelDownload: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val isDownloading = workProgress?.isDownloading == true || downloadItem?.status == DownloadStatus.DOWNLOADING
-    val isCompleted = workProgress?.isCompleted == true || downloadItem?.status == DownloadStatus.COMPLETED
+    val isCompleted = (downloadItem != null && isDownloadVerifiedComplete(downloadItem, context)) ||
+        (downloadItem == null && workProgress?.isCompleted == true)
 
     val codeText = "S" + episode.seasonNumber.toString().padStart(2, '0') +
             " EP" + episode.episodeNumber.toString().padStart(2, '0')
@@ -2804,9 +3179,10 @@ fun AllEpisodesDialog(
                     modifier = Modifier.weight(1f)
                 ) {
                     items(episodes) { ep ->
+                        val dialogContext = LocalContext.current
                         val isSelected = ep.id == selectedEpisodeId
                         val isDownloaded = downloads.any {
-                            (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && it.status == DownloadStatus.COMPLETED
+                            (it.episodeId == ep.id || it.id == "${movie.id}_ep_${ep.id}") && isDownloadVerifiedComplete(it, dialogContext)
                         }
                         val isDownloading = episodeProgressMap[ep.id]?.isDownloading == true ||
                                 downloads.any {
@@ -2900,8 +3276,10 @@ fun EpisodeCarouselThumbnailCard(
     modifier: Modifier = Modifier
 ) {
     val coverUrl = movie.coverUrl
+    val context = LocalContext.current
     val isDownloading = workProgress?.isDownloading == true || downloadItem?.status == DownloadStatus.DOWNLOADING
-    val isCompleted = workProgress?.isCompleted == true || downloadItem?.status == DownloadStatus.COMPLETED
+    val isCompleted = (downloadItem != null && isDownloadVerifiedComplete(downloadItem, context)) ||
+        (downloadItem == null && workProgress?.isCompleted == true)
 
     Surface(
         color = if (isSelected) SurfaceElevated else SurfaceDark,
@@ -3059,8 +3437,10 @@ fun EpisodeGridCard(
     modifier: Modifier = Modifier
 ) {
     val coverUrl = movie.coverUrl
+    val context = LocalContext.current
     val isDownloading = workProgress?.isDownloading == true || downloadItem?.status == DownloadStatus.DOWNLOADING
-    val isCompleted = workProgress?.isCompleted == true || downloadItem?.status == DownloadStatus.COMPLETED
+    val isCompleted = (downloadItem != null && isDownloadVerifiedComplete(downloadItem, context)) ||
+        (downloadItem == null && workProgress?.isCompleted == true)
 
     val progressFraction = when {
         isCompleted -> 1.0f
@@ -3392,9 +3772,11 @@ fun EpisodeDetailCard(
     modifier: Modifier = Modifier
 ) {
     val coverUrl = movie.coverUrl
+    val context = LocalContext.current
 
     val isDownloading = workProgress?.isDownloading == true || downloadItem?.status == DownloadStatus.DOWNLOADING
-    val isCompleted = workProgress?.isCompleted == true || downloadItem?.status == DownloadStatus.COMPLETED
+    val isCompleted = (downloadItem != null && isDownloadVerifiedComplete(downloadItem, context)) ||
+        (downloadItem == null && workProgress?.isCompleted == true)
 
     val progressFraction = when {
         isCompleted -> 1.0f

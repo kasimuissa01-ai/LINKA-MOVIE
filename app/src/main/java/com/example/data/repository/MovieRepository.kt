@@ -70,7 +70,8 @@ class MovieRepository(
                 downloadDao = downloadDao,
                 r2Client = r2Client,
                 context = ctx.applicationContext,
-                userIdProvider = { _userSession.value.uid }
+                userIdProvider = { _userSession.value.uid },
+                movieDao = movieDao
             ).also { downloadManagerInstance = it }
         }
     }
@@ -86,7 +87,7 @@ class MovieRepository(
     // Current user session & role management
     private val _userSession = MutableStateFlow(
         sessionManager?.getSession() ?: UserSession(
-            uid = "usr_guest_" + UUID.randomUUID().toString().take(6),
+            uid = sessionManager?.getOrCreateGuestUid() ?: ("usr_guest_" + UUID.randomUUID().toString().take(6)),
             email = "guest@movieroom.stream",
             displayName = "Guest User",
             phoneNumber = "",
@@ -152,12 +153,14 @@ class MovieRepository(
                 val uid = fbUser?.uid ?: UUID.randomUUID().toString()
                 val token = authService.getIdToken() ?: "token_$uid"
                 val role = firestoreService.getUserRole(uid)
-                _userSession.value = UserSession(
+                val session = UserSession(
                     uid = uid,
                     email = fbUser?.email ?: email,
                     role = role,
                     token = token
                 )
+                _userSession.value = session
+                sessionManager?.saveSession(session)
                 Result.success("Signed in as ${fbUser?.email}")
             },
             onFailure = { ex ->
@@ -192,6 +195,7 @@ class MovieRepository(
                 token = "dev_phone_token"
             )
             _userSession.value = session
+            sessionManager?.saveSession(session)
             return@withContext Result.success("Signed in as $userName")
         }
 
@@ -267,6 +271,11 @@ class MovieRepository(
     fun setUserSession(session: UserSession) {
         _userSession.value = session
         sessionManager?.saveSession(session)
+        appContext?.let { ctx ->
+            repositoryScope.launch {
+                getDownloadManager(ctx).verifyAndRecoverOfflineStorage(session.uid)
+            }
+        }
     }
 
     /**
@@ -325,6 +334,9 @@ class MovieRepository(
             if (firstAccount.isNotBlank()) {
                 downloadDao.claimLegacyDownloads(firstAccount)
                 sessionManager?.setFirstAccountUid(firstAccount)
+            }
+            appContext?.let { ctx ->
+                getDownloadManager(ctx).verifyAndRecoverOfflineStorage(firstAccount)
             }
             syncCatalogFromSupabase()
         }
@@ -617,13 +629,9 @@ class MovieRepository(
         downloadManagerInstance?.deleteDownload(downloadId, movieId, episodeId, uid) ?: run {
             downloadDao.deleteById(downloadId)
             appContext?.let { ctx ->
-                val destDir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
-                val userDir = File(destDir, "users/$uid")
-                val baseFileName = if (!episodeId.isNullOrBlank()) "movie_${movieId}_ep_${episodeId}.mp4" else "movie_${movieId}.mp4"
-                val finalFile = File(userDir, baseFileName)
-                val partFile = File(userDir, "$baseFileName.download")
-                runCatching { if (finalFile.exists()) finalFile.delete() }
-                runCatching { if (partFile.exists()) partFile.delete() }
+                com.example.data.download.OfflineStoragePaths.getAllCleanupTargets(ctx, uid, movieId, episodeId).forEach { file ->
+                    runCatching { if (file.exists()) file.delete() }
+                }
             }
         }
     }
@@ -635,13 +643,14 @@ class MovieRepository(
         }
         getDownloadManager(context).clearAllDownloads(uid)
         downloadDao.deleteAllDownloads(uid)
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val userDir = File(destDir, "users/$uid")
-        runCatching { userDir.deleteRecursively() }
-        val internalUserDir = File(context.filesDir, "users/$uid")
-        runCatching { internalUserDir.deleteRecursively() }
+        com.example.data.download.OfflineStoragePaths.clearAllUserDirectories(context, uid)
         com.example.util.VideoCacheManager.clearCache(context)
     }
+
+    suspend fun scanAndVerifyOfflineDownloads(
+        context: Context
+    ): com.example.data.download.OfflineDownloadRecoveryService.OfflineRecoveryReport =
+        getDownloadManager(context).verifyAndRecoverOfflineStorage(_userSession.value.uid)
 
     /**
      * Resolves playback URI for movie or specific episode:
@@ -657,7 +666,15 @@ class MovieRepository(
         } else null
 
         val epIdToUse = effectiveEp?.id ?: episodeId
-        val verifiedOffline = getDownloadManager(context).getVerifiedOfflinePlaybackUri(movie.id, epIdToUse, currentUid)
+        val downloadMgr = getDownloadManager(context)
+        val allowWholeMovieFallback = episodeId.isNullOrBlank() ||
+            episodeId.startsWith("synth_s1_e1_") ||
+            (effectiveEp != null && effectiveEp.seasonNumber == 1 && effectiveEp.episodeNumber == 1)
+        val verifiedOffline = (if (!epIdToUse.isNullOrBlank()) {
+            downloadMgr.getVerifiedOfflinePlaybackUri(movie.id, epIdToUse, currentUid)
+        } else null) ?: if (allowWholeMovieFallback) {
+            downloadMgr.getVerifiedOfflinePlaybackUri(movie.id, null, currentUid)
+        } else null
         if (verifiedOffline != null) {
             val label = if (epIdToUse != null) "${movie.title} (Ep: $epIdToUse)" else movie.title
             Log.d(TAG, "Resolved verified offline playback for $label (user=$currentUid): $verifiedOffline")

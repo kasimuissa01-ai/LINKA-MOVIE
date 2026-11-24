@@ -10,8 +10,10 @@ import com.example.domain.model.DownloadItem
 import com.example.domain.model.Episode
 import com.example.domain.model.Movie
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -48,6 +50,21 @@ class DownloadViewModel(
                 initialValue = emptyMap()
             )
 
+    private val _isScanningOfflineStorage = MutableStateFlow(false)
+    val isScanningOfflineStorage: StateFlow<Boolean> = _isScanningOfflineStorage.asStateFlow()
+
+    fun scanAndVerifyOfflineStorage(context: Context) {
+        if (_isScanningOfflineStorage.value) return
+        viewModelScope.launch {
+            _isScanningOfflineStorage.value = true
+            try {
+                repository.scanAndVerifyOfflineDownloads(context.applicationContext)
+            } finally {
+                _isScanningOfflineStorage.value = false
+            }
+        }
+    }
+
     fun startDownload(movie: Movie, context: Context, episode: Episode? = null) {
         viewModelScope.launch {
             if (episode != null) {
@@ -67,13 +84,15 @@ class DownloadViewModel(
     }
 
     fun cancelEpisodeDownload(movieId: String, episodeId: String, context: Context) {
+        val uid = repository.userSession.value.uid
         val manager = progressManager ?: EpisodeDownloadProgressManager.getInstance(context)
-        manager.cancelEpisodeDownload(movieId, episodeId)
+        manager.cancelEpisodeDownload(movieId, episodeId, uid)
     }
 
     fun pauseEpisodeDownload(movieId: String, episodeId: String, context: Context) {
+        val uid = repository.userSession.value.uid
         val manager = progressManager ?: EpisodeDownloadProgressManager.getInstance(context)
-        manager.pauseEpisodeDownload(movieId, episodeId)
+        manager.pauseEpisodeDownload(movieId, episodeId, uid)
     }
 
     fun pauseDownload(downloadId: String) {
@@ -82,9 +101,9 @@ class DownloadViewModel(
         }
     }
 
-    fun retryDownload(item: DownloadItem, context: Context) {
+    fun retryDownload(item: DownloadItem, context: Context, fallbackMovie: Movie? = null) {
         viewModelScope.launch {
-            val movie = repository.getMovieById(item.movieId)
+            val movie = repository.getMovieById(item.movieId) ?: fallbackMovie
             if (movie != null) {
                 val episode = if (!item.episodeId.isNullOrBlank()) {
                     movie.episodes.firstOrNull { it.id == item.episodeId }
@@ -125,14 +144,7 @@ class DownloadViewModel(
      */
     fun getTotalStorageUsedBytes(context: Context, downloadList: List<DownloadItem>): Long {
         val currentUid = repository.userSession.value.uid
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val userDir = java.io.File(destDir, "users/$currentUid")
-        var diskBytes = 0L
-        if (userDir.exists() && userDir.isDirectory) {
-            userDir.listFiles()?.forEach { file ->
-                diskBytes += file.length()
-            }
-        }
+        val diskBytes = com.example.data.download.OfflineStoragePaths.getUserStorageUsedBytes(context, currentUid)
         val dbBytes = downloadList.sumOf { it.downloadedBytes.coerceAtLeast(0L) }
         return maxOf(diskBytes, dbBytes)
     }

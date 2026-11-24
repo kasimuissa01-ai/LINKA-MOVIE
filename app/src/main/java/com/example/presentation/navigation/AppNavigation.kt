@@ -229,6 +229,11 @@ fun AppNavigation(
                                 launchSingleTop = true
                             }
                         },
+                        onContinueWatchingClick = { movie, startPos, episodeId ->
+                            navController.navigate(Screen.VideoPlayer.createRoute(movie.id, startPos, episodeId)) {
+                                launchSingleTop = true
+                            }
+                        },
                         onCategoryClick = { category ->
                             val genreFilter = when (category) {
                                 "Trending" -> null
@@ -343,12 +348,13 @@ fun AppNavigation(
                     val downloadList by downloadViewModel.downloads.collectAsState()
 
                     val foundMovie = movieUiState.allMovies.find { it.id == movieId }
-                    val downloadItem = downloadList.find {
-                        if (!episodeId.isNullOrBlank()) {
+                    val downloadItem = if (!episodeId.isNullOrBlank()) {
+                        downloadList.find {
                             (it.episodeId == episodeId || it.id == "${movieId}_ep_${episodeId}") && it.movieId == movieId
-                        } else {
-                            it.movieId == movieId
                         }
+                    } else {
+                        downloadList.find { it.movieId == movieId && it.episodeId.isNullOrBlank() }
+                            ?: downloadList.find { it.movieId == movieId }
                     }
 
                     val effectiveMovie = foundMovie ?: downloadItem?.let { item ->

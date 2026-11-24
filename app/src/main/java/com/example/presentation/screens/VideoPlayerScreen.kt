@@ -528,9 +528,125 @@ fun VideoPlayerScreen(
             }
         }
 
+        // 6b. Non-blocking "Resumed from MM:SS" indicator pill
+        AnimatedVisibility(
+            visible = uiState.resumedFromLabel != null && !uiState.showResumePrompt && uiState.errorMessage == null,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(250)),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 66.dp)
+        ) {
+            Surface(
+                color = Color(0xDD14141C),
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)),
+                modifier = Modifier.testTag("player_resumed_banner")
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = AmberGold,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = uiState.resumedFromLabel.orEmpty(),
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Start Over",
+                        color = CinematicRed,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier
+                            .clickable { playerViewModel.restartPlaybackFromBeginning() }
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                            .testTag("player_banner_start_over")
+                    )
+                }
+            }
+        }
+
+        // 6c. Resume Playback Prompt Overlay (when reopening a movie/episode with saved progress)
+        if (uiState.showResumePrompt && uiState.pendingResumePositionMs > 0L && uiState.errorMessage == null) {
+            val savedLabel = remember(uiState.pendingResumePositionMs) {
+                com.example.data.local.WatchHistoryManager.formatTimestamp(uiState.pendingResumePositionMs)
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xAA000000)),
+                contentAlignment = Alignment.Center
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = SurfaceDark,
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
+                    modifier = Modifier
+                        .widthIn(max = 380.dp)
+                        .padding(horizontal = 24.dp)
+                        .testTag("player_resume_prompt_card")
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(22.dp)
+                    ) {
+                        Text(
+                            text = "Resume Watching?",
+                            color = TextPrimary,
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "You left off at $savedLabel" + if (uiState.isOfflinePlayback) " • Offline" else "",
+                            color = TextSecondary,
+                            fontSize = 13.sp
+                        )
+                        Spacer(modifier = Modifier.height(18.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedButton(
+                                onClick = { playerViewModel.restartPlaybackFromBeginning() },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("player_start_over_button")
+                            ) {
+                                Text("Start Over", color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            }
+                            Button(
+                                onClick = { playerViewModel.confirmResumePlayback() },
+                                colors = ButtonDefaults.buttonColors(containerColor = CinematicRed, contentColor = Color.White),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1.2f)
+                                    .height(48.dp)
+                                    .testTag("player_resume_confirm_button")
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Resume $savedLabel", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 7. Minimal Netflix-Style Controls Overlay
         AnimatedVisibility(
-            visible = uiState.controlsVisible && uiState.errorMessage == null,
+            visible = uiState.controlsVisible && uiState.errorMessage == null && !uiState.showResumePrompt,
             enter = fadeIn(tween(200)),
             exit = fadeOut(tween(200)),
             modifier = Modifier.fillMaxSize()

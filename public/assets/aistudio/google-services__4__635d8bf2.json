@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "791839339295",
+    "project_id": "movieroom-334fb",
+    "storage_bucket": "movieroom-334fb.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:791839339295:android:2d5893b4e57de0410bb62a",
+        "android_client_info": {
+          "package_name": "com.movieroom.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "791839339295-gdvrrpnu024p8r2tffmt0hvovne9sbia.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.movieroom.app",
+            "certificate_hash": "e81057aa1ab631fc4d48b4d4715fd6848dc5b96b"
+          }
+        },
+        {
+          "client_id": "791839339295-hrvsao6av3ndccilkflg855gdn8fpkpp.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB6mdTjnmdEL6AF6aipFlW9KDu875RoCIA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "791839339295-hrvsao6av3ndccilkflg855gdn8fpkpp.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

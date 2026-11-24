@@ -1,7 +1,6 @@
 package com.example.presentation.screens
 
 import android.content.Context
-import android.os.StatFs
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -79,6 +78,7 @@ import com.example.domain.model.DownloadStatus
 import com.example.domain.model.Movie
 import com.example.presentation.viewmodel.DownloadViewModel
 import com.example.presentation.viewmodel.MovieViewModel
+import com.example.ui.theme.AmberGold
 import com.example.ui.theme.CinematicRed
 import com.example.ui.theme.ElectricBlue
 import com.example.ui.theme.ObsidianBlack
@@ -128,6 +128,7 @@ fun DownloadsScreen(
     val watchHistoryManager = remember { WatchHistoryManager.getInstance(context) }
     LaunchedEffect(userSession.uid) {
         watchHistoryManager.setUser(userSession.uid)
+        downloadViewModel.scanAndVerifyOfflineStorage(context)
     }
     val watchHistory by watchHistoryManager.historyFlow.collectAsState()
 
@@ -139,27 +140,21 @@ fun DownloadsScreen(
     }
 
     val availableBytes = remember {
-        try {
-            val path = context.getExternalFilesDir(null) ?: context.filesDir
-            val stat = StatFs(path.path)
-            stat.availableBlocksLong * stat.blockSizeLong
-        } catch (_: Exception) {
-            0L
-        }
+        com.example.data.download.OfflineStoragePaths.getAvailableInternalStorageBytes(context)
     }
     val formattedAvailable = remember(availableBytes) {
         downloadViewModel.formatStorageSize(availableBytes)
     }
 
     val completedCount = remember(downloads) {
-        downloads.count { it.status == DownloadStatus.COMPLETED }
+        downloads.count { isDownloadVerifiedComplete(it, context) }
     }
 
     var showClearStorageDialog by remember { mutableStateOf(false) }
     var selectedSeriesGroup by remember { mutableStateOf<DownloadedGroup?>(null) }
 
     val watchHistoryMap = remember(watchHistory) {
-        watchHistory.associateBy { if (it.episodeId != null) "${it.movieId}_ep_${it.episodeId}" else it.movieId }
+        watchHistory.associateBy { WatchHistoryManager.buildPositionKey(it.movieId, it.episodeId) }
     }
 
     val groupedDownloads = remember(downloads) {
@@ -274,11 +269,18 @@ fun DownloadsScreen(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                items(watchHistory, key = { if (it.episodeId != null) "${it.movieId}_ep_${it.episodeId}" else it.movieId }) { historyItem ->
+                                items(watchHistory, key = { WatchHistoryManager.buildPositionKey(it.movieId, it.episodeId) }) { historyItem ->
                                     WatchHistoryCard(
                                         item = historyItem,
                                         onClick = {
-                                            val movieToPlay = movieState.allMovies.find { it.id == historyItem.movieId } ?: Movie(
+                                            val matchingDownload = downloads.find { dl ->
+                                                dl.movieId == historyItem.movieId &&
+                                                    isDownloadVerifiedComplete(dl, context) &&
+                                                    (if (!historyItem.episodeId.isNullOrBlank()) dl.episodeId == historyItem.episodeId else dl.episodeId.isNullOrBlank())
+                                            }
+                                            val movieToPlay = matchingDownload?.let {
+                                                resolveOfflineMovie(it, context, movieState.allMovies)
+                                            } ?: movieState.allMovies.find { it.id == historyItem.movieId } ?: Movie(
                                                 id = historyItem.movieId,
                                                 title = historyItem.movieTitle,
                                                 description = "",
@@ -293,7 +295,12 @@ fun DownloadsScreen(
                                                 cast = emptyList(),
                                                 isFeatured = false
                                             )
-                                            onPlayMovie(movieToPlay, historyItem.lastPositionMs, historyItem.episodeId)
+                                            val resumePos = watchHistoryManager.getResumablePositionMs(
+                                                userId = userSession.uid,
+                                                movieId = historyItem.movieId,
+                                                episodeId = historyItem.episodeId
+                                            )
+                                            onPlayMovie(movieToPlay, resumePos, historyItem.episodeId)
                                         }
                                     )
                                 }
@@ -383,9 +390,43 @@ fun DownloadsScreen(
                                     selectedSeriesGroup = group
                                 } else {
                                     val item = group.items.first()
-                                    val movieToPlay = resolveOfflineMovie(item, context, movieState.allMovies)
-                                    onPlayMovie(movieToPlay, 0L, item.episodeId)
+                                    val isReady = isDownloadVerifiedComplete(item, context)
+                                    if (isReady) {
+                                        val movieToPlay = resolveOfflineMovie(item, context, movieState.allMovies)
+                                        val resumePos = watchHistoryManager.getResumablePositionMs(
+                                            userId = userSession.uid,
+                                            movieId = item.movieId,
+                                            episodeId = item.episodeId
+                                        )
+                                        onPlayMovie(movieToPlay, resumePos, item.episodeId)
+                                    } else if (item.status == DownloadStatus.DOWNLOADING) {
+                                        val pct = (item.progress * 100).toInt().coerceIn(0, 99)
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "Downloading ($pct%) — not complete yet for offline play.",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                    } else {
+                                        val fallback = movieState.allMovies.find { it.id == item.movieId }
+                                        downloadViewModel.retryDownload(item, context, fallback)
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "Download is not complete. Retrying download...",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
                                 }
+                            },
+                            onRetryGroup = {
+                                group.items.filter { !isDownloadVerifiedComplete(it, context) }.forEach { itm ->
+                                    val fallback = movieState.allMovies.find { it.id == itm.movieId }
+                                    downloadViewModel.retryDownload(itm, context, fallback)
+                                }
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Retrying incomplete download...",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
                             },
                             onDeleteGroup = {
                                 group.items.forEach { itm ->
@@ -414,7 +455,7 @@ fun DownloadsScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Cache: ",
+                    text = "Offline Storage: ",
                     color = TextSecondary,
                     fontSize = 12.sp
                 )
@@ -492,8 +533,14 @@ fun DownloadsScreen(
                         modifier = Modifier.fillMaxSize()
                     ) {
                         items(group.items, key = { it.id }) { epItem ->
-                            val historyItem = watchHistoryMap["${epItem.movieId}_ep_${epItem.episodeId}"]
-                            val epWatchPercent = historyItem?.progressPercent ?: 0
+                            val historyItem = watchHistoryMap[WatchHistoryManager.buildPositionKey(epItem.movieId, epItem.episodeId)]
+                            val epResumable = historyItem?.let {
+                                it.lastPositionMs >= WatchHistoryManager.MIN_RESUME_POSITION_MS &&
+                                    !WatchHistoryManager.isPlaybackCompleted(it.lastPositionMs, it.durationMs)
+                            } == true
+                            val epWatchPercent = if (epResumable) (historyItem?.progressPercent ?: 0) else 0
+                            val isEpComplete = isDownloadVerifiedComplete(epItem, context)
+                            val epPct = (epItem.progress * 100).toInt().coerceIn(0, 99)
                             var showEpMenu by remember { mutableStateOf(false) }
 
                             Card(
@@ -502,9 +549,30 @@ fun DownloadsScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        val movieToPlay = resolveOfflineMovie(epItem, context, movieState.allMovies)
-                                        selectedSeriesGroup = null
-                                        onPlayMovie(movieToPlay, historyItem?.lastPositionMs ?: 0L, epItem.episodeId)
+                                        if (isEpComplete) {
+                                            val movieToPlay = resolveOfflineMovie(epItem, context, movieState.allMovies)
+                                            val resumePos = watchHistoryManager.getResumablePositionMs(
+                                                userId = userSession.uid,
+                                                movieId = epItem.movieId,
+                                                episodeId = epItem.episodeId
+                                            )
+                                            selectedSeriesGroup = null
+                                            onPlayMovie(movieToPlay, resumePos, epItem.episodeId)
+                                        } else if (epItem.status == DownloadStatus.DOWNLOADING) {
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "Episode downloading ($epPct%) — wait until complete for offline play.",
+                                                android.widget.Toast.LENGTH_SHORT
+                                            ).show()
+                                        } else {
+                                            val fallback = movieState.allMovies.find { it.id == epItem.movieId }
+                                            downloadViewModel.retryDownload(epItem, context, fallback)
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                "Episode download is not complete. Retrying...",
+                                                android.widget.Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
                                     }
                             ) {
                                 Row(
@@ -580,13 +648,51 @@ fun DownloadsScreen(
                                             color = TextSecondary,
                                             fontSize = 12.sp
                                         )
-                                        if (epWatchPercent > 0) {
-                                            Text(
-                                                text = "$epWatchPercent% watched",
-                                                color = CinematicRed,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Medium
-                                            )
+                                        when {
+                                            epItem.status == DownloadStatus.DOWNLOADING -> {
+                                                Text(
+                                                    text = "Downloading $epPct% • Not Complete",
+                                                    color = CinematicRed,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                            isEpComplete -> {
+                                                Text(
+                                                    text = if (epResumable && historyItem != null) {
+                                                        "Resume ${historyItem.formattedPosition} • $epWatchPercent% watched"
+                                                    } else {
+                                                        "Ready for Offline Play"
+                                                    },
+                                                    color = Color(0xFF4CAF50),
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                            epItem.status == DownloadStatus.PAUSED -> {
+                                                Text(
+                                                    text = "Not Complete • Paused ($epPct%) • Tap to resume",
+                                                    color = AmberGold,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                            epItem.status == DownloadStatus.QUEUED -> {
+                                                Text(
+                                                    text = "Not Complete • Queued",
+                                                    color = ElectricBlue,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
+                                            else -> {
+                                                Text(
+                                                    text = "Download Not Complete ($epPct%) • Tap to retry",
+                                                    color = CinematicRed,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            }
                                         }
                                     }
 
@@ -606,6 +712,19 @@ fun DownloadsScreen(
                                             onDismissRequest = { showEpMenu = false },
                                             modifier = Modifier.background(SurfaceElevated)
                                         ) {
+                                            if (!isEpComplete && epItem.status != DownloadStatus.DOWNLOADING) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Retry Download", color = AmberGold) },
+                                                    onClick = {
+                                                        showEpMenu = false
+                                                        val fallback = movieState.allMovies.find { it.id == epItem.movieId }
+                                                        downloadViewModel.retryDownload(epItem, context, fallback)
+                                                    },
+                                                    leadingIcon = {
+                                                        Icon(Icons.Default.Refresh, contentDescription = null, tint = AmberGold)
+                                                    }
+                                                )
+                                            }
                                             DropdownMenuItem(
                                                 text = { Text("Delete Episode", color = CinematicRed) },
                                                 onClick = {
@@ -787,27 +906,42 @@ fun DownloadedGroupCard(
     watchHistoryMap: Map<String, WatchHistoryItem>,
     downloadViewModel: DownloadViewModel,
     onCardClick: () -> Unit,
+    onRetryGroup: () -> Unit = {},
     onDeleteGroup: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    val context = LocalContext.current
 
     val singleItem = if (!group.isSeries) group.items.firstOrNull() else null
     val historyItem = if (singleItem != null) {
-        watchHistoryMap[singleItem.movieId]
+        watchHistoryMap[WatchHistoryManager.buildPositionKey(singleItem.movieId, singleItem.episodeId)]
     } else {
         null
     }
+    val singleResumable = historyItem?.let {
+        it.lastPositionMs >= WatchHistoryManager.MIN_RESUME_POSITION_MS &&
+            !WatchHistoryManager.isPlaybackCompleted(it.lastPositionMs, it.durationMs)
+    } == true
 
     val watchedPercent = if (singleItem != null) {
-        historyItem?.progressPercent ?: 0
+        if (singleResumable) (historyItem?.progressPercent ?: 0) else 0
     } else {
-        val seriesHistory = group.items.mapNotNull { watchHistoryMap["${it.movieId}_ep_${it.episodeId}"] }
+        val seriesHistory = group.items.mapNotNull {
+            watchHistoryMap[WatchHistoryManager.buildPositionKey(it.movieId, it.episodeId)]
+        }.filter {
+            it.lastPositionMs >= WatchHistoryManager.MIN_RESUME_POSITION_MS &&
+                !WatchHistoryManager.isPlaybackCompleted(it.lastPositionMs, it.durationMs)
+        }
         if (seriesHistory.isNotEmpty()) {
             (seriesHistory.sumOf { it.progressPercent } / seriesHistory.size)
         } else {
             0
         }
     }
+
+    val readyCount = group.items.count { isDownloadVerifiedComplete(it, context) }
+    val allItemsComplete = group.items.isNotEmpty() && readyCount == group.items.size
+    val hasDownloadingItem = group.items.any { it.status == DownloadStatus.DOWNLOADING }
 
     Card(
         shape = RoundedCornerShape(12.dp),
@@ -861,7 +995,7 @@ fun DownloadedGroupCard(
                         .padding(horizontal = 4.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = if (group.isSeries) "${group.items.size} files" else (historyItem?.formattedDuration ?: "02:00:00"),
+                        text = if (group.isSeries) "$readyCount/${group.items.size} ready" else (historyItem?.formattedDuration ?: "02:00:00"),
                         color = Color.White,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Medium
@@ -930,39 +1064,124 @@ fun DownloadedGroupCard(
 
                 Spacer(modifier = Modifier.height(3.dp))
 
-                // Status or Watched percentage
-                val isDownloading = singleItem?.status == DownloadStatus.DOWNLOADING
-                if (isDownloading && singleItem != null) {
-                    Text(
-                        text = "Downloading ${(singleItem.progress * 100).toInt()}%",
-                        color = CinematicRed,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    LinearProgressIndicator(
-                        progress = singleItem.progress,
-                        color = CinematicRed,
-                        trackColor = SurfaceElevated,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(3.dp)
-                            .clip(RoundedCornerShape(1.5.dp))
-                    )
-                } else if (watchedPercent > 0) {
-                    Text(
-                        text = "$watchedPercent% watched",
-                        color = TextSecondary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                // Verified completeness status (never falsely report Ready for Offline Play)
+                if (singleItem != null) {
+                    val pct = (singleItem.progress * 100).toInt().coerceIn(0, 99)
+                    when {
+                        singleItem.status == DownloadStatus.DOWNLOADING -> {
+                            Text(
+                                text = "Downloading $pct% • Not Complete",
+                                color = CinematicRed,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            LinearProgressIndicator(
+                                progress = { singleItem.progress },
+                                color = CinematicRed,
+                                trackColor = SurfaceElevated,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(3.dp)
+                                    .clip(RoundedCornerShape(1.5.dp))
+                            )
+                        }
+                        allItemsComplete -> {
+                            Text(
+                                text = if (singleResumable && historyItem != null) {
+                                    "Resume ${historyItem.formattedPosition} • $watchedPercent% watched"
+                                } else {
+                                    "Ready for Offline Play"
+                                },
+                                color = Color(0xFF4CAF50),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        singleItem.status == DownloadStatus.PAUSED -> {
+                            Text(
+                                text = "Not Complete • Paused ($pct%) • Tap to resume",
+                                color = AmberGold,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            if (pct > 0) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                LinearProgressIndicator(
+                                    progress = { singleItem.progress.coerceIn(0f, 0.99f) },
+                                    color = AmberGold,
+                                    trackColor = SurfaceElevated,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(3.dp)
+                                        .clip(RoundedCornerShape(1.5.dp))
+                                )
+                            }
+                        }
+                        singleItem.status == DownloadStatus.QUEUED -> {
+                            Text(
+                                text = "Not Complete • Queued ($pct%)",
+                                color = ElectricBlue,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        else -> {
+                            Text(
+                                text = "Download Not Complete ($pct%) • Tap to retry",
+                                color = CinematicRed,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            if (pct > 0) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                LinearProgressIndicator(
+                                    progress = { singleItem.progress.coerceIn(0f, 0.99f) },
+                                    color = CinematicRed,
+                                    trackColor = SurfaceElevated,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(3.dp)
+                                        .clip(RoundedCornerShape(1.5.dp))
+                                )
+                            }
+                        }
+                    }
                 } else {
-                    Text(
-                        text = "Ready for Offline Play",
-                        color = Color(0xFF4CAF50),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    when {
+                        hasDownloadingItem -> {
+                            Text(
+                                text = "Downloading ($readyCount/${group.items.size} ready) • Not Complete",
+                                color = CinematicRed,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        allItemsComplete -> {
+                            Text(
+                                text = if (watchedPercent > 0) "Ready for Offline Play • $watchedPercent% watched" else "Ready for Offline Play",
+                                color = Color(0xFF4CAF50),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        readyCount > 0 -> {
+                            Text(
+                                text = "Not Complete ($readyCount/${group.items.size} episodes ready)",
+                                color = AmberGold,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        else -> {
+                            Text(
+                                text = "Download Not Complete • Tap to inspect",
+                                color = CinematicRed,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
                 }
             }
 
@@ -985,6 +1204,27 @@ fun DownloadedGroupCard(
                     onDismissRequest = { showMenu = false },
                     modifier = Modifier.background(SurfaceElevated)
                 ) {
+                    if (!allItemsComplete && !hasDownloadingItem) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    text = "Retry Incomplete Download",
+                                    color = AmberGold
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onRetryGroup()
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = null,
+                                    tint = AmberGold
+                                )
+                            }
+                        )
+                    }
                     DropdownMenuItem(
                         text = {
                             Text(
@@ -1010,19 +1250,54 @@ fun DownloadedGroupCard(
     }
 }
 
+fun isDownloadVerifiedComplete(item: DownloadItem, context: Context): Boolean {
+    if (item.status != DownloadStatus.COMPLETED) return false
+    val storedPath = item.localFilePath.trim()
+    if (storedPath.startsWith("content://")) {
+        try {
+            val valid = context.contentResolver.openFileDescriptor(android.net.Uri.parse(storedPath), "r")?.use { pfd ->
+                pfd.statSize >= com.example.data.download.OfflineStoragePaths.MIN_VALID_VIDEO_BYTES
+            } == true
+            if (valid) return true
+        } catch (_: Exception) {
+        }
+    } else if (storedPath.isNotBlank()) {
+        val storedFile = java.io.File(storedPath.removePrefix("file://"))
+        if (storedFile.exists() && storedFile.length() >= com.example.data.download.OfflineStoragePaths.MIN_VALID_VIDEO_BYTES) return true
+    }
+
+    return com.example.data.download.OfflineStoragePaths.findVerifiedFileForUser(
+        context = context,
+        userId = item.userId,
+        movieId = item.movieId,
+        episodeId = item.episodeId
+    ) != null
+}
+
 fun resolveOfflineMovie(item: DownloadItem, context: Context, allMovies: List<Movie>): Movie {
     val correspondingMovie = allMovies.find { it.id == item.movieId }
-    val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-    val baseFileName = if (!item.episodeId.isNullOrBlank()) "movie_${item.movieId}_ep_${item.episodeId}.mp4" else "movie_${item.movieId}.mp4"
-    val userFile = java.io.File(java.io.File(destDir, "users/${item.userId}"), baseFileName)
-    val storedFile = java.io.File(item.localFilePath.removePrefix("file://"))
-    val canonicalFile = java.io.File(destDir, baseFileName)
+    val storedPath = item.localFilePath.trim()
+    val storedFile = if (storedPath.isNotBlank() && !storedPath.startsWith("content://")) {
+        java.io.File(storedPath.removePrefix("file://"))
+    } else null
 
     val verifiedPath = when {
-        storedFile.exists() && storedFile.length() >= 1024 * 1024L -> storedFile.absolutePath
-        userFile.exists() && userFile.length() >= 1024 * 1024L -> userFile.absolutePath
-        canonicalFile.exists() && canonicalFile.length() >= 1024 * 1024L -> canonicalFile.absolutePath
-        else -> null
+        storedPath.startsWith("content://") -> storedPath
+        storedFile != null && storedFile.exists() && storedFile.length() >= com.example.data.download.OfflineStoragePaths.MIN_VALID_VIDEO_BYTES -> {
+            com.example.data.download.OfflineStoragePaths.ensureNotInCache(
+                context = context,
+                sourceFile = storedFile,
+                userId = item.userId,
+                movieId = item.movieId,
+                episodeId = item.episodeId
+            ).absolutePath
+        }
+        else -> com.example.data.download.OfflineStoragePaths.findVerifiedFileForUser(
+            context = context,
+            userId = item.userId,
+            movieId = item.movieId,
+            episodeId = item.episodeId
+        )?.absolutePath
     }
 
     return if (correspondingMovie != null) {

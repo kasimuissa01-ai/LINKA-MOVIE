@@ -85,8 +85,37 @@ interface DownloadDao {
     @Query("UPDATE downloads SET progress = :progress, status = :status, downloadedBytes = :bytes WHERE id = :id")
     suspend fun updateProgress(id: String, progress: Float, status: String, bytes: Long)
 
-    @Query("UPDATE downloads SET progress = :progress, status = :status, downloadedBytes = :bytes, localFilePath = :localPath WHERE id = :id")
-    suspend fun updateDownloadProgressAndPath(id: String, progress: Float, status: String, bytes: Long, localPath: String)
+    @Query("UPDATE downloads SET progress = :progress, status = :status, downloadedBytes = :bytes, localFilePath = :localPath, isFileVerified = CASE WHEN :status = 'COMPLETED' THEN 1 ELSE 0 END, lastVerifiedAt = :verifiedAt WHERE id = :id")
+    suspend fun updateDownloadProgressAndPath(
+        id: String,
+        progress: Float,
+        status: String,
+        bytes: Long,
+        localPath: String,
+        verifiedAt: Long = System.currentTimeMillis()
+    )
+
+    @Query("UPDATE downloads SET localFilePath = :localPath, downloadedBytes = :bytes, totalBytes = CASE WHEN totalBytes < :bytes THEN :bytes ELSE totalBytes END, progress = 1.0, status = 'COMPLETED', isFileVerified = 1, lastVerifiedAt = :verifiedAt WHERE id = :id")
+    suspend fun markVerifiedComplete(
+        id: String,
+        localPath: String,
+        bytes: Long,
+        verifiedAt: Long = System.currentTimeMillis()
+    )
+
+    @Query("UPDATE downloads SET isFileVerified = :verified, lastVerifiedAt = :verifiedAt WHERE id = :id")
+    suspend fun updateVerificationState(
+        id: String,
+        verified: Boolean,
+        verifiedAt: Long = System.currentTimeMillis()
+    )
+
+    @Query("UPDATE downloads SET isFileVerified = 0, status = :status, lastVerifiedAt = :verifiedAt WHERE id = :id")
+    suspend fun markFileMissing(
+        id: String,
+        status: String = "FAILED",
+        verifiedAt: Long = System.currentTimeMillis()
+    )
 
     @Query("SELECT * FROM downloads WHERE id = :id LIMIT 1")
     suspend fun getDownloadById(id: String): DownloadEntity?

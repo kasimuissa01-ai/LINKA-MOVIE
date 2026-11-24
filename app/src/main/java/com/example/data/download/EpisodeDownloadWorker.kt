@@ -79,22 +79,22 @@ class EpisodeDownloadWorker(
         val database = MovieRoomDatabase.getInstance(context)
         val downloadDao = database.downloadDao()
 
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val userDir = File(destDir, "users/$cleanUser")
+        val userDir = OfflineStoragePaths.getUserDownloadDir(context, cleanUser)
         userDir.mkdirs()
-        val finalFileName = "movie_${movieId}_ep_${episodeId}.mp4"
-        val finalFile = File(userDir, finalFileName)
-        val tempFile = File(userDir, "$finalFileName.download")
+        val finalFile = OfflineStoragePaths.getPrimaryTargetFile(context, cleanUser, movieId, episodeId)
+        val tempFile = OfflineStoragePaths.getPrimaryTempFile(context, cleanUser, movieId, episodeId)
 
-        // 1. Verify if already cached locally for this user
-        if (finalFile.exists() && finalFile.length() >= 1024 * 1024L) {
-            val completedBytes = finalFile.length()
+        // 1. Verify if already cached in persistent internal storage (or legacy location) for this user
+        val existingUserFile = OfflineStoragePaths.findVerifiedFileForUser(context, cleanUser, movieId, episodeId)
+        if (existingUserFile != null) {
+            val safeFile = OfflineStoragePaths.ensureNotInCache(context, existingUserFile, cleanUser, movieId, episodeId)
+            val completedBytes = safeFile.length()
             downloadDao.updateDownloadProgressAndPath(
                 id = downloadId,
                 progress = 1.0f,
                 status = DownloadStatus.COMPLETED.name,
                 bytes = completedBytes,
-                localPath = finalFile.absolutePath
+                localPath = safeFile.absolutePath
             )
             val successData = workDataOf(
                 KEY_EPISODE_ID to episodeId,
@@ -109,9 +109,9 @@ class EpisodeDownloadWorker(
             return@withContext Result.success(successData)
         }
 
-        // Fast local copy optimization: check if another account already cached this episode
-        val legacyOrOtherCandidate = File(destDir, finalFileName)
-        if (legacyOrOtherCandidate.exists() && legacyOrOtherCandidate.length() >= 1024 * 1024L) {
+        // Fast local copy optimization: check if another account already stored this episode
+        val legacyOrOtherCandidate = OfflineStoragePaths.findExistingCompletedFileAnyAccount(context, movieId, episodeId)
+        if (legacyOrOtherCandidate != null && legacyOrOtherCandidate.exists() && legacyOrOtherCandidate.length() >= OfflineStoragePaths.MIN_VALID_VIDEO_BYTES) {
             try {
                 legacyOrOtherCandidate.copyTo(finalFile, overwrite = true)
                 val completedBytes = finalFile.length()
@@ -129,7 +129,9 @@ class EpisodeDownloadWorker(
                     episodeTitle = episodeTitle,
                     seasonNumber = seasonNum,
                     episodeNumber = epNum,
-                    userId = cleanUser
+                    userId = cleanUser,
+                    isFileVerified = true,
+                    lastVerifiedAt = System.currentTimeMillis()
                 )
                 downloadDao.insertOrUpdate(entity)
                 val successData = workDataOf(
@@ -270,12 +272,21 @@ class EpisodeDownloadWorker(
             Result.success(successData)
         } else {
             val status = if (isStopped) DownloadStatus.PAUSED else DownloadStatus.FAILED
-            downloadDao.updateStatus(downloadId, status.name)
+            val partialBytes = if (tempFile.exists()) tempFile.length() else 0L
+            val partialFraction = if (estimatedTotalBytes > 0) {
+                (partialBytes.toFloat() / estimatedTotalBytes).coerceIn(0f, 0.99f)
+            } else 0f
+            downloadDao.updateProgress(
+                id = downloadId,
+                progress = partialFraction,
+                status = status.name,
+                bytes = partialBytes
+            )
             Log.e(TAG, "Episode download failed or paused: ${lastException?.message}")
             if (isStopped) Result.retry() else Result.failure(
                 workDataOf(
                     KEY_EPISODE_ID to episodeId,
-                    KEY_ERROR_MESSAGE to (lastException?.message ?: "Download failed")
+                    KEY_ERROR_MESSAGE to (lastException?.message ?: "Download not complete")
                 )
             )
         }
@@ -371,7 +382,8 @@ class EpisodeDownloadWorker(
         resp.use { response ->
             val body = response.body ?: return@withContext false
             val contentLength = body.contentLength()
-            val totalBytes = if (contentLength > 0) startingOffset + contentLength else fallbackTotalBytes
+            val expectedExactBytes = if (contentLength > 0) startingOffset + contentLength else -1L
+            val totalBytes = if (expectedExactBytes > 0) expectedExactBytes else fallbackTotalBytes
 
             val appendMode = startingOffset > 0
             val outputStream = FileOutputStream(tempFile, appendMode)
@@ -459,8 +471,18 @@ class EpisodeDownloadWorker(
                 throw e
             }
 
+            // Strictly verify exact HTTP byte-length before promoting .download -> .mp4
+            if (expectedExactBytes > 0L && bytesDownloaded < expectedExactBytes) {
+                Log.w(TAG, "Incomplete episode stream for '$displayTitle': received $bytesDownloaded of $expectedExactBytes bytes. Keeping partial .download for resume.")
+                return@withContext false
+            }
+
+            val actualFileLength = if (tempFile.exists()) tempFile.length() else 0L
+            val minSizeSatisfied = actualFileLength >= 1024 * 1024L ||
+                (expectedExactBytes in 1L until (1024 * 1024L) && actualFileLength >= expectedExactBytes)
+
             // Atomic file finalization
-            if (tempFile.exists() && tempFile.length() > 0) {
+            if (minSizeSatisfied) {
                 if (finalFile.exists()) finalFile.delete()
                 val renamed = tempFile.renameTo(finalFile)
                 if (!renamed) {

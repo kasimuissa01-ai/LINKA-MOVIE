@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.example.data.local.DownloadDao
 import com.example.data.local.DownloadEntity
+import com.example.data.local.MovieDao
 import com.example.data.remote.CloudflareR2PresignedClient
 import com.example.domain.model.DownloadItem
 import com.example.domain.model.DownloadStatus
@@ -46,7 +47,8 @@ class OfflineDownloadManager(
     private val r2Client: CloudflareR2PresignedClient,
     private val context: Context,
     private val managerScope: CoroutineScope = CoroutineScope(Dispatchers.IO),
-    private val userIdProvider: () -> String = { "" }
+    private val userIdProvider: () -> String = { "" },
+    private val movieDao: MovieDao? = null
 ) {
 
     fun getEffectiveUserId(explicitUserId: String? = null): String {
@@ -74,9 +76,15 @@ class OfflineDownloadManager(
         .retryOnConnectionFailure(true)
         .build()
 
+    private val recoveryService = OfflineDownloadRecoveryService(
+        context = context,
+        downloadDao = downloadDao,
+        movieDao = movieDao
+    )
+
     init {
         managerScope.launch {
-            sanitizeCorruptDownloads()
+            verifyAndRecoverOfflineStorage()
         }
 
         // Register listener for user actions (Pause / Cancel) directly from persistent notification shade
@@ -87,39 +95,30 @@ class OfflineDownloadManager(
                         managerScope.launch { pauseDownload(movieId) }
                     }
                     OfflineDownloadService.ACTION_CANCEL -> {
-                        managerScope.launch { deleteDownload(movieId, movieId) }
+                        val uid = getEffectiveUserId()
+                        val dlId = buildDownloadId(uid, movieId)
+                        managerScope.launch { deleteDownload(dlId, movieId, userId = uid) }
                     }
                 }
             }
         }
     }
 
-    private suspend fun sanitizeCorruptDownloads() = withContext(Dispatchers.IO) {
+    /**
+     * Scans internal app storage (plus legacy/cache folders) to verify downloaded files on disk
+     * and maps/repairs their paths in Room so previously downloaded movies remain playable offline.
+     */
+    suspend fun verifyAndRecoverOfflineStorage(
+        userId: String? = null
+    ): OfflineDownloadRecoveryService.OfflineRecoveryReport = withContext(Dispatchers.IO) {
         try {
-            val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-            val downloads = downloadDao.getAllDownloadsRaw()
-            for (item in downloads) {
-                val candidateFile = File(item.localFilePath)
-                val canonicalFile = File(destDir, if (!item.episodeId.isNullOrBlank()) "movie_${item.movieId}_ep_${item.episodeId}.mp4" else "movie_${item.movieId}.mp4")
-
-                if (candidateFile.exists() && candidateFile.length() < 1024 * 1024L) {
-                    runCatching { candidateFile.delete() }
-                }
-                if (canonicalFile.exists() && canonicalFile.length() < 1024 * 1024L) {
-                    runCatching { canonicalFile.delete() }
-                }
-
-                if (item.status == DownloadStatus.COMPLETED.name) {
-                    val hasValidFile = (candidateFile.exists() && candidateFile.length() >= 1024 * 1024L) ||
-                                       (canonicalFile.exists() && canonicalFile.length() >= 1024 * 1024L)
-                    if (!hasValidFile) {
-                        Log.w(TAG, "Sanitizing fake completed download for ${item.id} (${item.movieTitle}). Resetting to FAILED so user can re-download.")
-                        downloadDao.updateStatus(item.id, DownloadStatus.FAILED.name)
-                    }
-                }
-            }
+            recoveryService.scanAndReconcileOfflineFiles(
+                activeUserId = getEffectiveUserId(userId),
+                isActiveDownload = { id -> activeDownloadJobs[id]?.isActive == true }
+            )
         } catch (e: Exception) {
-            Log.w(TAG, "Error sanitizing corrupt downloads: ${e.message}")
+            Log.w(TAG, "Error verifying/recovering offline storage: ${e.message}")
+            OfflineDownloadRecoveryService.OfflineRecoveryReport()
         }
     }
 
@@ -185,42 +184,58 @@ class OfflineDownloadManager(
             } else {
                 val cleanPath = storedPath.removePrefix("file://")
                 val storedFile = File(cleanPath)
-                if (storedFile.exists() && storedFile.length() >= 1024 * 1024L) {
-                    val fileSize = storedFile.length()
-                    Log.d(TAG, "Verified stored filePath from Room for movie $movieId (user=$effectiveUid): ${storedFile.absolutePath} ($fileSize bytes)")
-                    return@withContext android.net.Uri.fromFile(storedFile).toString()
+                if (storedFile.exists() && storedFile.length() >= OfflineStoragePaths.MIN_VALID_VIDEO_BYTES) {
+                    val safeFile = OfflineStoragePaths.ensureNotInCache(
+                        context = context,
+                        sourceFile = storedFile,
+                        userId = effectiveUid,
+                        movieId = movieId,
+                        episodeId = episodeId
+                    )
+                    val fileSize = safeFile.length()
+                    if (safeFile.absolutePath != entity.localFilePath) {
+                        downloadDao.updateDownloadProgressAndPath(
+                            id = entity.id,
+                            progress = 1.0f,
+                            status = DownloadStatus.COMPLETED.name,
+                            bytes = fileSize,
+                            localPath = safeFile.absolutePath
+                        )
+                    }
+                    Log.d(TAG, "Verified stored filePath from Room for movie $movieId (user=$effectiveUid): ${safeFile.absolutePath} ($fileSize bytes)")
+                    return@withContext android.net.Uri.fromFile(safeFile).toString()
                 }
             }
         }
 
-        // 2. Check canonical external and internal files in user's isolated directory
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val baseFileName = if (!episodeId.isNullOrBlank()) "movie_${movieId}_ep_${episodeId}.mp4" else "movie_${movieId}.mp4"
-        val userDir = File(destDir, "users/$effectiveUid")
-        val finalFile = File(userDir, baseFileName)
-        val internalFile = File(File(context.filesDir, "users/$effectiveUid"), baseFileName)
-        val legacyFile = File(destDir, baseFileName)
-
-        val candidateFile = when {
-            finalFile.exists() && finalFile.length() >= 1024 * 1024L -> finalFile
-            internalFile.exists() && internalFile.length() >= 1024 * 1024L -> internalFile
-            legacyFile.exists() && legacyFile.length() >= 1024 * 1024L -> legacyFile
-            else -> null
-        }
+        // 2. Check persistent internal storage first, then legacy internal/external locations
+        val candidateFile = OfflineStoragePaths.findVerifiedFileForUser(
+            context = context,
+            userId = effectiveUid,
+            movieId = movieId,
+            episodeId = episodeId
+        )
 
         if (candidateFile != null) {
-            val fileSize = candidateFile.length()
-            if (entity.localFilePath != candidateFile.absolutePath) {
+            val safeFile = OfflineStoragePaths.ensureNotInCache(
+                context = context,
+                sourceFile = candidateFile,
+                userId = effectiveUid,
+                movieId = movieId,
+                episodeId = episodeId
+            )
+            val fileSize = safeFile.length()
+            if (entity.localFilePath != safeFile.absolutePath) {
                 downloadDao.updateDownloadProgressAndPath(
                     id = entity.id,
                     progress = 1.0f,
                     status = DownloadStatus.COMPLETED.name,
                     bytes = fileSize,
-                    localPath = candidateFile.absolutePath
+                    localPath = safeFile.absolutePath
                 )
             }
-            Log.d(TAG, "Verified user offline file available for movie $movieId (user=$effectiveUid): ${candidateFile.length()} bytes")
-            return@withContext android.net.Uri.fromFile(candidateFile).toString()
+            Log.d(TAG, "Verified user offline file available for movie $movieId (user=$effectiveUid): ${safeFile.absolutePath} ($fileSize bytes)")
+            return@withContext android.net.Uri.fromFile(safeFile).toString()
         }
 
         Log.w(TAG, "Movie $movieId marked COMPLETED in Room for user $effectiveUid but file missing or corrupt.")
@@ -231,31 +246,8 @@ class OfflineDownloadManager(
     /**
      * Finds an already downloaded, verified file on device from any account or legacy storage.
      */
-    private fun findExistingCompletedFile(destDir: File, movieId: String, episodeId: String?): File? {
-        val baseFileName = if (!episodeId.isNullOrBlank()) "movie_${movieId}_ep_${episodeId}.mp4" else "movie_${movieId}.mp4"
-        val legacy = File(destDir, baseFileName)
-        if (legacy.exists() && legacy.length() >= 1024 * 1024L) return legacy
-        val internalLegacy = File(context.filesDir, baseFileName)
-        if (internalLegacy.exists() && internalLegacy.length() >= 1024 * 1024L) return internalLegacy
-        val usersDir = File(destDir, "users")
-        if (usersDir.exists() && usersDir.isDirectory) {
-            usersDir.listFiles()?.forEach { uDir ->
-                if (uDir.isDirectory) {
-                    val candidate = File(uDir, baseFileName)
-                    if (candidate.exists() && candidate.length() >= 1024 * 1024L) return candidate
-                }
-            }
-        }
-        val internalUsersDir = File(context.filesDir, "users")
-        if (internalUsersDir.exists() && internalUsersDir.isDirectory) {
-            internalUsersDir.listFiles()?.forEach { uDir ->
-                if (uDir.isDirectory) {
-                    val candidate = File(uDir, baseFileName)
-                    if (candidate.exists() && candidate.length() >= 1024 * 1024L) return candidate
-                }
-            }
-        }
-        return null
+    private fun findExistingCompletedFile(movieId: String, episodeId: String?): File? {
+        return OfflineStoragePaths.findExistingCompletedFileAnyAccount(context, movieId, episodeId)
     }
 
     /**
@@ -308,14 +300,9 @@ class OfflineDownloadManager(
 
         downloadDao.deleteById(downloadId)
 
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val userDir = File(destDir, "users/$effectiveUid")
-        val baseFileName = if (!episodeId.isNullOrBlank()) "movie_${movieId}_ep_${episodeId}.mp4" else "movie_${movieId}.mp4"
-        val finalFile = File(userDir, baseFileName)
-        val partFile = File(userDir, "$baseFileName.download")
-
-        runCatching { if (finalFile.exists()) finalFile.delete() }
-        runCatching { if (partFile.exists()) partFile.delete() }
+        OfflineStoragePaths.getAllCleanupTargets(context, effectiveUid, movieId, episodeId).forEach { file ->
+            runCatching { if (file.exists()) file.delete() }
+        }
 
         checkAndStopForegroundService()
     }
@@ -328,28 +315,21 @@ class OfflineDownloadManager(
         activeDownloadJobs.values.forEach { it.cancel() }
         activeDownloadJobs.clear()
 
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val userDir = File(destDir, "users/$effectiveUid")
-        runCatching { userDir.deleteRecursively() }
-
-        val internalUserDir = File(context.filesDir, "users/$effectiveUid")
-        runCatching { internalUserDir.deleteRecursively() }
+        OfflineStoragePaths.clearAllUserDirectories(context, effectiveUid)
 
         downloadDao.deleteAllDownloads(effectiveUid)
         checkAndStopForegroundService()
     }
 
     /**
-     * Core download execution pipeline with user scoping and fast local copy support.
+     * Core download execution pipeline with persistent internal storage, user scoping, and fast local copy support.
      */
     private suspend fun executeDownloadPipeline(movie: Movie, episode: Episode? = null, userId: String? = null) = withContext(Dispatchers.IO) {
         val effectiveUid = getEffectiveUserId(userId)
         val downloadId = buildDownloadId(effectiveUid, movie.id, episode?.id)
-        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val userDir = File(destDir, "users/$effectiveUid")
-        val baseFileName = if (episode != null) "movie_${movie.id}_ep_${episode.id}.mp4" else "movie_${movie.id}.mp4"
-        val finalFile = File(userDir, baseFileName)
-        val tempFile = File(userDir, "$baseFileName.download")
+        val userDir = OfflineStoragePaths.getUserDownloadDir(context, effectiveUid)
+        val finalFile = OfflineStoragePaths.getPrimaryTargetFile(context, effectiveUid, movie.id, episode?.id)
+        val tempFile = OfflineStoragePaths.getPrimaryTempFile(context, effectiveUid, movie.id, episode?.id)
 
         userDir.mkdirs()
 
@@ -360,7 +340,8 @@ class OfflineDownloadManager(
         }
 
         // Check if already completed and valid for this user (>= 1MB)
-        if (finalFile.exists() && finalFile.length() >= 1024 * 1024L) {
+        val alreadyVerifiedFile = OfflineStoragePaths.findVerifiedFileForUser(context, effectiveUid, movie.id, episode?.id)
+        if (alreadyVerifiedFile != null) {
             val existing = if (episode != null) {
                 downloadDao.getDownloadByEpisode(movie.id, episode.id, effectiveUid)
             } else {
@@ -370,17 +351,17 @@ class OfflineDownloadManager(
                 Log.d(TAG, "Item '${episode?.title ?: movie.title}' is already fully downloaded for user $effectiveUid.")
                 return@withContext
             }
-        } else if (finalFile.exists() && finalFile.length() < 1024 * 1024L) {
+        } else if (finalFile.exists() && finalFile.length() < OfflineStoragePaths.MIN_VALID_VIDEO_BYTES) {
             Log.w(TAG, "Cleaning corrupt stub for $downloadId (${finalFile.length()} bytes)")
             runCatching { finalFile.delete() }
         }
 
         // Fast Local Copy Optimization:
         // If another account on this device already downloaded this exact movie/episode,
-        // instantly copy it into this user's private storage without wasting network data!
-        if (!finalFile.exists() || finalFile.length() < 1024 * 1024L) {
-            val existingSource = findExistingCompletedFile(destDir, movie.id, episode?.id)
-            if (existingSource != null && existingSource.exists() && existingSource.length() >= 1024 * 1024L) {
+        // copy it into this user's private persistent internal storage without wasting network data.
+        if (!finalFile.exists() || finalFile.length() < OfflineStoragePaths.MIN_VALID_VIDEO_BYTES) {
+            val existingSource = findExistingCompletedFile(movie.id, episode?.id)
+            if (existingSource != null && existingSource.exists() && existingSource.length() >= OfflineStoragePaths.MIN_VALID_VIDEO_BYTES) {
                 try {
                     Log.d(TAG, "Reusing already cached video from device for user $effectiveUid via fast local copy")
                     existingSource.copyTo(finalFile, overwrite = true)
@@ -399,7 +380,9 @@ class OfflineDownloadManager(
                         episodeTitle = episode?.title,
                         seasonNumber = episode?.seasonNumber,
                         episodeNumber = episode?.episodeNumber,
-                        userId = effectiveUid
+                        userId = effectiveUid,
+                        isFileVerified = true,
+                        lastVerifiedAt = System.currentTimeMillis()
                     )
                     downloadDao.insertOrUpdate(completedEntity)
                     OfflineDownloadService.updateProgress(
@@ -640,7 +623,7 @@ class OfflineDownloadManager(
         val existingBytes = if (tempFile.exists()) tempFile.length() else 0L
 
         if (existingBytes >= totalBytes && totalBytes >= 1024 * 1024L) {
-            return@withContext finalizeDownloadedFile(tempFile, finalFile)
+            return@withContext finalizeDownloadedFile(tempFile, finalFile, totalBytes)
         }
 
         // Align resumption to chunk boundaries to prevent partial-chunk corruption
@@ -726,7 +709,7 @@ class OfflineDownloadManager(
             )
         }
 
-        return@withContext finalizeDownloadedFile(tempFile, finalFile)
+        return@withContext finalizeDownloadedFile(tempFile, finalFile, totalBytes)
     }
 
     private suspend fun downloadSingleChunk(
@@ -750,12 +733,12 @@ class OfflineDownloadManager(
             }
 
             val body = resp.body ?: throw java.io.IOException("Empty body for chunk $chunkStart-$chunkEnd")
+            var bytesWrittenInChunk = 0L
             RandomAccessFile(tempFile, "rw").use { raf ->
                 raf.seek(chunkStart)
                 val inputStream = body.byteStream()
                 val buffer = ByteArray(BUFFER_SIZE)
                 var read: Int
-                var bytesWrittenInChunk = 0L
                 var lastUpdateMs = System.currentTimeMillis()
                 while (inputStream.read(buffer).also { read = it } != -1) {
                     if (!activeDownloadJobs.containsKey(downloadId)) {
@@ -771,11 +754,21 @@ class OfflineDownloadManager(
                 }
                 onProgress(chunkStart + bytesWrittenInChunk)
             }
+            val expectedChunkBytes = (chunkEnd - chunkStart + 1)
+            if (bytesWrittenInChunk < expectedChunkBytes) {
+                throw java.io.IOException("Incomplete chunk $chunkStart-$chunkEnd: received $bytesWrittenInChunk of $expectedChunkBytes bytes")
+            }
         }
     }
 
-    private fun finalizeDownloadedFile(tempFile: File, finalFile: File): Boolean {
-        if (tempFile.exists() && tempFile.length() >= 1024 * 1024L) {
+    private fun finalizeDownloadedFile(tempFile: File, finalFile: File, expectedTotalBytes: Long = 0L): Boolean {
+        if (!tempFile.exists()) return false
+        val actualLength = tempFile.length()
+        if (expectedTotalBytes > 0L && actualLength < expectedTotalBytes) {
+            Log.w(TAG, "Chunked download incomplete ($actualLength / $expectedTotalBytes bytes). Keeping partial file for resume.")
+            return false
+        }
+        if (actualLength >= 1024 * 1024L || (expectedTotalBytes in 1L until (1024 * 1024L) && actualLength >= expectedTotalBytes)) {
             if (finalFile.exists()) finalFile.delete()
             val renamed = tempFile.renameTo(finalFile)
             if (!renamed) {
@@ -851,8 +844,9 @@ class OfflineDownloadManager(
         response.use { resp ->
             val body = resp.body ?: return@withContext false
             val contentLength = body.contentLength()
-            val totalBytes: Long = if (contentLength > 0 && (startingOffset + contentLength) >= 1024 * 1024L) {
-                startingOffset + contentLength
+            val expectedExactBytes: Long = if (contentLength > 0) startingOffset + contentLength else -1L
+            val totalBytes: Long = if (expectedExactBytes >= 1024 * 1024L) {
+                expectedExactBytes
             } else {
                 estimatedTotalBytes
             }
@@ -914,8 +908,17 @@ class OfflineDownloadManager(
                 throw e
             }
 
-            // Verify integrity of downloaded temp file
-            if (tempFile.exists() && tempFile.length() >= 1024 * 1024L) {
+            // Strictly verify exact HTTP byte-length before promoting .download -> .mp4
+            if (expectedExactBytes > 0L && bytesDownloaded < expectedExactBytes) {
+                Log.w(TAG, "Incomplete stream for '$displayTitle': received $bytesDownloaded of $expectedExactBytes bytes. Keeping partial .download for resume.")
+                return@withContext false
+            }
+
+            val actualFileLength = if (tempFile.exists()) tempFile.length() else 0L
+            val minSizeSatisfied = actualFileLength >= 1024 * 1024L ||
+                (expectedExactBytes in 1L until (1024 * 1024L) && actualFileLength >= expectedExactBytes)
+
+            if (minSizeSatisfied) {
                 // Atomic rename
                 if (finalFile.exists()) finalFile.delete()
                 val renamed = tempFile.renameTo(finalFile)

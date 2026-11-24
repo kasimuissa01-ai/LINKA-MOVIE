@@ -2,6 +2,7 @@ package com.example.data.local
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.example.domain.model.DownloadItem
 import com.example.domain.model.DownloadStatus
@@ -151,7 +152,10 @@ data class MovieEntity(
     }
 }
 
-@Entity(tableName = "downloads")
+@Entity(
+    tableName = "downloads",
+    indices = [Index(value = ["userId", "movieId"])]
+)
 data class DownloadEntity(
     @PrimaryKey val id: String,
     val movieId: String,
@@ -166,7 +170,9 @@ data class DownloadEntity(
     val episodeTitle: String? = null,
     val seasonNumber: Int? = null,
     val episodeNumber: Int? = null,
-    @ColumnInfo(defaultValue = "") val userId: String = ""
+    @ColumnInfo(defaultValue = "") val userId: String = "",
+    @ColumnInfo(defaultValue = "0") val isFileVerified: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val lastVerifiedAt: Long = 0L
 ) {
     fun toDomain(): DownloadItem = DownloadItem(
         id = id,
@@ -182,7 +188,9 @@ data class DownloadEntity(
         episodeTitle = episodeTitle,
         seasonNumber = seasonNumber,
         episodeNumber = episodeNumber,
-        userId = userId
+        userId = userId,
+        isFileVerified = isFileVerified,
+        lastVerifiedAt = lastVerifiedAt
     )
 
     companion object {
@@ -200,7 +208,9 @@ data class DownloadEntity(
             episodeTitle = item.episodeTitle,
             seasonNumber = item.seasonNumber,
             episodeNumber = item.episodeNumber,
-            userId = item.userId
+            userId = item.userId,
+            isFileVerified = item.isFileVerified,
+            lastVerifiedAt = item.lastVerifiedAt
         )
     }
 }

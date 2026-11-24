@@ -109,47 +109,66 @@ object VideoCacheManager {
      * - Streams HTTP/HTTPS sources through CacheDataSource with high-resilience 30s/60s network timeouts.
      */
     fun createSmartDataSourceFactory(context: Context): androidx.media3.datasource.DataSource.Factory {
-        val cacheDataSourceFactory = createCacheDataSourceFactory(context)
+        val appContext = context.applicationContext
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setKeepPostFor302Redirects(true)
             .setConnectTimeoutMs(45000)
             .setReadTimeoutMs(120000)
             .setUserAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36 MovieRoom/1.0")
-        val directFactory = DefaultDataSource.Factory(context.applicationContext, httpDataSourceFactory)
+        val directFactory = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
 
         return androidx.media3.datasource.DataSource.Factory {
-            val cacheSource = cacheDataSourceFactory.createDataSource()
             val directSource = directFactory.createDataSource()
+            val pendingListeners = mutableListOf<androidx.media3.datasource.TransferListener>()
+            var lazyCacheSource: androidx.media3.datasource.DataSource? = null
+            var activeSource: androidx.media3.datasource.DataSource? = null
+
+            fun getOrCreateCacheSource(): androidx.media3.datasource.DataSource {
+                return lazyCacheSource ?: createCacheDataSourceFactory(appContext).createDataSource().also { src ->
+                    pendingListeners.forEach { listener -> src.addTransferListener(listener) }
+                    lazyCacheSource = src
+                }
+            }
 
             object : androidx.media3.datasource.DataSource {
-                private var activeSource: androidx.media3.datasource.DataSource = cacheSource
-
                 override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) {
-                    cacheSource.addTransferListener(transferListener)
                     directSource.addTransferListener(transferListener)
+                    pendingListeners.add(transferListener)
+                    lazyCacheSource?.addTransferListener(transferListener)
                 }
 
                 override fun open(dataSpec: androidx.media3.datasource.DataSpec): Long {
-                    val scheme = dataSpec.uri.scheme?.lowercase()
-                    activeSource = if (scheme == "content" || scheme == "file" || scheme == "android.resource") {
+                    val uri = dataSpec.uri
+                    val scheme = uri.scheme?.lowercase()
+                    val isLocalPath = scheme == "content" ||
+                        scheme == "file" ||
+                        scheme == "android.resource" ||
+                        (scheme.isNullOrBlank() && uri.path?.startsWith("/") == true)
+                    val targetSource = if (isLocalPath) {
                         directSource
                     } else {
-                        cacheSource
+                        getOrCreateCacheSource()
                     }
-                    return activeSource.open(dataSpec)
+                    activeSource = targetSource
+                    return targetSource.open(dataSpec)
                 }
 
                 override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-                    return activeSource.read(buffer, offset, length)
+                    return activeSource?.read(buffer, offset, length) ?: C.RESULT_END_OF_INPUT
                 }
 
-                override fun getUri(): android.net.Uri? = activeSource.uri
+                override fun getUri(): android.net.Uri? = activeSource?.uri
 
-                override fun getResponseHeaders(): Map<String, List<String>> = activeSource.responseHeaders
+                override fun getResponseHeaders(): Map<String, List<String>> =
+                    activeSource?.responseHeaders ?: emptyMap()
 
                 override fun close() {
-                    activeSource.close()
+                    try {
+                        activeSource?.close()
+                    } finally {
+                        activeSource = null
+                    }
                 }
             }
         }
