@@ -13,7 +13,7 @@ interface MovieDao {
     @Query("SELECT * FROM movies ORDER BY uploadDate DESC")
     fun getAllMovies(): Flow<List<MovieEntity>>
 
-    @Query("SELECT * FROM movies WHERE isFeatured = 1 ORDER BY uploadDate DESC LIMIT 5")
+    @Query("SELECT * FROM movies WHERE isFeatured = 1 ORDER BY uploadDate DESC LIMIT 10")
     fun getFeaturedMovies(): Flow<List<MovieEntity>>
 
     @Query("SELECT * FROM movies WHERE id = :id LIMIT 1")

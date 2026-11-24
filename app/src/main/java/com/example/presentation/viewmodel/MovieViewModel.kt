@@ -129,7 +129,7 @@ class MovieViewModel(
             explicitlyTrending
         } else {
             // Graceful fallback to top-rated / featured if admin hasn't toggled specific movies yet
-            (featured + allMovies.sortedByDescending { it.rating }).distinctBy { it.id }.take(5)
+            (featured + allMovies.sortedByDescending { it.rating }).distinctBy { it.id }.take(10)
         }
 
         // Dedicated Swahili Translated Movies
